@@ -16,6 +16,7 @@ from typing import Any, Optional
 import httpx
 
 from .. import config
+from ..proc import tool_env
 from .gpu import set_model_status
 
 log = logging.getLogger("mediaforge.ollama")
@@ -75,7 +76,8 @@ def pull_model(name: Optional[str] = None, timeout: int = 900) -> bool:
     log.info("auto-pulling ollama model %s (first use)", name)
     try:
         proc = subprocess.run(
-            ["ollama", "pull", name], capture_output=True, text=True, timeout=timeout)
+            ["ollama", "pull", name], capture_output=True, text=True,
+            timeout=timeout, env=tool_env())
         if proc.returncode == 0:
             OLLAMA_STATE["model_installed"] = True
             set_model_status("ollama:" + name, "loaded")

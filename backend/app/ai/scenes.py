@@ -14,6 +14,7 @@ import os
 from typing import Optional
 
 from .. import config
+from ..proc import tool_env
 from .gpu import set_model_status
 
 log = logging.getLogger("mediaforge.scenes")
@@ -37,7 +38,7 @@ def _probe_duration(path: str) -> float:
         proc = subprocess.run(
             ["ffprobe", "-v", "error", "-print_format", "json",
              "-show_format", path],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, timeout=30, env=tool_env())
         if proc.returncode == 0:
             data = json.loads(proc.stdout or "{}")
             return float(data.get("format", {}).get("duration") or 0.0)
@@ -126,7 +127,7 @@ def extract_scene_frames(path: str, scenes: list[tuple[float, float]],
                 ["ffmpeg", "-y", "-v", "error", "-ss", f"{at:.3f}",
                  "-i", path, "-frames:v", "1",
                  "-vf", "scale='min(960,iw)':-2", str(out_path)],
-                capture_output=True, text=True, timeout=120)
+                capture_output=True, text=True, timeout=120, env=tool_env())
             paths.append(str(out_path) if proc.returncode == 0
                          and out_path.exists() else None)
         except Exception as exc:  # noqa: BLE001

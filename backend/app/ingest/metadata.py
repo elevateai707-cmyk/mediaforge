@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from ..proc import tool_env
+
 log = logging.getLogger("mediaforge.metadata")
 
 EXIFTOOL = "exiftool"
@@ -22,7 +24,8 @@ EXIFTOOL = "exiftool"
 
 def _run(cmd: list[str], timeout: int = 20) -> Optional[subprocess.CompletedProcess]:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout, env=tool_env())
     except Exception as exc:
         log.debug("command failed %s: %s", cmd, exc)
         return None
@@ -37,7 +40,7 @@ def exiftool_present() -> bool:
     if _HAVE_EXIFTOOL is None:
         try:
             proc = subprocess.run(["which", "exiftool"], capture_output=True,
-                                  text=True, timeout=10)
+                                  text=True, timeout=10, env=tool_env())
             _HAVE_EXIFTOOL = proc.returncode == 0 and bool(proc.stdout.strip())
         except Exception:
             _HAVE_EXIFTOOL = False

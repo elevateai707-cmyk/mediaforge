@@ -20,6 +20,7 @@ import os
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Optional
 
 from .. import config, models
@@ -46,23 +47,48 @@ class ResolveUnavailable(Exception):
 # Module loading
 # ---------------------------------------------------------------------------
 
-def _prepare_env() -> None:
-    """Prepend the Resolve libs/module dirs to LD_LIBRARY_PATH / PYTHONPATH."""
+@contextmanager
+def _prepared_env():
+    """Expose the Resolve libs/module dirs for the duration of the import only.
+
+    The mutation MUST be undone. ``os.environ`` is process-global, so leaking
+    ``LD_LIBRARY_PATH=/opt/resolve/libs`` makes every later ffmpeg/ffprobe child
+    load Resolve's bundled libavutil and exit 127 — one Resolve export (even a
+    failed one) would break thumbnails and renders until the backend restarted.
+
+    Note that glibc snapshots ``LD_LIBRARY_PATH`` at process start, so this
+    assignment never affected this process's own ``dlopen`` anyway; the import
+    below resolves through ``sys.path``. It is kept, scoped, only for anything
+    the Resolve module may spawn itself.
+    """
     libs = config.RESOLVE_LIBS_DIR
     module_dir = config.RESOLVE_MODULE_DIR
+    saved = {k: os.environ.get(k) for k in ("LD_LIBRARY_PATH", "PYTHONPATH")}
     os.environ["LD_LIBRARY_PATH"] = (
-        f"{libs}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+        f"{libs}:{saved['LD_LIBRARY_PATH'] or ''}"
     )
     os.environ["PYTHONPATH"] = (
-        f"{module_dir}:{os.environ.get('PYTHONPATH', '')}"
+        f"{module_dir}:{saved['PYTHONPATH'] or ''}"
     )
     if module_dir not in sys.path:
         sys.path.insert(0, module_dir)
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _load_dvr():
     """Import the Resolve scripting module; None when unavailable."""
-    _prepare_env()
+    with _prepared_env():
+        return _import_dvr()
+
+
+def _import_dvr():
     try:
         import DaVinciResolveScript as dvr  # type: ignore
         return dvr

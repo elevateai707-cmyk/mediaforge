@@ -28,6 +28,7 @@ from typing import Any, Callable, Optional
 
 from .. import config, models
 from ..db import SessionLocal
+from ..proc import tool_env
 
 log = logging.getLogger("mediaforge.render")
 
@@ -43,7 +44,7 @@ def _run_retry(cmd: list[str], timeout: int = 120,
     for i in range(1, attempts + 1):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True,
-                                  timeout=timeout)
+                                  timeout=timeout, env=tool_env())
             if proc.returncode == 0 or i == attempts:
                 return proc
             # Nonzero but retryable (e.g. ffprobe on a still-locked file).
@@ -394,7 +395,8 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
 
     progress(0.1, f"rendering {n} clips")
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=7200, env=tool_env())
     except subprocess.TimeoutExpired:
         raise RenderError("ffmpeg render timed out after 2 hours")
     except OSError as exc:
