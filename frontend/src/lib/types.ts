@@ -30,6 +30,52 @@ export interface Asset {
   trip_id?: number | null
 }
 
+export interface Place {
+  city: string
+  region: string | null
+  count: number
+  lat: number | null
+  lon: number | null
+}
+
+export interface Trip {
+  id: number
+  title: string
+  city: string | null
+  region: string | null
+  start_at: string | null
+  end_at: string | null
+  asset_count: number
+  cover_asset_id: number | null
+  lat: number | null
+  lon: number | null
+  radius_km: number | null
+}
+
+export interface DedupePair {
+  id: string
+  asset_a: number
+  asset_b: number
+  path_a: string
+  path_b: string
+  distance: number
+  kind: string
+}
+
+export interface DedupeOut {
+  exact: DedupePair[]
+  near: DedupePair[]
+}
+
+export type DedupeAction = 'keep_a' | 'keep_b' | 'delete_b'
+
+export interface ParsedIntent {
+  place?: string | null
+  ratio?: string | null
+  platform?: string | null
+  duration_s?: number | null
+}
+
 export interface AssetListResponse {
   total: number
   items: Asset[]
@@ -91,6 +137,8 @@ export interface EditPlan {
   clips: Clip[]
   total_duration: number
   target_ratio: string
+  parsed_intent?: ParsedIntent | null
+  match_stats?: Record<string, unknown> | null
 }
 
 export interface Health {
@@ -106,6 +154,8 @@ export interface AppConfig {
   media_dirs: string[]
   ollama_model: string
   resolve_available: boolean
+  watcher_enabled?: boolean
+  music_dir?: string
 }
 
 export interface Job {
@@ -153,6 +203,10 @@ export function ratioDimensions(ratio: RenderRatio): { width: number; height: nu
       return { width: 1080, height: 1080 }
     case '16:9':
       return { width: 1920, height: 1080 }
+    default: {
+      const _exhaustive: never = ratio
+      return _exhaustive
+    }
   }
 }
 

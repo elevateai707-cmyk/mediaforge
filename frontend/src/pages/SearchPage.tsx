@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Search as SearchIcon, Sparkles, Timer } from 'lucide-react'
 import {
@@ -23,8 +24,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
 export function SearchPage() {
-  const [input, setInput] = useState('')
-  const [query, setQuery] = useState('')
+  const [params] = useSearchParams()
+  const [input, setInput] = useState(params.get('q') ?? '')
+  const [query, setQuery] = useState(params.get('q') ?? '')
   const [openAsset, setOpenAsset] = useState<Asset | null>(null)
 
   const { data, isFetching, isError, error } = useQuery({

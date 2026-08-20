@@ -11,7 +11,7 @@ import {
   WifiOff,
   X,
 } from 'lucide-react'
-import { API_BASE, cancelScan, getConfig, getHealth, listJobs, scanPaths } from '@/lib/api'
+import { API_BASE, cancelScan, getConfig, getHealth, listJobs, putConfig, scanPaths } from '@/lib/api'
 import { useWsStore } from '@/lib/ws'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
@@ -19,6 +19,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import { cn, formatDate, toPercent } from '@/lib/utils'
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning'> = {
@@ -254,6 +256,22 @@ export function SettingsPage() {
                 {health?.gpu_name && (
                   <span className="truncate text-xs opacity-80">· {health.gpu_name}</span>
                 )}
+              </div>
+
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
+                <Label htmlFor="watcher" className="text-sm">
+                  Folder watcher
+                  <span className="block text-[11px] font-normal text-muted-foreground">
+                    Auto-scan when new files land in media dirs
+                  </span>
+                </Label>
+                <Switch
+                  id="watcher"
+                  checked={config?.watcher_enabled !== false}
+                  onCheckedChange={(on) => {
+                    void putConfig({ watcher_enabled: on })
+                  }}
+                />
               </div>
 
               <dl className="space-y-2 text-sm">

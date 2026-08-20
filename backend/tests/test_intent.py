@@ -21,3 +21,11 @@ def test_vancouver_recap_60s():
     assert parsed.duration_s == 60
     assert parsed.ratio == "16:9"
     assert parsed.kind == "recap"
+
+
+def test_widen_radius_80km():
+    parsed = parse_intent(
+        "make a highlight reel for tiktok of my trip to edmonton 9:16 widen radius 80km"
+    )
+    assert parsed.place == "Edmonton"
+    assert parsed.radius_km == 80.0

@@ -43,7 +43,11 @@ def _ensure_model() -> Any | None:
         import insightface
         from insightface.app import FaceAnalysis
 
-        providers = gpu.available("insightface") and gpu.provider() or ["CPUExecutionProvider"]
+        providers = (
+            ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            if gpu.cuda_available()
+            else ["CPUExecutionProvider"]
+        )
         app = FaceAnalysis(
             name="buffalo_sc",
             root=str(config.MODELS_DIR),
@@ -52,12 +56,12 @@ def _ensure_model() -> Any | None:
         )
         app.prepare(ctx_id=0 if gpu.device() == "cuda" else -1, det_size=(640, 640))
         _model = app
-        gpu.set_model_status("insightface", "loaded", {"model": "buffalo_sc"})
+        gpu.set_model_status("insightface", "loaded")
         return _model
     except Exception as exc:  # pragma: no cover - depends on environment
         _init_error = str(exc)
         log.warning("insightface unavailable: %s", exc)
-        gpu.set_model_status("insightface", "unavailable", {"error": str(exc)})
+        gpu.set_model_status("insightface", "unavailable", str(exc))
         return None
 
 

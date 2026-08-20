@@ -11,6 +11,8 @@ import {
   Zap,
   TriangleAlert,
   HelpCircle,
+  MapPin,
+  Copy,
 } from 'lucide-react'
 import { useWsStore } from '@/lib/ws'
 import { HELP_OPEN_EVENT } from '@/lib/help-kb'
@@ -33,6 +35,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { to: '/', label: 'Library', icon: Images, end: true },
       { to: '/search', label: 'Search', icon: Search },
       { to: '/faces', label: 'Faces', icon: Users },
+      { to: '/map', label: 'Map', icon: MapPin },
     ],
   },
   {
@@ -44,7 +47,10 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   },
   {
     label: 'System',
-    items: [{ to: '/settings', label: 'Settings', icon: Settings }],
+    items: [
+      { to: '/dedupe', label: 'Duplicates', icon: Copy },
+      { to: '/settings', label: 'Settings', icon: Settings },
+    ],
   },
 ]
 

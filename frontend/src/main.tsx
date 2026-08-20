@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import App from './App'
 import { connectWs } from '@/lib/ws'
 import './index.css'
+import 'leaflet/dist/leaflet.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {

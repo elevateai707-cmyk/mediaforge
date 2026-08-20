@@ -204,6 +204,41 @@ const ARTICLES: HelpArticle[] = [
     },
   },
   {
+    id: 'command',
+    title: 'Command bar and map',
+    keywords: [
+      'command', 'bar', 'ask', 'reel', 'map', 'places', 'gps', 'leaflet',
+      'trip', 'trips', 'edmonton',
+    ],
+    reply: {
+      title: 'Type a reel, or browse the map',
+      paragraphs: [
+        'The Library command bar is first focus. Reel-like phrasing (tiktok, 9:16, highlight, recap) opens Studio with that intent. Anything else goes to Search.',
+      ],
+      bullets: [
+        'Trip cards sit under the command bar. Make reel plans from a trip without typing the city.',
+        'Map uses OpenStreetMap tiles from the places already in your library — no Mapbox token.',
+        'Golden-path example: make a highlight reel for tiktok of my trip to edmonton 9:16',
+      ],
+      links: [
+        { label: 'Open Library', to: '/' },
+        { label: 'Open Map', to: '/map' },
+      ],
+    },
+  },
+  {
+    id: 'dedupe',
+    title: 'Duplicate review',
+    keywords: ['dupe', 'duplicate', 'duplicates', 'dedupe', 'copy', 'copies', 'same', 'hash'],
+    reply: {
+      title: 'Exact hashes and near stills',
+      paragraphs: [
+        'Duplicates lists SHA-256 twins and near-duplicate photos. Keep both, or delete B. Originals in your folders are only removed when you choose Delete B.',
+      ],
+      links: [{ label: 'Open Duplicates', to: '/dedupe' }],
+    },
+  },
+  {
     id: 'export',
     title: 'Render and NLE export',
     keywords: [
@@ -296,6 +331,8 @@ export function contextualGreeting(pathname: string): HelpReply {
     '/search': 'Type a sentence, not a filename. Faces only match after you name a cluster.',
     '/faces': 'Name a cluster (Kaleb, Mom, …) and it becomes a Library filter and a search term.',
     '/studio': 'Include a city, a ratio, and a vibe. Approve is the hard gate before FFmpeg.',
+    '/map': 'Pins are cities already reverse-geocoded from GPS. Empty map means no geotags yet.',
+    '/dedupe': 'Exact pairs share a hash. Near pairs are similar stills. Delete B removes the extra asset.',
     '/touchup': 'Stills only. Presets write a copy under exports/touchup.',
     '/settings': 'Absolute paths, then Scan. Watch the job tray for ingest + AI.',
   }

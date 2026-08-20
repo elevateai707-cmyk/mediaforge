@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +30,7 @@ from ..proc import tool_env
 log = logging.getLogger("mediaforge.metadata")
 
 EXIFTOOL = "exiftool"
+_EXIFTOOL_BIN: Optional[str] = None
 
 # Tag names (with or without group prefixes) that often hold ISO6709 strings.
 _LOCATION_TAG_HINTS = (
@@ -66,17 +69,28 @@ def _run(cmd: list[str], timeout: int = 20) -> Optional[subprocess.CompletedProc
 _HAVE_EXIFTOOL: Optional[bool] = None
 
 
+def _exiftool_bin() -> Optional[str]:
+    global _EXIFTOOL_BIN
+    if _EXIFTOOL_BIN:
+        return _EXIFTOOL_BIN
+    for candidate in (
+        shutil.which("exiftool"),
+        str(Path.home() / ".local/bin/exiftool"),
+        "/usr/bin/exiftool",
+    ):
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            _EXIFTOOL_BIN = candidate
+            return candidate
+    return None
+
+
 def exiftool_present() -> bool:
     """Memoized check for the exiftool binary."""
     global _HAVE_EXIFTOOL
     if _HAVE_EXIFTOOL is None:
-        try:
-            proc = subprocess.run(["which", "exiftool"], capture_output=True,
-                                  text=True, timeout=10, env=tool_env())
-            _HAVE_EXIFTOOL = proc.returncode == 0 and bool(proc.stdout.strip())
-        except Exception:
-            _HAVE_EXIFTOOL = False
-        log.info("exiftool present: %s", _HAVE_EXIFTOOL)
+        found = _exiftool_bin()
+        _HAVE_EXIFTOOL = found is not None
+        log.info("exiftool present: %s (%s)", _HAVE_EXIFTOOL, found)
     return _HAVE_EXIFTOOL
 
 
@@ -233,7 +247,7 @@ def _set_gps(out: dict[str, Any], pt: Optional[GeoPoint]) -> None:
 def _apply_exiftool(path: str, out: dict[str, Any]) -> None:
     if not exiftool_present():
         return
-    proc = _run(EXIFTOOL_ARGS + [path], timeout=60)
+    proc = _run([_exiftool_bin() or EXIFTOOL, *EXIFTOOL_ARGS[1:], path], timeout=60)
     if not proc or proc.returncode != 0:
         return
     try:

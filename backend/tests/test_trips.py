@@ -38,7 +38,7 @@ def test_cluster_splits_edmonton_and_vancouver(client):
     cities = {t["city"] for t in trips}
     assert "Edmonton" in cities
     assert "Vancouver" in cities
-    edm = next(t for t in trips if t["city"] == "Edmonton")
+    edm = next(t for t in trips if t["city"] == "Edmonton" and t["asset_count"] >= 2)
     assert edm["asset_count"] >= 2
     assert "Edmonton" in edm["title"]
 

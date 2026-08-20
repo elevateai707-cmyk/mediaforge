@@ -20,6 +20,11 @@ _DUR_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(?:-?\s*)?(second|sec|s|minute|min)\b",
     re.IGNORECASE,
 )
+_RADIUS_KM_RE = re.compile(
+    r"(?:widen\s+(?:the\s+)?)?radius(?:\s+to)?\s+(\d+(?:\.\d+)?)\s*k?m\b",
+    re.IGNORECASE,
+)
+_WIDEN_RADIUS_RE = re.compile(r"\bwiden\s+(?:the\s+)?radius\b", re.IGNORECASE)
 
 _PLATFORM_RATIO = {
     "tiktok": "9:16",
@@ -151,6 +156,16 @@ def _parse_people(text: str) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def _parse_radius(text: str, gazetteer_km: Optional[float]) -> Optional[float]:
+    """Explicit 'radius 80km' wins; bare 'widen radius' doubles the gazetteer default."""
+    m = _RADIUS_KM_RE.search(text)
+    if m:
+        return max(1.0, min(500.0, float(m.group(1))))
+    if _WIDEN_RADIUS_RE.search(text):
+        return min(500.0, float(gazetteer_km or 45.0) * 2.0)
+    return gazetteer_km
+
+
 def parse_intent(text: str, trip_id: Optional[int] = None) -> Intent:
     raw = text or ""
     platform = _parse_platform(raw)
@@ -172,7 +187,7 @@ def parse_intent(text: str, trip_id: Optional[int] = None) -> Intent:
         place=hit.name if hit else None,
         place_lat=hit.lat if hit else None,
         place_lon=hit.lon if hit else None,
-        radius_km=hit.radius_km if hit else None,
+        radius_km=_parse_radius(raw, hit.radius_km if hit else None),
         people=_parse_people(raw),
         duration_s=float(duration),
         ratio=ratio,

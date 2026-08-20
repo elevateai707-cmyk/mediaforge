@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { motion, Reorder, useDragControls } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -27,6 +28,7 @@ import {
   planEdit,
   startRender,
   thumbUrl,
+  proxyUrl,
   updatePlan,
 } from '@/lib/api'
 import type { Clip, EditPlan, ExportFormat, RenderRatio, RenderStatus } from '@/lib/types'
@@ -146,12 +148,16 @@ function ClipRow({
   draft,
   index,
   locked,
+  selected,
   onChange,
+  onPreview,
 }: {
   draft: ClipDraft
   index: number
   locked: boolean
+  selected: boolean
   onChange: (uid: string, patch: Partial<ClipDraft>) => void
+  onPreview: (uid: string) => void
 }) {
   const controls = useDragControls()
   const start = num(draft.start)
@@ -179,15 +185,25 @@ function ClipRow({
           <span className="text-[10px] font-semibold text-muted-foreground">#{index + 1}</span>
         </div>
 
-        <img
-          src={thumbUrl(draft.asset_id)}
-          alt=""
-          loading="lazy"
-          className="h-16 w-24 shrink-0 rounded-lg border border-border bg-white/5 object-cover"
-          onError={(e) => {
-            e.currentTarget.style.visibility = 'hidden'
-          }}
-        />
+        <button
+          type="button"
+          onClick={() => onPreview(draft.uid)}
+          className={cn(
+            'h-16 w-24 shrink-0 overflow-hidden rounded-lg border bg-white/5',
+            selected ? 'border-primary ring-1 ring-primary/50' : 'border-border',
+          )}
+          aria-label={`Preview clip ${index + 1}`}
+        >
+          <img
+            src={thumbUrl(draft.asset_id)}
+            alt=""
+            loading="lazy"
+            className="h-full w-full object-cover"
+            onError={(e) => {
+              e.currentTarget.style.visibility = 'hidden'
+            }}
+          />
+        </button>
 
         <div className="grid min-w-0 flex-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-[110px_110px_minmax(0,1fr)_150px]">
           <div>
@@ -265,10 +281,13 @@ function ClipRow({
 }
 
 export function EditStudioPage() {
+  const location = useLocation()
+  const seeded = location.state as { intent?: string; plan?: EditPlan } | null
   // ---- intent → plan ----
-  const [intent, setIntent] = useState('')
+  const [intent, setIntent] = useState(seeded?.intent ?? '')
   const [plan, setPlan] = useState<EditPlan | null>(null)
   const [drafts, setDrafts] = useState<ClipDraft[]>([])
+  const [previewUid, setPreviewUid] = useState<string | null>(null)
   const [planBusy, setPlanBusy] = useState(false)
   const [planError, setPlanError] = useState<string | null>(null)
 
@@ -304,6 +323,7 @@ export function EditStudioPage() {
   const applyPlan = useCallback((p: EditPlan) => {
     setPlan(p)
     setDrafts(p.clips.map((c) => draftFromClip(c)))
+    setPreviewUid(null)
     setApproved(p.status === 'approved')
     setPlanError(null)
     setSaveError(null)
@@ -322,9 +342,10 @@ export function EditStudioPage() {
     setResolveInfo(null)
   }, [])
 
-  const generatePlan = async () => {
-    const text = intent.trim()
+  const generatePlan = async (override?: string) => {
+    const text = (override ?? intent).trim()
     if (!text || planBusy) return
+    setIntent(text)
     setPlanBusy(true)
     setPlanError(null)
     try {
@@ -336,6 +357,13 @@ export function EditStudioPage() {
       setPlanBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (seeded?.plan) applyPlan(seeded.plan)
+    else if (seeded?.intent) void generatePlan(seeded.intent)
+    // seed once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const patchDraft = useCallback((uid: string, patch: Partial<ClipDraft>) => {
     setDrafts((ds) => ds.map((d) => (d.uid === uid ? { ...d, ...patch } : d)))
@@ -352,6 +380,11 @@ export function EditStudioPage() {
     () => drafts.reduce((sum, d) => sum + clipDuration({ start: num(d.start), end: num(d.end) }), 0),
     [drafts],
   )
+
+  const previewDraft = useMemo(() => {
+    if (drafts.length === 0) return null
+    return drafts.find((d) => d.uid === previewUid) ?? drafts[0]
+  }, [drafts, previewUid])
 
   const saveEdits = async () => {
     if (!plan || saving || approved) return
@@ -564,7 +597,15 @@ export function EditStudioPage() {
                   className="space-y-3"
                 >
                   {drafts.map((d, i) => (
-                    <ClipRow key={d.uid} draft={d} index={i} locked={approved} onChange={patchDraft} />
+                    <ClipRow
+                      key={d.uid}
+                      draft={d}
+                      index={i}
+                      locked={approved}
+                      selected={(previewUid ?? drafts[0]?.uid) === d.uid}
+                      onChange={patchDraft}
+                      onPreview={setPreviewUid}
+                    />
                   ))}
                 </Reorder.Group>
               )}
@@ -572,6 +613,28 @@ export function EditStudioPage() {
 
             {/* settings */}
             <div className="space-y-4">
+              {previewDraft && (
+                <div className="glass rounded-xl p-4">
+                  <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                    Clip proxy
+                  </h3>
+                  <video
+                    key={`${previewDraft.asset_id}-${previewDraft.start}-${previewDraft.end}`}
+                    controls
+                    poster={thumbUrl(previewDraft.asset_id)}
+                    src={`${proxyUrl(previewDraft.asset_id)}#t=${num(previewDraft.start)},${num(previewDraft.end)}`}
+                    className="aspect-video w-full rounded-lg border border-border bg-black"
+                    onLoadedMetadata={(e) => {
+                      const start = num(previewDraft.start)
+                      if (start > 0) e.currentTarget.currentTime = start
+                    }}
+                  />
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    720p proxy · {formatTimecode(num(previewDraft.start))}–
+                    {formatTimecode(num(previewDraft.end))}
+                  </p>
+                </div>
+              )}
               <div className="glass rounded-xl p-4">
                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                   Output settings
@@ -845,6 +908,18 @@ export function EditStudioPage() {
       )}
 
       {/* ---------- empty state ---------- */}
+      {plan && plan.clips.length === 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm">
+          <span>{plan.summary || 'No media found for that place.'}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void generatePlan(`${intent.trim()} widen radius 80km`)}
+          >
+            Widen radius
+          </Button>
+        </div>
+      )}
       {!plan && !planBusy && (
         <EmptyState
           icon={Clapperboard}

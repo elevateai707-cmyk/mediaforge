@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, Images, Loader2, X } from 'lucide-react'
-import { listAssets, listFaces, type AssetQueryParams } from '@/lib/api'
+import { listAssets, listFaces, listPlaces, type AssetQueryParams } from '@/lib/api'
 import type { Asset } from '@/lib/types'
 import { HELP_OPEN_EVENT } from '@/lib/help-kb'
 import { PageHeader } from '@/components/PageHeader'
+import { CommandBar } from '@/components/CommandBar'
+import { TripCards } from '@/components/TripCards'
 import { AssetCard } from '@/components/AssetCard'
 import { AssetLightbox } from '@/components/AssetLightbox'
 import { EmptyState } from '@/components/EmptyState'
@@ -33,6 +36,9 @@ function Field({ label, children, className }: { label: string; children: ReactN
 }
 
 export function LibraryPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tripId = searchParams.get('trip') ? Number(searchParams.get('trip')) : undefined
+  const cityChip = searchParams.get('city') || 'all'
   const [kind, setKind] = useState<'photo' | 'video' | 'all'>('all')
   const [sort, setSort] = useState<'taken_at' | 'aesthetic' | 'added'>('taken_at')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
@@ -45,6 +51,7 @@ export function LibraryPage() {
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const { data: faces } = useQuery({ queryKey: ['faces'], queryFn: listFaces })
+  const { data: places } = useQuery({ queryKey: ['places'], queryFn: listPlaces })
 
   const params: AssetQueryParams = useMemo(
     () => ({
@@ -56,8 +63,10 @@ export function LibraryPage() {
       face: face === 'all' ? undefined : face,
       date_from: dateFrom || undefined,
       date_to: dateTo || undefined,
+      city: cityChip !== 'all' ? cityChip : undefined,
+      trip_id: Number.isFinite(tripId) ? tripId : undefined,
     }),
-    [kind, sort, order, q, tag, face, dateFrom, dateTo],
+    [kind, sort, order, q, tag, face, dateFrom, dateTo, cityChip, tripId],
   )
 
   const {
@@ -95,7 +104,16 @@ export function LibraryPage() {
 
   const items = data?.pages.flatMap((p) => p.items) ?? []
   const total = data?.pages[0]?.total ?? 0
-  const hasFilters = Boolean((kind !== 'all' && kind) || q.trim() || tag.trim() || (face && face !== 'all') || dateFrom || dateTo)
+  const hasFilters = Boolean(
+    (kind !== 'all' && kind) ||
+      q.trim() ||
+      tag.trim() ||
+      (face && face !== 'all') ||
+      dateFrom ||
+      dateTo ||
+      cityChip !== 'all' ||
+      Number.isFinite(tripId),
+  )
 
   const clearFilters = () => {
     setKind('all')
@@ -104,10 +122,12 @@ export function LibraryPage() {
     setFace('all')
     setDateFrom('')
     setDateTo('')
+    setSearchParams({})
   }
 
   return (
     <div>
+      <CommandBar />
       <PageHeader
         title={
           <>
@@ -123,6 +143,38 @@ export function LibraryPage() {
           ) : undefined
         }
       />
+
+      <TripCards />
+
+      {places && places.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams)
+              next.delete('city')
+              setSearchParams(next)
+            }}
+            className={`rounded-full border px-2.5 py-1 text-[11px] ${cityChip === 'all' ? 'border-primary/40 bg-primary/15 text-primary' : 'border-border text-muted-foreground'}`}
+          >
+            All cities
+          </button>
+          {places.slice(0, 12).map((p) => (
+            <button
+              key={p.city}
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams)
+                next.set('city', p.city)
+                setSearchParams(next)
+              }}
+              className={`rounded-full border px-2.5 py-1 text-[11px] ${cityChip === p.city ? 'border-primary/40 bg-primary/15 text-primary' : 'border-border text-muted-foreground'}`}
+            >
+              {p.city} ({p.count})
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* filters */}
       <motion.div

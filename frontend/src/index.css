@@ -187,11 +187,16 @@ textarea {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.leaflet-container {
+  background: #1a1612;
+  font-family: var(--font-sans);
+  z-index: 0;
+}
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom,
+.leaflet-control {
+  z-index: 1;
 }
 
 img.media-frame {

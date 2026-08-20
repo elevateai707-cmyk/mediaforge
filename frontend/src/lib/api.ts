@@ -10,6 +10,9 @@ import type {
   Health,
   Job,
   JobListResponse,
+  DedupeAction,
+  DedupeOut,
+  Place,
   RenderRatio,
   RenderStatus,
   SceneInfo,
@@ -17,6 +20,7 @@ import type {
   SearchResponse,
   StartJobResponse,
   TranscriptResponse,
+  Trip,
 } from './types'
 
 export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined) ?? ''
@@ -76,6 +80,8 @@ function buildQuery(params: Record<string, string | number | boolean | null | un
 
 export const getHealth = () => request<Health>('/api/health')
 export const getConfig = () => request<AppConfig>('/api/config')
+export const putConfig = (body: Partial<AppConfig>) =>
+  request<AppConfig>('/api/config', { method: 'PUT', body: JSON.stringify(body) })
 
 // ---------- Scan & ingest ----------
 
@@ -99,6 +105,8 @@ export interface AssetQueryParams {
   q?: string
   date_from?: string
   date_to?: string
+  city?: string
+  trip_id?: number
 }
 
 export const listAssets = (params: AssetQueryParams = {}) =>
@@ -134,8 +142,11 @@ export const faceAssets = (clusterId: number, limit = 50) =>
 
 // ---------- Edit assistant ----------
 
-export const planEdit = (intent: string) =>
-  request<EditPlan>('/api/edits/plan', { method: 'POST', body: JSON.stringify({ intent }) })
+export const planEdit = (intent: string, tripId?: number) =>
+  request<EditPlan>('/api/edits/plan', {
+    method: 'POST',
+    body: JSON.stringify({ intent, trip_id: tripId }),
+  })
 export const getPlan = (planId: string) => request<EditPlan>(`/api/edits/plan/${planId}`)
 export const updatePlan = (planId: string, clips: Clip[]) =>
   request<EditPlan>(`/api/edits/plan/${planId}`, {
@@ -186,6 +197,21 @@ export const applyTouchup = (asset_id: number, preset: string) =>
 
 export const touchupPreviewUrl = (asset_id: number, preset: string) =>
   `${API_BASE}/api/touchup/preview${buildQuery({ asset_id, preset })}`
+
+export const listPlaces = () => request<Place[]>('/api/places')
+export const listTrips = () => request<Trip[]>('/api/trips')
+export const tripReel = (tripId: number, intent?: string) =>
+  request<EditPlan>(`/api/trips/${tripId}/reel`, {
+    method: 'POST',
+    body: JSON.stringify({ intent: intent ?? null }),
+  })
+
+export const getDedupe = () => request<DedupeOut>('/api/dedupe')
+export const resolveDedupe = (pair_id: string, action: DedupeAction) =>
+  request<{ ok: boolean }>('/api/dedupe/resolve', {
+    method: 'POST',
+    body: JSON.stringify({ pair_id, action }),
+  })
 
 // ---------- Jobs ----------
 

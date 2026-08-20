@@ -14,7 +14,7 @@ ROOT = Path("/tmp/mf_golden")
 
 
 def _have_exiftool() -> bool:
-    return shutil.which("exiftool") is not None
+    return shutil.which("exiftool") is not None or Path.home().joinpath(".local/bin/exiftool").is_file()
 
 
 def _tiny_video(path: Path, color: str) -> None:
@@ -33,9 +33,10 @@ def _tiny_video(path: Path, color: str) -> None:
 
 
 def _stamp_iso6709(path: Path, coord: str) -> None:
+    exe = shutil.which("exiftool") or str(Path.home() / ".local/bin/exiftool")
     proc = subprocess.run(
         [
-            "exiftool", "-overwrite_original", "-api", "QuickTimeUTC",
+            exe, "-overwrite_original", "-api", "QuickTimeUTC",
             f"-Keys:GPSCoordinates={coord}",
             str(path),
         ],
