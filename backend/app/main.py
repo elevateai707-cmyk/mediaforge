@@ -28,13 +28,14 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, models, schemas, touchup
+from . import config, fsutil, models, persist, schemas, touchup
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
 from .edits import capcut_export, edl_export, fcpxml_export, planner, render, resolve_export
 from .edits.intent import parse_intent
-from .ingest import dedupe, scanner
+from .ingest import dedupe, music, scanner
+from .ingest import watcher as folder_watcher
 from .ingest.trips import cluster_trips, trip_asset_ids, trip_for_asset
 from .jobs import jobs
 from .ws import manager as ws_manager
@@ -70,6 +71,10 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("startup trip cluster skipped: %s", exc)
     try:
+        folder_watcher.start()
+    except Exception as exc:
+        log.warning("folder watcher not started: %s", exc)
+    try:
         from .ai.pipeline import start_ai_worker
 
         start_ai_worker(app)
@@ -80,6 +85,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # pragma: no cover
         log.warning("gpu payload failed: %s", exc)
     yield
+    folder_watcher.stop()
 
 
 app = FastAPI(title="MediaForge", version=config.VERSION, lifespan=lifespan)
@@ -317,13 +323,37 @@ def get_config():
     except Exception:  # pragma: no cover
         resolve_ok = False
     return schemas.ConfigOut(
-        use_cloud_llm=config.USE_CLOUD_LLM,
-        media_dirs=list(config.MEDIA_DIRS),
+        use_cloud_llm=persist.use_cloud_llm(),
+        media_dirs=persist.media_dirs(),
         ollama_model=config.OLLAMA_MODEL,
         resolve_available=resolve_ok,
-        watcher_enabled=config.WATCHER_ENABLED,
-        music_dir=config.MUSIC_DIR or "",
+        watcher_enabled=persist.watcher_enabled(),
+        music_dir=persist.music_dir(),
     )
+
+
+@app.put("/api/config", response_model=schemas.ConfigOut)
+def put_config(req: schemas.ConfigUpdate):
+    if req.media_dirs is not None:
+        persist.set_media_dirs(req.media_dirs)
+        try:
+            folder_watcher.start()
+        except Exception as exc:
+            log.warning("watcher restart failed: %s", exc)
+    if req.watcher_enabled is not None:
+        persist.set_watcher_enabled(req.watcher_enabled)
+        try:
+            if req.watcher_enabled:
+                folder_watcher.start()
+            else:
+                folder_watcher.stop()
+        except Exception as exc:
+            log.warning("watcher toggle failed: %s", exc)
+    if req.music_dir is not None:
+        persist.set_music_dir(req.music_dir)
+    if req.use_cloud_llm is not None:
+        persist.set_use_cloud_llm(req.use_cloud_llm)
+    return get_config()
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +362,8 @@ def get_config():
 @app.post("/api/scan", response_model=schemas.JobRefOut)
 async def scan(req: schemas.ScanRequest):
     paths = [p for p in (req.paths or []) if p.strip()]
+    if not paths:
+        paths = persist.persisted_media_dirs()
     if not paths:
         raise HTTPException(status_code=422, detail="paths must not be empty")
     job_id = jobs.run(
@@ -343,6 +375,8 @@ async def scan(req: schemas.ScanRequest):
 @app.post("/api/rescan", response_model=schemas.JobRefOut)
 async def rescan(req: schemas.ScanRequest):
     paths = [p for p in (req.paths or []) if p.strip()]
+    if not paths:
+        paths = persist.persisted_media_dirs()
     if not paths:
         raise HTTPException(status_code=422, detail="paths must not be empty")
     job_id = jobs.run(
@@ -356,6 +390,19 @@ def cancel_scan(req: schemas.CancelRequest):
     if not jobs.cancel(req.job_id):
         raise HTTPException(status_code=404, detail=f"job {req.job_id!r} not found")
     return schemas.OkOut(ok=True)
+
+
+@app.post("/api/fs/stat", response_model=schemas.FsStatOut)
+def fs_stat(req: schemas.FsStatRequest):
+    try:
+        return fsutil.stat_path(req.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.get("/api/music", response_model=list[schemas.MusicTrackOut])
+def list_music():
+    return music.list_tracks(persist.music_dir())
 
 
 @app.get("/api/dedupe", response_model=schemas.DedupeOut)

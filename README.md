@@ -75,6 +75,10 @@ one-time warning on `/api/health` and the WebSocket.
    `MEDIA_DIRS=/home/bfam/Videos,/home/bfam/Pictures` in `.env`), start a
    scan job. Supported: jpg/jpeg/png/heic/heif/mov/mp4/m4v/mkv/avi/webm/
    prores-mov. SHA-256 manifests make re-scans skip known files.
+
+**Golden path:** after a scan, `POST /api/edits/plan` with
+`"make a highlight reel for tiktok of my trip to edmonton 9:16"` must parse
+Edmonton / 9:16 / 30s and return only Edmonton clips.
 2. **AI indexing** — the resumable pipeline extracts metadata (EXIF via
    exiftool, GPS, camera, taken-at), generates thumbnails/proxies (FFmpeg),
    embeds frames (CLIP), transcribes speech (whisper), detects faces

@@ -65,5 +65,6 @@ def test_scan_creates_assets_and_thumb(client, wait_job, jpeg_library):
 
 
 def test_scan_requires_paths(client):
+    client.put("/api/config", json={"media_dirs": []})
     r = client.post("/api/scan", json={"paths": []})
     assert r.status_code == 422

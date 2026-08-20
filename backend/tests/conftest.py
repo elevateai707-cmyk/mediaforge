@@ -37,6 +37,7 @@ os.environ["MF_ALLOW_OLLAMA_PULL"] = "0"
 os.environ["MF_SKIP_WHISPER"] = "1"
 os.environ["MF_SKIP_FACES"] = "1"
 os.environ["MF_SKIP_CAPTIONS"] = "1"
+os.environ["MF_SKIP_ENV_WRITE"] = "1"
 
 
 def _cleanup() -> None:

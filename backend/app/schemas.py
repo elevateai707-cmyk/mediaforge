@@ -26,6 +26,13 @@ class ConfigOut(BaseModel):
     music_dir: str = ""
 
 
+class ConfigUpdate(BaseModel):
+    media_dirs: Optional[list[str]] = None
+    watcher_enabled: Optional[bool] = None
+    music_dir: Optional[str] = None
+    use_cloud_llm: Optional[bool] = None
+
+
 # --- Scan / ingest -----------------------------------------------------------
 class ScanRequest(BaseModel):
     paths: list[str] = Field(default_factory=list)
@@ -291,3 +298,22 @@ class TripUpdateRequest(BaseModel):
 
 class TripReelRequest(BaseModel):
     intent: Optional[str] = None
+
+
+class FsStatRequest(BaseModel):
+    path: str
+
+
+class FsStatOut(BaseModel):
+    path: str = ""
+    exists: bool = False
+    is_dir: bool = False
+    videos: int = 0
+    photos: int = 0
+    sample_count: int = 0
+
+
+class MusicTrackOut(BaseModel):
+    name: str
+    path: str
+    ext: str = ""

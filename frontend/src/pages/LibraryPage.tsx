@@ -22,12 +22,12 @@ import { Badge } from '@/components/ui/badge'
 const PAGE_SIZE = 60
 
 export function LibraryPage() {
-  const [kind, setKind] = useState<'photo' | 'video' | ''>('')
+  const [kind, setKind] = useState<'photo' | 'video' | 'all'>('all')
   const [sort, setSort] = useState<'taken_at' | 'aesthetic' | 'added'>('taken_at')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
   const [q, setQ] = useState('')
   const [tag, setTag] = useState('')
-  const [face, setFace] = useState('')
+  const [face, setFace] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [openAsset, setOpenAsset] = useState<Asset | null>(null)
@@ -37,12 +37,12 @@ export function LibraryPage() {
 
   const params: AssetQueryParams = useMemo(
     () => ({
-      kind: kind || undefined,
+      kind: kind === 'all' ? undefined : kind,
       sort,
       order,
       q: q.trim() || undefined,
       tag: tag.trim() || undefined,
-      face: face || undefined,
+      face: face === 'all' ? undefined : face,
       date_from: dateFrom || undefined,
       date_to: dateTo || undefined,
     }),
@@ -84,13 +84,13 @@ export function LibraryPage() {
 
   const items = data?.pages.flatMap((p) => p.items) ?? []
   const total = data?.pages[0]?.total ?? 0
-  const hasFilters = Boolean(kind || q.trim() || tag.trim() || face || dateFrom || dateTo)
+  const hasFilters = Boolean((kind !== 'all' && kind) || q.trim() || tag.trim() || (face && face !== 'all') || dateFrom || dateTo)
 
   const clearFilters = () => {
-    setKind('')
+    setKind('all')
     setQ('')
     setTag('')
-    setFace('')
+    setFace('all')
     setDateFrom('')
     setDateTo('')
   }
@@ -131,7 +131,7 @@ export function LibraryPage() {
             <SelectValue placeholder="All kinds" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All kinds</SelectItem>
+            <SelectItem value="all">All kinds</SelectItem>
             <SelectItem value="photo">Photos</SelectItem>
             <SelectItem value="video">Videos</SelectItem>
           </SelectContent>
@@ -164,7 +164,7 @@ export function LibraryPage() {
             <SelectValue placeholder="Face" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Any face</SelectItem>
+            <SelectItem value="all">Any face</SelectItem>
             {(faces?.clusters ?? []).map((f) => (
               <SelectItem key={f.id} value={String(f.id)}>
                 {f.name ?? `Cluster #${f.id}`} ({f.count})

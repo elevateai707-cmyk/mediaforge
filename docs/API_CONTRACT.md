@@ -22,7 +22,13 @@ Frontend must be built against THIS contract; backend must implement it.
 
 ### System
 - `GET /api/health` → `{"status":"ok","gpu":"cuda|cpu","gpu_name":"...","vram_mb":N,"version":"1.0.0"}`
-- `GET /api/config` → `{"use_cloud_llm":false,"media_dirs":["..."],"ollama_model":"qwen2.5vl:7b","resolve_available":bool}`
+- `GET /api/config` → `{"use_cloud_llm":false,"media_dirs":["..."],"ollama_model":"qwen2.5vl:7b","resolve_available":bool,"watcher_enabled":true,"music_dir":""}`
+- `PUT /api/config` body `{media_dirs?, watcher_enabled?, music_dir?, use_cloud_llm?}` → same as GET; dirs persist to SQLite + `.env`
+- `POST /api/fs/stat` body `{"path":"/abs"}` → `{exists,is_dir,videos,photos,sample_count}` (absolute paths only)
+- `GET /api/places` → `[{city,region,count,lat,lon}]`
+- `GET /api/trips` / `GET /api/trips/{id}` / `PUT /api/trips/{id}` `{title}` / `POST /api/trips/{id}/reel`
+- `GET /api/music` → scanned tracks from `music_dir`
+- `POST /api/edits/plan` body `{intent, trip_id?, auto_approve?}` → includes `parsed_intent` + `match_stats`
 
 ### Scan & ingest (Phase 1)
 - `POST /api/scan` body `{"paths":["/abs/dir1",...]}` → `{"job_id":"...","kind":"scan"}`

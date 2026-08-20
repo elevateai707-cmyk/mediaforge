@@ -233,5 +233,6 @@ else
 fi
 echo
 echo "  Next step: ./scripts/run.sh"
+echo "  golden path: open http://localhost:8420/ and type an Edmonton reel prompt"
 echo "  (re-running this script is always safe — it skips finished steps)"
 echo
