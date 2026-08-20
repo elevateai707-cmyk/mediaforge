@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -21,9 +23,11 @@ from sqlalchemy.orm import Session
 
 from .. import config, models
 from ..db import SessionLocal, store_embedding
+from ..ingest import thumbs
+from ..ingest.place import upgrade_place_from_text
 from ..jobs import JobManager
 from ..ws import broadcast_batch, broadcast_job
-from . import aesthetic, captions, clip, faces, scenes, whisper
+from . import aesthetic, captions, clip, faces, gpu, scenes, whisper
 
 log = logging.getLogger("mediaforge.pipeline")
 
@@ -55,10 +59,8 @@ def _representative_image(db: Session, asset: models.Asset) -> Optional[str]:
         return asset.path
     for p in (asset.poster_path, asset.thumb_path):
         if p:
-            import os
             if os.path.exists(p):
                 return p
-    from ..ingest import thumbs
     at = 0.0
     if asset.duration:
         at = min(max(0.0, asset.duration * 0.1), max(0.0, asset.duration - 0.1))
@@ -124,6 +126,7 @@ def process_asset(db: Session, asset_id: int,
         db.commit()
         stages_run.append("embedding")
         prog(0.2, f"asset {asset_id}: embedding done")
+        _unload_if_tight(clip.unload)
 
     # ---- 2. scenes (videos only) ------------------------------------------
     if cur < 2:
@@ -170,6 +173,10 @@ def process_asset(db: Session, asset_id: int,
                             asset_id=asset.id, start=s["start"],
                             end=s["end"], text=s["text"]))
                     asset.has_transcript = 1
+                    joined = " ".join(
+                        (s.get("text") or "") for s in result["segments"]
+                    )
+                    upgrade_place_from_text(asset, joined, "transcript")
             except Exception as exc:  # noqa: BLE001
                 log.warning("transcription failed for asset %s: %s",
                             asset.id, exc)
@@ -177,6 +184,7 @@ def process_asset(db: Session, asset_id: int,
         db.commit()
         stages_run.append("transcript")
         prog(0.6, f"asset {asset_id}: transcript done")
+        _unload_if_tight(whisper.unload)
 
     # ---- 4. faces ----------------------------------------------------------
     if cur < 4:
@@ -190,6 +198,7 @@ def process_asset(db: Session, asset_id: int,
         db.commit()
         stages_run.append("faces")
         prog(0.75, f"asset {asset_id}: faces done")
+        _unload_if_tight(faces.unload)
 
     # ---- 5. caption ---------------------------------------------------------
     if cur < 5:
@@ -199,6 +208,7 @@ def process_asset(db: Session, asset_id: int,
                 cap = captions.caption_image(img)
                 if cap:
                     asset.caption = cap[:300]
+                    upgrade_place_from_text(asset, asset.caption, "caption")
         asset.status = "captioned"
         db.commit()
         stages_run.append("caption")
@@ -215,6 +225,28 @@ def process_asset(db: Session, asset_id: int,
     if cur >= 6:
         log.debug("asset %s already indexed; skipping", asset_id)
     return {"stages_run": stages_run, "status": asset.status}
+
+
+def next_pending_ids(limit: int = 1) -> list[int]:
+    """Oldest non-indexed asset ids. Never uses (count-1) as an id."""
+    with SessionLocal() as db:
+        rows = (
+            db.query(models.Asset.id)
+            .filter(models.Asset.status != "indexed")
+            .order_by(models.Asset.id.asc())
+            .limit(max(1, limit))
+            .all()
+        )
+        return [int(r[0]) for r in rows]
+
+
+def _unload_if_tight(unload_fn) -> None:
+    """Release a stage's weights when free VRAM is under 1 GB."""
+    try:
+        if gpu.vram_pressure(1024):
+            unload_fn()
+    except Exception as exc:
+        log.debug("unload skipped: %s", exc)
 
 
 def process_pending_batch(limit: int = 1, progress: ProgressFn = None) -> dict:
@@ -277,27 +309,33 @@ def _process_one_sync(asset_id: int) -> None:
 
 
 async def _queue_loop() -> None:
-    """Poll for pending assets and process them one at a time."""
+    """Poll for pending assets and process them in a small parallel pool."""
     _ensure_ai_job_row()
-    while True:
-        try:
-            await asyncio.sleep(2)
-            if not config.AI_ENABLED:
-                return
-            with SessionLocal() as db:
-                pending = (db.query(models.Asset)
-                           .filter(models.Asset.status != "indexed")
-                           .count())
-            if pending == 0:
-                _report(1.0, "queue idle")
-                continue
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, _process_one_sync, pending - 1)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - loop must survive
-            log.exception("ai worker loop error: %s", exc)
-            await asyncio.sleep(5)
+    workers = max(1, min(config.CLIP_JOBS, 8))
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mf-ai")
+    try:
+        while True:
+            try:
+                await asyncio.sleep(2)
+                if not config.AI_ENABLED:
+                    return
+                ids = next_pending_ids(workers)
+                if not ids:
+                    _report(1.0, "queue idle")
+                    continue
+                loop = asyncio.get_running_loop()
+                futs = [
+                    loop.run_in_executor(pool, _process_one_sync, asset_id)
+                    for asset_id in ids
+                ]
+                await asyncio.gather(*futs)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - loop must survive
+                log.exception("ai worker loop error: %s", exc)
+                await asyncio.sleep(5)
+    finally:
+        pool.shutdown(wait=False)
 
 
 def ensure_started() -> bool:

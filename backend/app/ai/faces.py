@@ -65,7 +65,7 @@ def unload() -> None:  # pragma: no cover - VRAM hygiene helper
     """Free the model (and any cached tensors) to release VRAM."""
     global _model
     _model = None
-    gpu.empty_cache()
+    gpu.clear_gpu_cache()
 
 
 # --------------------------------------------------------------------------
