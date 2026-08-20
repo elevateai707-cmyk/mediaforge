@@ -2,18 +2,18 @@
 from __future__ import annotations
 
 from app.geo.gazetteer import geocode_name, reverse_geocode
-from app.geo.iso6709 import parse_iso6709
+from app.geo.iso6709 import parse_point
 
 
 def test_parse_iso6709_edmonton_decimal():
-    pt = parse_iso6709("+53.5461-113.4938/")
+    pt = parse_point("+53.5461-113.4938/")
     assert pt is not None
     assert abs(pt.lat - 53.5461) < 1e-4
     assert abs(pt.lon - (-113.4938)) < 1e-4
 
 
 def test_parse_iso6709_comma_form():
-    pt = parse_iso6709("53.5461, -113.4938")
+    pt = parse_point("53.5461, -113.4938")
     assert pt is not None
     assert abs(pt.lat - 53.5461) < 1e-4
     assert abs(pt.lon - (-113.4938)) < 1e-4

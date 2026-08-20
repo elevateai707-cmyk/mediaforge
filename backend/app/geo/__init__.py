@@ -1,6 +1,7 @@
-"""Offline place intelligence: ISO 6709 parsing, curated metros, reverse geocode."""
+"""Location helpers: ISO 6709 GPS strings, gazetteer, reverse geocode."""
 
-from .gazetteer import (
+from app.geo.iso6709 import GeoPoint, parse, parse_point
+from app.geo.gazetteer import (
     City,
     GeocodeHit,
     find_place_in_text,
@@ -9,17 +10,19 @@ from .gazetteer import (
     load_cities,
     reverse_geocode,
 )
-from .iso6709 import GpsPoint, parse_iso6709, parse_location_value
+
+GpsPoint = GeoPoint
 
 __all__ = [
     "City",
+    "GeoPoint",
     "GeocodeHit",
     "GpsPoint",
     "find_place_in_text",
     "geocode_name",
     "haversine_km",
     "load_cities",
-    "parse_iso6709",
-    "parse_location_value",
+    "parse",
+    "parse_point",
     "reverse_geocode",
 ]

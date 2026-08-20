@@ -22,7 +22,7 @@ from typing import Any, Optional
 from PIL import ExifTags, Image
 from PIL.ExifTags import GPSTAGS
 
-from ..geo.iso6709 import GpsPoint, parse_iso6709, parse_location_value
+from ..geo.iso6709 import GeoPoint, parse_point
 from ..proc import tool_env
 
 log = logging.getLogger("mediaforge.metadata")
@@ -113,7 +113,33 @@ def _apply_hemisphere(value: Any, ref: Any, south_or_west: str) -> Optional[floa
     return num
 
 
-def gps_from_exif_row(row: dict[str, Any]) -> Optional[GpsPoint]:
+def parse_location_value(value: Any) -> Optional[GeoPoint]:
+    """Best-effort GPS tag: ISO 6709 string, number pair, or GeoPoint."""
+    if value is None:
+        return None
+    if isinstance(value, GeoPoint):
+        return value
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            lat = float(value[0])
+            lon = float(value[1])
+        except (TypeError, ValueError):
+            return None
+        alt = None
+        if len(value) >= 3:
+            try:
+                alt = float(value[2])
+            except (TypeError, ValueError):
+                alt = None
+        if abs(lat) <= 90.0 and abs(lon) <= 180.0:
+            return GeoPoint(lat=lat, lon=lon, alt=alt)
+        return None
+    if isinstance(value, (str, bytes)):
+        return parse_point(value)
+    return parse_point(str(value))
+
+
+def gps_from_exif_row(row: dict[str, Any]) -> Optional[GeoPoint]:
     """Pull WGS84 coordinates out of one exiftool JSON object."""
     if not row:
         return None
@@ -133,7 +159,7 @@ def gps_from_exif_row(row: dict[str, Any]) -> Optional[GpsPoint]:
     except (TypeError, ValueError):
         alt = None
     if lat_f is not None and lon_f is not None and abs(lat_f) <= 90 and abs(lon_f) <= 180:
-        return GpsPoint(lat=lat_f, lon=lon_f, alt=alt)
+        return GeoPoint(lat=lat_f, lon=lon_f, alt=alt)
 
     for key, value in row.items():
         hint = key.lower().replace(":", "")
@@ -142,12 +168,12 @@ def gps_from_exif_row(row: dict[str, Any]) -> Optional[GpsPoint]:
         pt = parse_location_value(value)
         if pt is not None:
             if alt is not None and pt.alt is None:
-                return GpsPoint(lat=pt.lat, lon=pt.lon, alt=alt)
+                return GeoPoint(lat=pt.lat, lon=pt.lon, alt=alt)
             return pt
     return None
 
 
-def gps_from_ffprobe(data: dict[str, Any]) -> Optional[GpsPoint]:
+def gps_from_ffprobe(data: dict[str, Any]) -> Optional[GeoPoint]:
     """Read location tags from ffprobe format.tags and stream.tags."""
     blobs: list[Any] = []
     fmt_tags = (data.get("format") or {}).get("tags") or {}
@@ -194,7 +220,7 @@ def _guess_mime(path: str) -> str:
     }.get(ext, "application/octet-stream")
 
 
-def _set_gps(out: dict[str, Any], pt: Optional[GpsPoint]) -> None:
+def _set_gps(out: dict[str, Any], pt: Optional[GeoPoint]) -> None:
     if pt is None:
         return
     if out.get("gps_lat") is None:
@@ -288,7 +314,7 @@ def _image_metadata(path: str, out: dict) -> None:
                                 alt = float(gps.get("GPSAltitude"))
                             except (TypeError, ValueError):
                                 alt = None
-                        _set_gps(out, GpsPoint(lat=lat_f, lon=lon_f, alt=alt))
+                        _set_gps(out, GeoPoint(lat=lat_f, lon=lon_f, alt=alt))
                     except Exception:
                         pass
     except Exception as exc:
