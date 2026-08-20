@@ -3,6 +3,10 @@
 exiftool is installed by scripts/setup.sh; until then the backend degrades
 gracefully: images use Pillow EXIF, videos use ffprobe. Every field is
 optional and never raises.
+
+GPS extraction covers iPhone stills and .MOV/.MP4 files: numeric EXIF GPS,
+Keys:GPSCoordinates, Com.apple.quicktime.location.ISO6709, XMP LocationShown,
+and ffprobe format/stream location tags.
 """
 from __future__ import annotations
 
@@ -15,11 +19,39 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from PIL import ExifTags, Image
+from PIL.ExifTags import GPSTAGS
+
+from ..geo.iso6709 import GpsPoint, parse_iso6709, parse_location_value
 from ..proc import tool_env
 
 log = logging.getLogger("mediaforge.metadata")
 
 EXIFTOOL = "exiftool"
+
+# Tag names (with or without group prefixes) that often hold ISO6709 strings.
+_LOCATION_TAG_HINTS = (
+    "gpscoordinates",
+    "iso6709",
+    "location",
+    "gpsposition",
+)
+
+EXIFTOOL_ARGS = [
+    EXIFTOOL, "-json", "-n",
+    "-DateTimeOriginal", "-CreateDate", "-MediaCreateDate",
+    "-Make", "-Model",
+    "-GPSLatitude", "-GPSLongitude", "-GPSLatitudeRef", "-GPSLongitudeRef",
+    "-GPSAltitude",
+    "-GPSCoordinates",
+    "-Keys:GPSCoordinates",
+    "-QuickTime:GPSCoordinates",
+    "-QuickTime:LocationInformation",
+    "-LocationShownGPSLatitude", "-LocationShownGPSLongitude",
+    "-XMP:GPSLatitude", "-XMP:GPSLongitude",
+    "-Composite:GPSLatitude", "-Composite:GPSLongitude",
+    "-Composite:GPSPosition",
+]
 
 
 def _run(cmd: list[str], timeout: int = 20) -> Optional[subprocess.CompletedProcess]:
@@ -55,7 +87,7 @@ def _parse_dt(value: Any) -> Optional[datetime]:
     if not s:
         return None
     s = re.sub(r"[:.](\d{2})$", r" \1", s, count=1) if "T" not in s else s
-    for fmt in ("%Y:%m:%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
+    for fmt in ("%Y:%m:%d %H:%M:%S", "%Y-%m:%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
                 "%Y-%m-%dT%H:%M:%S.%f", "%Y:%m:%d %H:%M:%S%z",
                 "%Y-%m-%dT%H:%M:%S%z"):
         try:
@@ -71,37 +103,75 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return None
 
 
-def _exif_to_gps(proc: subprocess.CompletedProcess) -> tuple[Optional[float], Optional[float]]:
+def _apply_hemisphere(value: Any, ref: Any, south_or_west: str) -> Optional[float]:
     try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return None, None
-    if not data:
-        return None, None
-    row = data[0]
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(ref, str) and ref.strip().upper().startswith(south_or_west):
+        return -abs(num)
+    return num
+
+
+def gps_from_exif_row(row: dict[str, Any]) -> Optional[GpsPoint]:
+    """Pull WGS84 coordinates out of one exiftool JSON object."""
+    if not row:
+        return None
+
     lat = row.get("GPSLatitude")
     lon = row.get("GPSLongitude")
-    lat_ref = row.get("GPSLatitudeRef", "N")
-    lon_ref = row.get("GPSLongitudeRef", "E")
+    if lat is None:
+        lat = row.get("LocationShownGPSLatitude") or row.get("XMP:GPSLatitude")
+    if lon is None:
+        lon = row.get("LocationShownGPSLongitude") or row.get("XMP:GPSLongitude")
+    lat_f = _apply_hemisphere(lat, row.get("GPSLatitudeRef"), "S")
+    lon_f = _apply_hemisphere(lon, row.get("GPSLongitudeRef"), "W")
+    alt: Optional[float] = None
     try:
-        lat_f = float(lat) * (-1 if lat_ref.upper() == "S" else 1)
-        lon_f = float(lon) * (-1 if lon_ref.upper() == "W" else 1)
+        if row.get("GPSAltitude") is not None:
+            alt = float(row["GPSAltitude"])
     except (TypeError, ValueError):
-        return None, None
-    return lat_f, lon_f
+        alt = None
+    if lat_f is not None and lon_f is not None and abs(lat_f) <= 90 and abs(lon_f) <= 180:
+        return GpsPoint(lat=lat_f, lon=lon_f, alt=alt)
+
+    for key, value in row.items():
+        hint = key.lower().replace(":", "")
+        if not any(h in hint for h in _LOCATION_TAG_HINTS):
+            continue
+        pt = parse_location_value(value)
+        if pt is not None:
+            if alt is not None and pt.alt is None:
+                return GpsPoint(lat=pt.lat, lon=pt.lon, alt=alt)
+            return pt
+    return None
+
+
+def gps_from_ffprobe(data: dict[str, Any]) -> Optional[GpsPoint]:
+    """Read location tags from ffprobe format.tags and stream.tags."""
+    blobs: list[Any] = []
+    fmt_tags = (data.get("format") or {}).get("tags") or {}
+    blobs.extend(fmt_tags.values())
+    for stream in data.get("streams") or []:
+        blobs.extend((stream.get("tags") or {}).values())
+    for value in blobs:
+        pt = parse_location_value(value)
+        if pt is not None:
+            return pt
+    return None
 
 
 def extract_metadata(path: str, kind: str) -> dict[str, Any]:
     """Best-effort metadata extraction. Never raises.
 
     Returns dict with keys: mime, width, height, duration, taken_at,
-    camera_make, camera_model, gps_lat, gps_lon.
+    camera_make, camera_model, gps_lat, gps_lon, gps_alt.
     """
     p = Path(path)
     out: dict[str, Any] = {
         "mime": None, "width": None, "height": None, "duration": None,
         "taken_at": None, "camera_make": None, "camera_model": None,
-        "gps_lat": None, "gps_lon": None,
+        "gps_lat": None, "gps_lon": None, "gps_alt": None,
     }
     if not p.exists():
         return out
@@ -124,8 +194,36 @@ def _guess_mime(path: str) -> str:
     }.get(ext, "application/octet-stream")
 
 
+def _set_gps(out: dict[str, Any], pt: Optional[GpsPoint]) -> None:
+    if pt is None:
+        return
+    if out.get("gps_lat") is None:
+        out["gps_lat"] = pt.lat
+        out["gps_lon"] = pt.lon
+    if out.get("gps_alt") is None and pt.alt is not None:
+        out["gps_alt"] = pt.alt
+
+
+def _apply_exiftool(path: str, out: dict[str, Any]) -> None:
+    if not exiftool_present():
+        return
+    proc = _run(EXIFTOOL_ARGS + [path], timeout=60)
+    if not proc or proc.returncode != 0:
+        return
+    try:
+        data = json.loads(proc.stdout)
+        row = data[0] if data else {}
+    except (json.JSONDecodeError, IndexError):
+        return
+    out["taken_at"] = out["taken_at"] or _parse_dt(
+        row.get("DateTimeOriginal") or row.get("CreateDate") or row.get("MediaCreateDate")
+    )
+    out["camera_make"] = out["camera_make"] or row.get("Make")
+    out["camera_model"] = out["camera_model"] or row.get("Model")
+    _set_gps(out, gps_from_exif_row(row))
+
+
 def _video_metadata(path: str, out: dict) -> None:
-    # ffprobe: duration, dimensions, creation_time
     proc = _run(["ffprobe", "-v", "quiet", "-print_format", "json",
                  "-show_format", "-show_streams", path], timeout=60)
     if proc and proc.returncode == 0:
@@ -147,32 +245,14 @@ def _video_metadata(path: str, out: dict) -> None:
                     out["duration"] = None
             created = fmt.get("tags", {}).get("creation_time")
             out["taken_at"] = _parse_dt(created) if created else None
+            _set_gps(out, gps_from_ffprobe(data))
         except (json.JSONDecodeError, ValueError):
             pass
-    # exiftool adds camera info for phone videos when available
-    if exiftool_present():
-        proc = _run([EXIFTOOL, "-json", "-DateTimeOriginal", "-Make", "-Model",
-                     "-GPSLatitude", "-GPSLongitude", "-GPSLatitudeRef",
-                     "-GPSLongitudeRef", path], timeout=60)
-        if proc and proc.returncode == 0:
-            try:
-                data = json.loads(proc.stdout)
-                row = data[0] if data else {}
-                out["taken_at"] = out["taken_at"] or _parse_dt(
-                    row.get("DateTimeOriginal"))
-                out["camera_make"] = row.get("Make")
-                out["camera_model"] = row.get("Model")
-                lat, lon = _exif_to_gps(proc)
-                out["gps_lat"] = out["gps_lat"] or lat
-                out["gps_lon"] = out["gps_lon"] or lon
-            except (json.JSONDecodeError, IndexError):
-                pass
+    _apply_exiftool(path, out)
 
 
 def _image_metadata(path: str, out: dict) -> None:
-    # Pillow: dimensions (+ EXIF when exiftool absent)
     try:
-        from PIL import Image, ExifTags
         with Image.open(path) as img:
             out["width"], out["height"] = img.size
             exif = img.getexif()
@@ -187,40 +267,30 @@ def _image_metadata(path: str, out: dict) -> None:
                     out["camera_make"] = str(make).strip()
                 if model:
                     out["camera_model"] = str(model).strip()
-                lat = exif.get(0x8825)  # GPS IFD
-                if lat is not None:
+                gps_ifd = exif.get(0x8825)
+                if gps_ifd is not None:
                     try:
-                        from PIL.ExifTags import GPSTAGS
-                        gps = {GPSTAGS.get(k, k): v for k, v in lat.items()}
+                        gps = {GPSTAGS.get(k, k): v for k, v in gps_ifd.items()}
+
                         def _dms(v):
                             d, m, s = v
-                            return d + m / 60.0 + s / 3600.0
+                            return float(d) + float(m) / 60.0 + float(s) / 3600.0
+
                         lat_f = _dms(gps.get("GPSLatitude"))
                         lon_f = _dms(gps.get("GPSLongitude"))
                         if gps.get("GPSLatitudeRef") == "S":
                             lat_f = -lat_f
                         if gps.get("GPSLongitudeRef") == "W":
                             lon_f = -lon_f
-                        out["gps_lat"], out["gps_lon"] = lat_f, lon_f
+                        alt = None
+                        if gps.get("GPSAltitude") is not None:
+                            try:
+                                alt = float(gps.get("GPSAltitude"))
+                            except (TypeError, ValueError):
+                                alt = None
+                        _set_gps(out, GpsPoint(lat=lat_f, lon=lon_f, alt=alt))
                     except Exception:
                         pass
     except Exception as exc:
         log.debug("Pillow metadata failed for %s: %s", path, exc)
-    # exiftool (when installed) gives richer tags
-    if exiftool_present():
-        proc = _run([EXIFTOOL, "-json", "-DateTimeOriginal", "-Make", "-Model",
-                     "-GPSLatitude", "-GPSLongitude", "-GPSLatitudeRef",
-                     "-GPSLongitudeRef", path], timeout=60)
-        if proc and proc.returncode == 0:
-            try:
-                data = json.loads(proc.stdout)
-                row = data[0] if data else {}
-                out["taken_at"] = out["taken_at"] or _parse_dt(
-                    row.get("DateTimeOriginal"))
-                out["camera_make"] = out["camera_make"] or row.get("Make")
-                out["camera_model"] = out["camera_model"] or row.get("Model")
-                lat, lon = _exif_to_gps(proc)
-                out["gps_lat"] = out["gps_lat"] or lat
-                out["gps_lon"] = out["gps_lon"] or lon
-            except (json.JSONDecodeError, IndexError):
-                pass
+    _apply_exiftool(path, out)
