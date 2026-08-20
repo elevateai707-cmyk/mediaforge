@@ -8,8 +8,7 @@ from app.models import Asset
 
 def test_worker_selects_real_asset_id_not_count_minus_one(client):
     with SessionLocal() as db:
-        db.query(Asset).update({Asset.status: "indexed"})
-        db.commit()
+        snapshot = {a.id: a.status for a in db.query(Asset).all()}
         for aid in (10, 11):
             existing = db.get(Asset, aid)
             if existing is not None:
@@ -24,9 +23,20 @@ def test_worker_selects_real_asset_id_not_count_minus_one(client):
                     kind="photo",
                     status="pending",
                 ))
+        db.query(Asset).filter(~Asset.id.in_([10, 11])).update(
+            {Asset.status: "indexed"}, synchronize_session=False
+        )
         db.commit()
         pending = db.query(Asset).filter(Asset.status != "indexed").count()
 
-    ids = next_pending_ids(1)
-    assert ids == [10], f"expected asset 10, got {ids} (count-1 would be {pending - 1})"
-    assert pending - 1 != 10
+    try:
+        ids = next_pending_ids(1)
+        assert ids == [10], f"expected asset 10, got {ids} (count-1 would be {pending - 1})"
+        assert pending - 1 != 10
+    finally:
+        with SessionLocal() as db:
+            for aid, status in snapshot.items():
+                row = db.get(Asset, aid)
+                if row is not None:
+                    row.status = status
+            db.commit()

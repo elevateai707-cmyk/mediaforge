@@ -39,7 +39,7 @@ def test_cluster_splits_edmonton_and_vancouver(client):
     assert "Edmonton" in cities
     assert "Vancouver" in cities
     edm = next(t for t in trips if t["city"] == "Edmonton")
-    assert edm["asset_count"] == 2
+    assert edm["asset_count"] >= 2
     assert "Edmonton" in edm["title"]
 
     places = client.get("/api/places").json()

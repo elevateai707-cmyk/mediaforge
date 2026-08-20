@@ -110,6 +110,7 @@ class EditPlan(Base):
     intent = Column(Text, nullable=True)
     status = Column(String, default="draft", index=True)  # draft | approved
     summary = Column(Text, nullable=True)
+    parsed_json = Column(Text, nullable=True)
     target_ratio = Column(String, default="9:16")
     total_duration = Column(Float, default=0.0)
     created_at = Column(DateTime, default=_utcnow)

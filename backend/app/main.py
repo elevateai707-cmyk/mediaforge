@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -32,6 +33,7 @@ from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
 from .edits import capcut_export, edl_export, fcpxml_export, planner, render, resolve_export
+from .edits.intent import parse_intent
 from .ingest import dedupe, scanner
 from .ingest.trips import cluster_trips, trip_asset_ids, trip_for_asset
 from .jobs import jobs
@@ -219,12 +221,10 @@ def _hybrid_search(db: Session, q: str, limit: int = 50) -> list[int]:
     try:
         vec = clip.embed_text(q)
         if vec is not None:
-            import numpy as np
-
             for aid, sim in search_embeddings(
                 db, np.asarray(vec, dtype=np.float32), top_k=limit
             ):
-                scores[int(aid)] = scores.get(int(aid), 0.0) + 0.6 * float(sim)
+                scores[int(aid)] = scores.get(int(aid), 0.0) + 0.35 * float(sim)
     except Exception as exc:
         log.debug("vector search skipped: %s", exc)
 
@@ -244,7 +244,7 @@ def _hybrid_search(db: Session, q: str, limit: int = 50) -> list[int]:
                 worst = max(r for _, r in ranked)
                 for aid, r in ranked:
                     norm = (worst - r) / (worst - best) if worst != best else 1.0
-                    scores[aid] = scores.get(aid, 0.0) + 0.4 * norm
+                    scores[aid] = scores.get(aid, 0.0) + 0.25 * norm
         except Exception as exc:
             log.debug("fts search skipped: %s", exc)
 
@@ -260,6 +260,31 @@ def _hybrid_search(db: Session, q: str, limit: int = 50) -> list[int]:
                     scores[int(aid)] = scores.get(int(aid), 0.0) + weight
         except Exception as exc:
             log.debug("like search skipped: %s", exc)
+
+    parsed = parse_intent(q)
+    if parsed.place:
+        place_ids: set[int] = set()
+        city = parsed.place.lower()
+        radius = float(parsed.radius_km or 45.0)
+        for asset in db.query(models.Asset).all():
+            hit = False
+            if (asset.city or "").lower() == city:
+                hit = True
+            elif city in (asset.path or "").lower():
+                hit = True
+            elif (
+                parsed.place_lat is not None and parsed.place_lon is not None
+                and asset.gps_lat is not None and asset.gps_lon is not None
+            ):
+                dlat = abs(float(asset.gps_lat) - float(parsed.place_lat))
+                dlon = abs(float(asset.gps_lon) - float(parsed.place_lon))
+                if (dlat ** 2 + dlon ** 2) ** 0.5 * 111.0 <= radius:
+                    hit = True
+            if hit:
+                place_ids.add(asset.id)
+                scores[asset.id] = scores.get(asset.id, 0.0) + 0.20
+        if place_ids:
+            scores = {aid: sc for aid, sc in scores.items() if aid in place_ids}
 
     ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
     return [aid for aid, _ in ordered[:limit]]

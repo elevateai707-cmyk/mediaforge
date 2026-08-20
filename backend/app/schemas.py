@@ -184,6 +184,8 @@ class PlanOut(BaseModel):
     target_ratio: str = "9:16"
     intent: Optional[str] = None
     created_at: Optional[str] = None
+    parsed_intent: Optional[dict[str, Any]] = None
+    match_stats: Optional[dict[str, Any]] = None
 
 
 class PlanUpdateRequest(BaseModel):

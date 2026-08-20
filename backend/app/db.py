@@ -155,6 +155,10 @@ def _migrate_place_columns(conn) -> None:
     conn.execute(text(
         "CREATE INDEX IF NOT EXISTS ix_trip_assets_asset_id ON trip_assets(asset_id)"
     ))
+    plan_rows = conn.execute(text("PRAGMA table_info(edit_plans)")).fetchall()
+    existing_plans = {r[1] for r in plan_rows}
+    if "parsed_json" not in existing_plans:
+        conn.execute(text("ALTER TABLE edit_plans ADD COLUMN parsed_json TEXT"))
 
 
 # ---------------------------------------------------------------------------

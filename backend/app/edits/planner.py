@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +27,9 @@ from sqlalchemy import or_
 
 from .. import models
 from ..db import SessionLocal
+from ..geo.gazetteer import haversine_km
+from ..ingest.trips import trip_asset_ids
+from .intent import Intent, parse_intent
 
 log = logging.getLogger("mediaforge.planner")
 
@@ -83,34 +87,115 @@ def _clamp_duration(d: float) -> float:
 # Candidate gathering (shared by the LLM prompt and the fallback)
 # ---------------------------------------------------------------------------
 
-def _restrict_to_trip(query, db, trip_id: Optional[int]):
-    if not trip_id:
+def _place_asset_ids(db, parsed: Intent, radius_mult: float = 1.0) -> Optional[set[int]]:
+    """Asset ids matching the requested place/trip.
+
+    None = no place constraint. Empty set = place was requested and nothing matched.
+    """
+    if parsed.trip_id:
+        return set(trip_asset_ids(db, parsed.trip_id))
+    if not parsed.place:
+        return None
+    city = parsed.place.lower()
+    radius = float(parsed.radius_km or 45.0) * radius_mult
+    ids: set[int] = set()
+    for asset in db.query(models.Asset).all():
+        if (asset.city or "").lower() == city:
+            ids.add(asset.id)
+            continue
+        if (asset.region or "").lower() == city:
+            ids.add(asset.id)
+            continue
+        path_l = (asset.path or "").lower()
+        if city in path_l:
+            ids.add(asset.id)
+            continue
+        if (
+            parsed.place_lat is not None and parsed.place_lon is not None
+            and asset.gps_lat is not None and asset.gps_lon is not None
+        ):
+            dist = haversine_km(
+                float(parsed.place_lat), float(parsed.place_lon),
+                float(asset.gps_lat), float(asset.gps_lon),
+            )
+            if dist <= radius:
+                ids.add(asset.id)
+    return ids
+
+
+def _restrict_ids(query, ids: Optional[set[int]]):
+    if ids is None:
         return query
-    ids = [r[0] for r in
-           db.query(models.TripAsset.asset_id).filter_by(trip_id=trip_id).all()]
     if not ids:
         return query.filter(models.Asset.id == -1)
     return query.filter(models.Asset.id.in_(ids))
 
 
-def _candidate_sources(db, limit: int = 40, trip_id: Optional[int] = None) -> list[dict]:
-    """Scenes of video assets ordered by aesthetic score, then whole assets.
+def _row_source(asset: models.Asset, scene=None) -> dict:
+    if scene is not None:
+        start = float(scene.start or 0.0)
+        end = float(scene.end or 0.0)
+        caption = scene.caption or asset.caption or ""
+        score = float(scene.aesthetic_score or asset.aesthetic_score or 0.0)
+        scene_id = scene.id
+    else:
+        start = 0.0
+        end = max(MIN_CLIP, float(asset.duration or 4.0))
+        caption = asset.caption or ""
+        score = float(asset.aesthetic_score or 0.0)
+        scene_id = None
+    return {
+        "asset_id": asset.id,
+        "scene_id": scene_id,
+        "start": start,
+        "end": end,
+        "caption": caption,
+        "score": score,
+        "path": asset.path,
+        "kind": asset.kind,
+        "city": asset.city,
+        "taken_at": asset.taken_at.isoformat() if asset.taken_at else None,
+    }
 
-    Returns a list of dicts:
-      {asset_id, scene_id (or None), start, end, caption, score, path, kind}
-    Videos with detected scenes contribute one entry per scene; videos without
-    scenes contribute one entry spanning the whole file; photos contribute a
-    static entry when no video material exists at all.
-    """
+
+def _candidate_sources(db, parsed: Optional[Intent] = None, limit: int = 40,
+                       trip_id: Optional[int] = None) -> tuple[list[dict], dict]:
+    """Place-prefiltered scenes. Never mixes another city into a placed request."""
+    if parsed is None:
+        parsed = parse_intent("", trip_id=trip_id)
+    elif trip_id and not parsed.trip_id:
+        parsed.trip_id = trip_id
+
+    ids = _place_asset_ids(db, parsed, radius_mult=1.0)
+    stats = {
+        "place": parsed.place,
+        "radius_km": parsed.radius_km,
+        "matched_assets": len(ids) if ids is not None else None,
+        "widened": False,
+    }
+    if ids is not None:
+        video_n = 0
+        if ids:
+            video_n = (
+                db.query(models.Asset)
+                .filter(models.Asset.id.in_(ids), models.Asset.kind == "video")
+                .count()
+            )
+        if video_n < 3:
+            wider = _place_asset_ids(db, parsed, radius_mult=2.0)
+            if wider is not None and len(wider) > len(ids or []):
+                ids = wider
+                stats["widened"] = True
+                stats["matched_assets"] = len(ids)
+                stats["radius_km"] = float(parsed.radius_km or 45.0) * 2.0
+
     sources: list[dict] = []
-
-    # Scenes (video segmentation) first — highest value edit material.
     scene_q = (
         db.query(models.Scene, models.Asset)
         .join(models.Asset, models.Asset.id == models.Scene.asset_id)
         .filter(models.Asset.kind == "video")
     )
-    scene_q = _restrict_to_trip(scene_q, db, trip_id)
+    scene_q = _restrict_ids(scene_q, ids)
     scene_rows = (
         scene_q
         .order_by(models.Scene.aesthetic_score.desc().nullslast())
@@ -121,48 +206,30 @@ def _candidate_sources(db, limit: int = 40, trip_id: Optional[int] = None) -> li
         dur = max(0.0, float(scene.end or 0.0) - float(scene.start or 0.0))
         if dur < MIN_CLIP:
             continue
-        sources.append({
-            "asset_id": asset.id, "scene_id": scene.id,
-            "start": float(scene.start or 0.0),
-            "end": float(scene.end or 0.0),
-            "caption": scene.caption or asset.caption or "",
-            "score": float(scene.aesthetic_score or 0.0),
-            "path": asset.path, "kind": asset.kind,
-        })
+        if not os.path.isfile(asset.path or ""):
+            continue
+        sources.append(_row_source(asset, scene))
 
-    # Whole videos with no usable scenes (or too few scenes).
     if len(sources) < limit:
-        seen = {s["scene_id"] for s in sources}
-        video_q = (
-            db.query(models.Asset)
-            .filter(models.Asset.kind == "video")
-        )
-        video_q = _restrict_to_trip(video_q, db, trip_id)
+        video_q = db.query(models.Asset).filter(models.Asset.kind == "video")
+        video_q = _restrict_ids(video_q, ids)
         video_rows = (
             video_q
             .order_by(models.Asset.aesthetic_score.desc().nullslast())
             .limit(limit)
             .all()
         )
+        have = {s["asset_id"] for s in sources}
         for asset in video_rows:
-            if asset.scene_count and asset.id in {s["asset_id"] for s in sources}:
-                continue  # already covered by its scenes
-            dur = float(asset.duration or 5.0)
-            sources.append({
-                "asset_id": asset.id, "scene_id": None,
-                "start": 0.0, "end": max(MIN_CLIP, dur),
-                "caption": asset.caption or "",
-                "score": float(asset.aesthetic_score or 0.0),
-                "path": asset.path, "kind": asset.kind,
-            })
+            if asset.scene_count and asset.id in have:
+                continue
+            if not os.path.isfile(asset.path or ""):
+                continue
+            sources.append(_row_source(asset))
 
-    # Photos as static clips only when there is no video at all.
     if not sources:
-        photo_q = (
-            db.query(models.Asset)
-            .filter(models.Asset.kind == "photo")
-        )
-        photo_q = _restrict_to_trip(photo_q, db, trip_id)
+        photo_q = db.query(models.Asset).filter(models.Asset.kind == "photo")
+        photo_q = _restrict_ids(photo_q, ids)
         photo_rows = (
             photo_q
             .order_by(models.Asset.aesthetic_score.desc().nullslast())
@@ -170,16 +237,16 @@ def _candidate_sources(db, limit: int = 40, trip_id: Optional[int] = None) -> li
             .all()
         )
         for asset in photo_rows:
-            sources.append({
-                "asset_id": asset.id, "scene_id": None,
-                "start": 0.0, "end": 4.0,
-                "caption": asset.caption or "",
-                "score": float(asset.aesthetic_score or 0.0),
-                "path": asset.path, "kind": asset.kind,
-            })
+            if not os.path.isfile(asset.path or ""):
+                continue
+            sources.append(_row_source(asset))
 
-    sources.sort(key=lambda s: (s["score"], s["asset_id"]), reverse=True)
-    return sources[:limit]
+    if parsed.trip_id or parsed.place:
+        sources.sort(key=lambda s: (s.get("taken_at") or "", s["start"]))
+    else:
+        sources.sort(key=lambda s: (s["score"], s["asset_id"]), reverse=True)
+    stats["candidate_clips"] = len(sources[:limit])
+    return sources[:limit], stats
 
 
 def _intent_keywords(intent: str) -> list[str]:
@@ -208,35 +275,57 @@ def _caption_text(asset: models.Asset, scene: Optional[models.Scene]) -> str:
 # Deterministic fallback planner
 # ---------------------------------------------------------------------------
 
-def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None) -> dict:
-    """Greedy: keyword-matched scenes by aesthetic score, budgeted to duration."""
-    target = _parse_duration(intent)
-    ratio = _parse_ratio(intent)
+def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None,
+                        parsed: Optional[Intent] = None) -> dict:
+    """Greedy: place-prefiltered scenes, budgeted to duration."""
+    parsed = parsed or parse_intent(intent, trip_id=trip_id)
+    if trip_id:
+        parsed.trip_id = trip_id
+    target = parsed.duration_s
+    ratio = parsed.ratio
     keywords = _intent_keywords(intent)
-    sources = _candidate_sources(db, trip_id=trip_id)
+    sources, stats = _candidate_sources(db, parsed=parsed, trip_id=trip_id)
+
+    if parsed.place and not sources:
+        place = parsed.place
+        return {
+            "summary": (
+                f"No media found in {place}. Scan a folder or widen the radius."
+            ),
+            "clips": [],
+            "total_duration": 0.0,
+            "target_ratio": ratio,
+            "source": "empty",
+            "parsed_intent": parsed.to_dict(),
+            "match_stats": stats,
+        }
 
     if keywords:
         scored: list[tuple[float, dict]] = []
         for s in sources:
-            text = f"{s['caption']} {s['path']}".lower()
+            text = f"{s['caption']} {s['path']} {s.get('city') or ''}".lower()
             hits = sum(1 for k in keywords if k in text)
-            if hits:
-                scored.append((hits, s))
+            scored.append((hits, s))
         scored.sort(key=lambda t: (t[0], t[1]["score"]), reverse=True)
         picked = [s for _h, s in scored]
-        if not picked:
-            picked = sources
     else:
         picked = sources
 
+    # Diversity: at most 2 clips from the same source minute.
     clips: list[dict] = []
     budget = 0.0
+    minute_counts: dict[tuple[int, int], int] = {}
     for s in picked:
         if budget >= target - 0.25:
             break
+        minute_key = (int(s["asset_id"]), int(float(s["start"]) // 60))
+        if minute_counts.get(minute_key, 0) >= 2:
+            continue
         dur = _clamp_duration(min(float(s["end"]) - float(s["start"]), MAX_CLIP))
         if budget + dur > target + 0.5:
-            dur = max(MIN_CLIP, target - budget)  # final clip to hit the target
+            dur = max(MIN_CLIP, target - budget)
+        if dur < MIN_CLIP:
+            continue
         clips.append({
             "asset_id": s["asset_id"],
             "scene_id": s.get("scene_id"),
@@ -246,12 +335,13 @@ def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None) -> dict:
             "transition": "crossfade",
             "score": round(float(s.get("score") or 0.0), 2),
         })
+        minute_counts[minute_key] = minute_counts.get(minute_key, 0) + 1
         budget += dur
 
-    matched = len(keywords) > 0
+    place_bit = f" in {parsed.place}" if parsed.place else ""
     summary = (
-        f"Deterministic plan from {len(clips)} clip(s) "
-        + ("matched to intent keywords." if matched else "(no keyword matches; top aesthetic scenes).")
+        f"Matched {stats.get('matched_assets') or len(clips)} clips{place_bit}. "
+        f"Deterministic plan from {len(clips)} clip(s)."
     )
     return {
         "summary": summary,
@@ -259,6 +349,8 @@ def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None) -> dict:
         "total_duration": round(budget, 2),
         "target_ratio": ratio,
         "source": "fallback",
+        "parsed_intent": parsed.to_dict(),
+        "match_stats": stats,
     }
 
 
@@ -332,7 +424,7 @@ def _extract_json(text: str) -> Optional[dict]:
     return None
 
 
-def _normalize_clips(clips: Any, db) -> list[dict]:
+def _normalize_clips(clips: Any, db, allowed_ids: Optional[set[int]] = None) -> list[dict]:
     """Validate/normalize model clips; drop anything referencing unknown ids."""
     out: list[dict] = []
     if not isinstance(clips, list):
@@ -346,6 +438,8 @@ def _normalize_clips(clips: Any, db) -> list[dict]:
         try:
             asset_id = int(raw_asset_id)
         except (TypeError, ValueError):
+            continue
+        if allowed_ids is not None and asset_id not in allowed_ids:
             continue
         asset = db.get(models.Asset, asset_id)
         if asset is None:
@@ -388,9 +482,10 @@ def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dic
         log.info("ollama_llm unavailable (%s); using fallback planner",
                  _OLLAMA_IMPORT_ERROR)
         return None
-    target = _parse_duration(intent)
-    ratio = _parse_ratio(intent)
-    sources = _candidate_sources(db, limit=30, trip_id=trip_id)
+    parsed = parse_intent(intent, trip_id=trip_id)
+    target = parsed.duration_s
+    ratio = parsed.ratio
+    sources, stats = _candidate_sources(db, parsed=parsed, limit=30, trip_id=trip_id)
     if not sources:
         return None
 
@@ -412,7 +507,10 @@ def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dic
         data = _extract_json(text)
         if not isinstance(data, dict):
             continue
-        clips = _normalize_clips(data.get("clips"), db)
+        clips = _normalize_clips(
+            data.get("clips"), db,
+            allowed_ids={s["asset_id"] for s in sources},
+        )
         if not clips:
             continue
         return {
@@ -422,6 +520,8 @@ def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dic
             "total_duration": round(sum(c["end"] - c["start"] for c in clips), 2),
             "target_ratio": str(data.get("target_ratio", ratio)),
             "source": "ollama",
+            "parsed_intent": parsed.to_dict(),
+            "match_stats": stats,
         }
     return None
 
@@ -447,6 +547,12 @@ def _clip_dict(c: models.EditClip) -> dict:
 
 
 def _plan_dict(plan: models.EditPlan) -> dict:
+    extra: dict[str, Any] = {}
+    if plan.parsed_json:
+        try:
+            extra = json.loads(plan.parsed_json)
+        except json.JSONDecodeError:
+            extra = {}
     return {
         "plan_id": plan.id,
         "status": plan.status,
@@ -456,22 +562,29 @@ def _plan_dict(plan: models.EditPlan) -> dict:
         "target_ratio": plan.target_ratio or DEFAULT_RATIO,
         "intent": plan.intent,
         "created_at": plan.created_at.isoformat() if plan.created_at else None,
+        "parsed_intent": extra.get("parsed_intent"),
+        "match_stats": extra.get("match_stats"),
     }
 
 
 def create_plan(intent: str, trip_id: Optional[int] = None) -> dict:
-    """POST /api/edits/plan: build + persist a draft plan; never raises for
-    planning failures (deterministic fallback always produces a valid plan)."""
+    """POST /api/edits/plan: build + persist a draft plan."""
     with SessionLocal() as db:
+        parsed = parse_intent(intent, trip_id=trip_id)
         plan_data = _ollama_plan(intent, db, trip_id=trip_id) or _deterministic_plan(
-            intent, db, trip_id=trip_id
+            intent, db, trip_id=trip_id, parsed=parsed
         )
         plan_id = _new_plan_id()
+        blob = json.dumps({
+            "parsed_intent": plan_data.get("parsed_intent") or parsed.to_dict(),
+            "match_stats": plan_data.get("match_stats") or {},
+        })
         plan = models.EditPlan(
             id=plan_id,
             intent=intent,
             status="draft",
             summary=plan_data.get("summary"),
+            parsed_json=blob,
             target_ratio=plan_data.get("target_ratio", DEFAULT_RATIO),
             total_duration=plan_data.get("total_duration", 0.0),
         )
