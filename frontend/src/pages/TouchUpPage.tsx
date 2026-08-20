@@ -12,6 +12,7 @@ import {
 import type { Asset } from '@/lib/types'
 import { onJobEvent, useWsStore } from '@/lib/ws'
 import { AssetCard } from '@/components/AssetCard'
+import { EmptyState } from '@/components/EmptyState'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -129,12 +130,13 @@ export function TouchUpPage() {
               {queryError instanceof Error ? queryError.message : 'Failed to load photos.'}
             </div>
           ) : photos.length === 0 ? (
-            <div className="glass flex flex-col items-center gap-3 rounded-xl p-14 text-center">
-              <Images className="h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                No photos indexed yet — add media folders in Settings and run a scan.
-              </p>
-            </div>
+            <EmptyState
+              icon={Images}
+              title="No photos indexed"
+              description="Add media folders in Settings and run a scan first."
+              actionLabel="Scan folders"
+              actionTo="/settings"
+            />
           ) : (
             <div className="glass max-h-[560px] overflow-y-auto rounded-xl p-3">
               <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 xl:grid-cols-5">

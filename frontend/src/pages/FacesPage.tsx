@@ -7,6 +7,7 @@ import type { Asset, FaceCluster } from '@/lib/types'
 import { PageHeader } from '@/components/PageHeader'
 import { AssetCard } from '@/components/AssetCard'
 import { AssetLightbox } from '@/components/AssetLightbox'
+import { EmptyState } from '@/components/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -75,12 +76,13 @@ export function FacesPage() {
           ))}
         </div>
       ) : !data || data.clusters.length === 0 ? (
-        <div className="glass flex flex-col items-center gap-3 rounded-xl p-14 text-center">
-          <Users className="h-8 w-8 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            No face clusters yet. Run a scan and let the AI pipeline finish before checking back.
-          </p>
-        </div>
+        <EmptyState
+          icon={Users}
+          title="No clusters yet"
+          description="Run a scan and let the AI job finish. Then name a person so Library and Search can find them."
+          actionLabel="Go scan"
+          actionTo="/settings"
+        />
       ) : (
         <motion.div layout className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
           {data.clusters.map((c) => (

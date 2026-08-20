@@ -33,6 +33,7 @@ import type { Clip, EditPlan, ExportFormat, RenderRatio, RenderStatus } from '@/
 import { RENDER_RATIOS, ratioDimensions } from '@/lib/types'
 import { onJobEvent, useWsStore } from '@/lib/ws'
 import { PageHeader } from '@/components/PageHeader'
+import { EmptyState } from '@/components/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -845,13 +846,11 @@ export function EditStudioPage() {
 
       {/* ---------- empty state ---------- */}
       {!plan && !planBusy && (
-        <div className="glass flex flex-col items-center gap-3 rounded-xl p-14 text-center">
-          <Clapperboard className="h-10 w-10 text-muted-foreground/50" />
-          <p className="max-w-md text-sm text-muted-foreground">
-            Describe the video you want in plain language. MediaForge will pick the best scenes, build
-            a draft timeline, and hand it to you for review — then render and export it to your editor.
-          </p>
-        </div>
+        <EmptyState
+          icon={Clapperboard}
+          title="Describe the cut"
+          description="Name a place, a ratio, and a mood. Example: make a highlight reel for tiktok of my trip to edmonton 9:16. Approve before FFmpeg runs."
+        />
       )}
 
       {/* ---------- export 503 dialog (e.g. Resolve not running) ---------- */}

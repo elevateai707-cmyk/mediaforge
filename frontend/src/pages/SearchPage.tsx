@@ -13,9 +13,11 @@ import {
 } from 'recharts'
 import { searchAssets } from '@/lib/api'
 import type { Asset } from '@/lib/types'
+import { HELP_OPEN_EVENT } from '@/lib/help-kb'
 import { PageHeader } from '@/components/PageHeader'
 import { AssetCard } from '@/components/AssetCard'
 import { AssetLightbox } from '@/components/AssetLightbox'
+import { EmptyState } from '@/components/EmptyState'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -183,12 +185,15 @@ export function SearchPage() {
       )}
 
       {!query && (
-        <div className="glass flex flex-col items-center gap-2 rounded-xl p-14 text-center">
-          <SearchIcon className="h-10 w-10 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">
-            Type a natural-language query above — results appear live.
-          </p>
-        </div>
+        <EmptyState
+          icon={SearchIcon}
+          title="Ask in a sentence"
+          description="CLIP + transcripts + named faces. Try “beach sunset clips with Kaleb talking” or “vancouver skyline night”."
+          actionLabel="Ask Forge about search"
+          onAction={() =>
+            window.dispatchEvent(new CustomEvent(HELP_OPEN_EVENT, { detail: { q: 'How do I search my clips?' } }))
+          }
+        />
       )}
 
       <AssetLightbox assetId={openAsset?.id ?? null} onOpenChange={(o) => !o && setOpenAsset(null)} />

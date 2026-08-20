@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=MediaForge
+Comment=Local-first AI cutting room — scan, search, and edit
+Exec=/home/bfam/mediaforge/scripts/launch.sh
+Icon=/home/bfam/mediaforge/frontend/public/mediaforge-512.png
+Terminal=false
+Categories=AudioVideo;Video;Graphics;Photography;
+Keywords=media;photo;video;ai;edit;search;forge;
+StartupNotify=true
+StartupWMClass=mediaforge

@@ -33,7 +33,7 @@ export function JobProgressPanel() {
   const visible = running.filter((j) => !dismissed[j.job_id])
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-40 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+    <div className="pointer-events-none fixed bottom-20 left-4 z-40 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 md:bottom-4 md:left-[calc(15rem+1rem)]">
       <AnimatePresence>
         {visible.map((job) => (
           <motion.div

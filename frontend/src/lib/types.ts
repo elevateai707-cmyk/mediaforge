@@ -23,6 +23,11 @@ export interface Asset {
   faces: string[]
   scene_count: number | null
   has_transcript: boolean
+  city?: string | null
+  region?: string | null
+  country?: string | null
+  place_name?: string | null
+  trip_id?: number | null
 }
 
 export interface AssetListResponse {
