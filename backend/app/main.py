@@ -24,15 +24,16 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import or_, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from . import config, models, schemas, touchup
 from .ai import clip
 from .ai import gpu
-from .db import get_db, init_db, search_embeddings
+from .db import SessionLocal, get_db, init_db, search_embeddings
 from .edits import capcut_export, edl_export, fcpxml_export, planner, render, resolve_export
 from .ingest import dedupe, scanner
+from .ingest.trips import cluster_trips, trip_asset_ids, trip_for_asset
 from .jobs import jobs
 from .ws import manager as ws_manager
 
@@ -58,6 +59,14 @@ _RENDER_OUTPUTS: dict[str, str] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    try:
+        with SessionLocal() as db:
+            n_assets = db.query(models.Asset).count()
+            n_trips = db.query(models.Trip).count()
+        if n_assets and n_trips == 0:
+            cluster_trips()
+    except Exception as exc:
+        log.warning("startup trip cluster skipped: %s", exc)
     try:
         from .ai.pipeline import start_ai_worker
 
@@ -123,6 +132,14 @@ def _asset_out(db: Session, asset: models.Asset) -> dict:
         "camera_model": asset.camera_model,
         "gps_lat": asset.gps_lat,
         "gps_lon": asset.gps_lon,
+        "gps_alt": asset.gps_alt,
+        "city": asset.city,
+        "region": asset.region,
+        "country": asset.country,
+        "place_name": asset.place_name,
+        "location_source": asset.location_source,
+        "location_confidence": asset.location_confidence,
+        "trip_id": trip_for_asset(db, asset.id),
         "aesthetic_score": asset.aesthetic_score,
         "caption": asset.caption,
         "status": asset.status,
@@ -275,10 +292,12 @@ def get_config():
     except Exception:  # pragma: no cover
         resolve_ok = False
     return schemas.ConfigOut(
-        use_cloud_llm=False,
+        use_cloud_llm=config.USE_CLOUD_LLM,
         media_dirs=list(config.MEDIA_DIRS),
         ollama_model=config.OLLAMA_MODEL,
         resolve_available=resolve_ok,
+        watcher_enabled=config.WATCHER_ENABLED,
+        music_dir=config.MUSIC_DIR or "",
     )
 
 
@@ -349,6 +368,9 @@ def list_assets(
     lat: Optional[float] = Query(None),
     lon: Optional[float] = Query(None),
     radius_km: Optional[float] = Query(None),
+    city: Optional[str] = Query(None),
+    trip_id: Optional[int] = Query(None),
+    min_aesthetic: Optional[float] = Query(None),
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Asset)
@@ -367,14 +389,23 @@ def list_assets(
             )
         )
 
-    if face:
-        rows = db.execute(
-            text(
-                "SELECT DISTINCT fd.asset_id FROM face_detections fd "
-                "JOIN face_clusters fc ON fc.id = fd.cluster_id "
-                "WHERE fc.name = :n"
-            ).bindparams(n=face)
-        ).fetchall()
+    if face and face.lower() != "all":
+        if face.isdigit():
+            rows = db.execute(
+                text(
+                    "SELECT DISTINCT fd.asset_id FROM face_detections fd "
+                    "JOIN face_clusters fc ON fc.id = fd.cluster_id "
+                    "WHERE fc.id = :cid OR lower(fc.name) = lower(:n)"
+                ).bindparams(cid=int(face), n=face)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                text(
+                    "SELECT DISTINCT fd.asset_id FROM face_detections fd "
+                    "JOIN face_clusters fc ON fc.id = fd.cluster_id "
+                    "WHERE lower(fc.name) = lower(:n)"
+                ).bindparams(n=face)
+            ).fetchall()
         ids = [r[0] for r in rows]
         if not ids:
             return schemas.AssetListOut(total=0, items=[])
@@ -398,6 +429,18 @@ def list_assets(
             models.Asset.gps_lat.between(lat - dlat, lat + dlat),
             models.Asset.gps_lon.between(lon - dlon, lon + dlon),
         )
+
+    if city:
+        query = query.filter(func.lower(models.Asset.city) == city.strip().lower())
+
+    if trip_id is not None:
+        ids = trip_asset_ids(db, trip_id)
+        if not ids:
+            return schemas.AssetListOut(total=0, items=[])
+        query = query.filter(models.Asset.id.in_(ids))
+
+    if min_aesthetic is not None:
+        query = query.filter(models.Asset.aesthetic_score >= min_aesthetic)
 
     if q:
         ids = _hybrid_search(db, q, limit=250)
@@ -602,12 +645,109 @@ def merge_faces(req: schemas.FaceMergeRequest, db: Session = Depends(get_db)):
     return schemas.OkOut(ok=True)
 
 
+def _trip_out(trip: models.Trip) -> dict:
+    return {
+        "id": trip.id,
+        "title": trip.title,
+        "city": trip.city,
+        "region": trip.region,
+        "start_at": _iso(trip.start_at),
+        "end_at": _iso(trip.end_at),
+        "asset_count": trip.asset_count or 0,
+        "cover_asset_id": trip.cover_asset_id,
+        "lat": trip.lat,
+        "lon": trip.lon,
+        "radius_km": trip.radius_km,
+    }
+
+
+@app.get("/api/places", response_model=list[schemas.PlaceOut])
+def list_places(db: Session = Depends(get_db)):
+    rows = (
+        db.query(
+            models.Asset.city,
+            models.Asset.region,
+            func.count(models.Asset.id),
+            func.avg(models.Asset.gps_lat),
+            func.avg(models.Asset.gps_lon),
+        )
+        .filter(models.Asset.city.isnot(None), models.Asset.city != "")
+        .group_by(models.Asset.city, models.Asset.region)
+        .order_by(func.count(models.Asset.id).desc())
+        .all()
+    )
+    return [
+        schemas.PlaceOut(
+            city=city,
+            region=region,
+            count=int(count or 0),
+            lat=float(lat) if lat is not None else None,
+            lon=float(lon) if lon is not None else None,
+        )
+        for city, region, count, lat, lon in rows
+    ]
+
+
+@app.get("/api/trips", response_model=list[schemas.TripOut])
+def list_trips(db: Session = Depends(get_db)):
+    trips = (
+        db.query(models.Trip)
+        .order_by(models.Trip.start_at.desc().nullslast())
+        .all()
+    )
+    return [_trip_out(t) for t in trips]
+
+
+@app.get("/api/trips/{trip_id}", response_model=schemas.TripDetailOut)
+def get_trip(trip_id: int, db: Session = Depends(get_db)):
+    trip = db.get(models.Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail=f"trip {trip_id} not found")
+    ids = trip_asset_ids(db, trip_id)
+    assets = []
+    if ids:
+        rows = db.query(models.Asset).filter(models.Asset.id.in_(ids)).all()
+        rank = {aid: i for i, aid in enumerate(ids)}
+        rows.sort(key=lambda a: rank.get(a.id, len(ids)))
+        assets = [_asset_out(db, a) for a in rows]
+    return schemas.TripDetailOut(**_trip_out(trip), assets=assets)
+
+
+@app.put("/api/trips/{trip_id}", response_model=schemas.TripOut)
+def rename_trip(trip_id: int, req: schemas.TripUpdateRequest, db: Session = Depends(get_db)):
+    trip = db.get(models.Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail=f"trip {trip_id} not found")
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="title must not be empty")
+    trip.title = title
+    db.commit()
+    return _trip_out(trip)
+
+
+@app.post("/api/trips/{trip_id}/reel", response_model=schemas.PlanOut)
+def trip_reel(trip_id: int, req: schemas.TripReelRequest, db: Session = Depends(get_db)):
+    trip = db.get(models.Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail=f"trip {trip_id} not found")
+    place = trip.city or "this trip"
+    intent = (req.intent or "").strip() or (
+        f"make a highlight reel for tiktok of my trip to {place} 9:16"
+    )
+    return planner.create_plan(intent, trip_id=trip_id)
+
+
 # ---------------------------------------------------------------------------
 # edit planner
 # ---------------------------------------------------------------------------
 @app.post("/api/edits/plan", response_model=schemas.PlanOut)
 def create_plan(req: schemas.PlanRequest):
-    return planner.create_plan(req.intent)
+    plan = planner.create_plan(req.intent, trip_id=req.trip_id)
+    if req.auto_approve and plan.get("clips"):
+        planner.approve_plan(plan["plan_id"])
+        plan = planner.get_plan(plan["plan_id"]) or plan
+    return plan
 
 
 @app.get("/api/edits/plan/{plan_id}", response_model=schemas.PlanOut)

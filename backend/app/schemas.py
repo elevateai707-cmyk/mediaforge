@@ -22,6 +22,8 @@ class ConfigOut(BaseModel):
     media_dirs: list[str] = []
     ollama_model: str = "qwen2.5vl:7b"
     resolve_available: bool = False
+    watcher_enabled: bool = True
+    music_dir: str = ""
 
 
 # --- Scan / ingest -----------------------------------------------------------
@@ -100,6 +102,14 @@ class AssetOut(BaseModel):
     faces: list[str] = Field(default_factory=list)
     scene_count: int = 0
     has_transcript: bool = False
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+    place_name: Optional[str] = None
+    location_source: Optional[str] = None
+    location_confidence: Optional[float] = None
+    trip_id: Optional[int] = None
+    gps_alt: Optional[float] = None
 
 
 class AssetDetailOut(AssetOut):
@@ -161,6 +171,8 @@ class ClipOut(BaseModel):
 
 class PlanRequest(BaseModel):
     intent: str = "30-second highlight reel, upbeat"
+    trip_id: Optional[int] = None
+    auto_approve: bool = False
 
 
 class PlanOut(BaseModel):
@@ -243,3 +255,37 @@ class JobOut(BaseModel):
     message: Optional[str] = None
     created_at: Optional[str] = None
     finished_at: Optional[str] = None
+
+
+class PlaceOut(BaseModel):
+    city: str
+    region: Optional[str] = None
+    count: int = 0
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
+class TripOut(BaseModel):
+    id: int
+    title: str
+    city: Optional[str] = None
+    region: Optional[str] = None
+    start_at: Optional[str] = None
+    end_at: Optional[str] = None
+    asset_count: int = 0
+    cover_asset_id: Optional[int] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    radius_km: Optional[float] = None
+
+
+class TripDetailOut(TripOut):
+    assets: list[AssetOut] = Field(default_factory=list)
+
+
+class TripUpdateRequest(BaseModel):
+    title: str
+
+
+class TripReelRequest(BaseModel):
+    intent: Optional[str] = None

@@ -83,7 +83,17 @@ def _clamp_duration(d: float) -> float:
 # Candidate gathering (shared by the LLM prompt and the fallback)
 # ---------------------------------------------------------------------------
 
-def _candidate_sources(db, limit: int = 40) -> list[dict]:
+def _restrict_to_trip(query, db, trip_id: Optional[int]):
+    if not trip_id:
+        return query
+    ids = [r[0] for r in
+           db.query(models.TripAsset.asset_id).filter_by(trip_id=trip_id).all()]
+    if not ids:
+        return query.filter(models.Asset.id == -1)
+    return query.filter(models.Asset.id.in_(ids))
+
+
+def _candidate_sources(db, limit: int = 40, trip_id: Optional[int] = None) -> list[dict]:
     """Scenes of video assets ordered by aesthetic score, then whole assets.
 
     Returns a list of dicts:
@@ -95,10 +105,14 @@ def _candidate_sources(db, limit: int = 40) -> list[dict]:
     sources: list[dict] = []
 
     # Scenes (video segmentation) first — highest value edit material.
-    scene_rows = (
+    scene_q = (
         db.query(models.Scene, models.Asset)
         .join(models.Asset, models.Asset.id == models.Scene.asset_id)
         .filter(models.Asset.kind == "video")
+    )
+    scene_q = _restrict_to_trip(scene_q, db, trip_id)
+    scene_rows = (
+        scene_q
         .order_by(models.Scene.aesthetic_score.desc().nullslast())
         .limit(limit * 2)
         .all()
@@ -119,9 +133,13 @@ def _candidate_sources(db, limit: int = 40) -> list[dict]:
     # Whole videos with no usable scenes (or too few scenes).
     if len(sources) < limit:
         seen = {s["scene_id"] for s in sources}
-        video_rows = (
+        video_q = (
             db.query(models.Asset)
             .filter(models.Asset.kind == "video")
+        )
+        video_q = _restrict_to_trip(video_q, db, trip_id)
+        video_rows = (
+            video_q
             .order_by(models.Asset.aesthetic_score.desc().nullslast())
             .limit(limit)
             .all()
@@ -140,9 +158,13 @@ def _candidate_sources(db, limit: int = 40) -> list[dict]:
 
     # Photos as static clips only when there is no video at all.
     if not sources:
-        photo_rows = (
+        photo_q = (
             db.query(models.Asset)
             .filter(models.Asset.kind == "photo")
+        )
+        photo_q = _restrict_to_trip(photo_q, db, trip_id)
+        photo_rows = (
+            photo_q
             .order_by(models.Asset.aesthetic_score.desc().nullslast())
             .limit(limit)
             .all()
@@ -186,12 +208,12 @@ def _caption_text(asset: models.Asset, scene: Optional[models.Scene]) -> str:
 # Deterministic fallback planner
 # ---------------------------------------------------------------------------
 
-def _deterministic_plan(intent: str, db) -> dict:
+def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None) -> dict:
     """Greedy: keyword-matched scenes by aesthetic score, budgeted to duration."""
     target = _parse_duration(intent)
     ratio = _parse_ratio(intent)
     keywords = _intent_keywords(intent)
-    sources = _candidate_sources(db)
+    sources = _candidate_sources(db, trip_id=trip_id)
 
     if keywords:
         scored: list[tuple[float, dict]] = []
@@ -360,7 +382,7 @@ def _normalize_clips(clips: Any, db) -> list[dict]:
     return out
 
 
-def _ollama_plan(intent: str, db) -> Optional[dict]:
+def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dict]:
     """Ask Ollama for the plan; None on any failure (caller falls back)."""
     if _ollama_generate is None:
         log.info("ollama_llm unavailable (%s); using fallback planner",
@@ -368,7 +390,7 @@ def _ollama_plan(intent: str, db) -> Optional[dict]:
         return None
     target = _parse_duration(intent)
     ratio = _parse_ratio(intent)
-    sources = _candidate_sources(db, limit=30)
+    sources = _candidate_sources(db, limit=30, trip_id=trip_id)
     if not sources:
         return None
 
@@ -437,11 +459,13 @@ def _plan_dict(plan: models.EditPlan) -> dict:
     }
 
 
-def create_plan(intent: str) -> dict:
+def create_plan(intent: str, trip_id: Optional[int] = None) -> dict:
     """POST /api/edits/plan: build + persist a draft plan; never raises for
     planning failures (deterministic fallback always produces a valid plan)."""
     with SessionLocal() as db:
-        plan_data = _ollama_plan(intent, db) or _deterministic_plan(intent, db)
+        plan_data = _ollama_plan(intent, db, trip_id=trip_id) or _deterministic_plan(
+            intent, db, trip_id=trip_id
+        )
         plan_id = _new_plan_id()
         plan = models.EditPlan(
             id=plan_id,

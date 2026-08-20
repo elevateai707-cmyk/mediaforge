@@ -25,7 +25,7 @@ TOUCHUP_DIR = Path(os.environ.get("MF_TOUCHUP_DIR", str(EXPORTS_DIR / "touchup")
 DB_PATH = Path(os.environ.get("MF_DB_PATH", str(DATA_DIR / "mediaforge.db"))).resolve()
 RENDER_TMP_DIR = Path(os.environ.get("MF_RENDER_TMP", str(DATA_DIR / "render_tmp"))).resolve()
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 APP_HOST = os.environ.get("MF_HOST", "0.0.0.0")
 APP_PORT = int(os.environ.get("MF_PORT", "8420"))
 
@@ -51,6 +51,13 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", OLLAMA_HOST)
 MEDIA_DIRS = [
     d for d in os.environ.get("MEDIA_DIRS", "").split(",") if d.strip()
 ]
+
+# Parallelism
+FFMPEG_JOBS = int(os.environ.get("MF_FFMPEG_JOBS", "8"))
+CLIP_JOBS = int(os.environ.get("MF_CLIP_JOBS", "4"))
+WATCHER_ENABLED = os.environ.get("MF_WATCHER", "1") == "1"
+MUSIC_DIR = os.environ.get("MF_MUSIC_DIR", "")
+USE_CLOUD_LLM = os.environ.get("USE_CLOUD_LLM", "false").lower() in ("1", "true", "yes")
 
 # Supported media extensions -> kind
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
