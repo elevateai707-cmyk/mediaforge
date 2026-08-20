@@ -32,6 +32,14 @@ class Asset(Base):
     camera_model = Column(String, nullable=True)
     gps_lat = Column(Float, nullable=True)
     gps_lon = Column(Float, nullable=True)
+    gps_alt = Column(Float, nullable=True)
+    place_name = Column(String, nullable=True)
+    city = Column(String, nullable=True, index=True)
+    region = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    country_code = Column(String, nullable=True)
+    location_source = Column(String, nullable=True)  # gps|folder|filename|caption|transcript|manual
+    location_confidence = Column(Float, nullable=True)
     aesthetic_score = Column(Float, nullable=True)
     caption = Column(Text, nullable=True)
     # Resumable pipeline status:
@@ -145,3 +153,34 @@ class SystemSetting(Base):
 
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=True)
+
+
+class Trip(Base):
+    __tablename__ = "trips"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String, nullable=False)
+    city = Column(String, nullable=True, index=True)
+    region = Column(String, nullable=True)
+    start_at = Column(DateTime, nullable=True)
+    end_at = Column(DateTime, nullable=True)
+    asset_count = Column(Integer, default=0)
+    cover_asset_id = Column(Integer, nullable=True)
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+    radius_km = Column(Float, nullable=True)
+
+    members = relationship("TripAsset", back_populates="trip",
+                           cascade="all, delete-orphan")
+
+
+class TripAsset(Base):
+    __tablename__ = "trip_assets"
+    __table_args__ = (
+        UniqueConstraint("trip_id", "asset_id", name="uq_trip_asset"),
+    )
+
+    trip_id = Column(Integer, ForeignKey("trips.id"), primary_key=True)
+    asset_id = Column(Integer, ForeignKey("assets.id"), primary_key=True, index=True)
+
+    trip = relationship("Trip", back_populates="members")

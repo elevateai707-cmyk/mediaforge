@@ -126,6 +126,35 @@ def init_db() -> None:
             " created_at TEXT"
             ")"
         ))
+        _migrate_place_columns(conn)
+
+
+_ASSET_PLACE_COLUMNS = (
+    ("gps_alt", "REAL"),
+    ("place_name", "TEXT"),
+    ("city", "TEXT"),
+    ("region", "TEXT"),
+    ("country", "TEXT"),
+    ("country_code", "TEXT"),
+    ("location_source", "TEXT"),
+    ("location_confidence", "REAL"),
+)
+
+
+def _migrate_place_columns(conn) -> None:
+    """ALTER TABLE ADD COLUMN for existing mediaforge.db libraries. Idempotent."""
+    rows = conn.execute(text("PRAGMA table_info(assets)")).fetchall()
+    existing = {r[1] for r in rows}
+    for name, spec in _ASSET_PLACE_COLUMNS:
+        if name in existing:
+            continue
+        conn.execute(text(f"ALTER TABLE assets ADD COLUMN {name} {spec}"))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_assets_city ON assets(city)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_trip_assets_asset_id ON trip_assets(asset_id)"
+    ))
 
 
 # ---------------------------------------------------------------------------
