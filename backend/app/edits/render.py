@@ -112,8 +112,27 @@ def _has_audio(path: str) -> bool:
 # drawtext escaping (colons, apostrophes, backslashes, % and line wrapping)
 # ---------------------------------------------------------------------------
 
-def _wrap_text(text: str, width: int = 40) -> str:
-    """Word-wrap to ~width chars; returns lines joined with literal \\n."""
+# DejaVu Sans averages ~0.52 em per character; keep a margin so a wide line
+# (caps, wide glyphs) still clears the frame edge.
+_AVG_CHAR_EM = 0.52
+_SAFE_MARGIN = 0.86
+
+
+def _chars_per_line(frame_width: int, fontsize: int) -> int:
+    """How many characters fit on one line at this font size."""
+    usable = frame_width * _SAFE_MARGIN
+    return max(12, int(usable / max(1.0, fontsize * _AVG_CHAR_EM)))
+
+
+def _wrap_text(text: str, width: int = 28) -> str:
+    """Word-wrap to ~width chars, joined with REAL newlines.
+
+    This used to join with a literal backslash-n. _escape_drawtext then
+    doubled the backslash, and by the time ffmpeg's filtergraph parser was
+    done the escape had collapsed to a bare 'n' — captions rendered as
+    "Saint Kittsnand Nevis". Real newlines go through the textfile= path
+    below, which needs no escaping at all.
+    """
     words = text.split()
     if not words:
         return ""
@@ -127,7 +146,34 @@ def _wrap_text(text: str, width: int = 40) -> str:
             cur = f"{cur} {w}".strip()
     if cur:
         lines.append(cur)
-    return "\\n".join(lines)
+    return "\n".join(lines)
+
+
+def _escape_filter_path(path: str) -> str:
+    """Escape a path used as a drawtext option value."""
+    return path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+
+
+def _cleanup_caption_files(plan_id: str) -> None:
+    """Remove this plan's caption temp files (best-effort)."""
+    try:
+        for f in config.RENDER_TMP_DIR.glob(f"cap_{plan_id}_*.txt"):
+            f.unlink(missing_ok=True)
+    except Exception as exc:  # noqa: BLE001 - cleanup must never fail a render
+        log.debug("caption cleanup skipped: %s", exc)
+
+
+def _caption_file(plan_id: str, index: int, text: str) -> str:
+    """Write one caption to a temp file for drawtext's textfile= option.
+
+    Passing captions through textfile= sidesteps filtergraph escaping
+    entirely: no quoting, no colon/apostrophe/percent handling, no newline
+    mangling. Only the path itself needs escaping.
+    """
+    config.RENDER_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    out = config.RENDER_TMP_DIR / f"cap_{plan_id}_{index}.txt"
+    out.write_text(text, encoding="utf-8")
+    return str(out)
 
 
 def _escape_drawtext(text: str) -> str:
@@ -263,6 +309,7 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
     filters: list[str] = []
     vlabels: list[str] = []
     alabels: list[str] = []
+    caption_files: list[str] = []
     # photo loop inputs are video-only; anullsrc inputs follow each asset
     # input, so track input indices explicitly.
     input_index = 0
@@ -294,13 +341,17 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
         chain.append(f"crop={width}:{height}")
         chain.append("setsar=1")
         if captions and pc["clip"].caption:
-            txt = _wrap_text(str(pc["clip"].caption).strip())
+            fontsize = max(18, height // 34)
+            txt = _wrap_text(str(pc["clip"].caption).strip(),
+                             width=_chars_per_line(width, fontsize))
             if txt:
-                escaped = _escape_drawtext(txt)
+                cap_path = _escape_filter_path(
+                    _caption_file(plan_id, i, txt))
+                caption_files.append(cap_path)
                 fontfile = f":fontfile={font}" if font else ""
                 chain.append(
-                    f"drawtext=text='{escaped}'{fontfile}"
-                    f":fontsize={max(18, height // 30)}"
+                    f"drawtext=textfile='{cap_path}'{fontfile}"
+                    f":fontsize={fontsize}:line_spacing=8"
                     ":fontcolor=white:borderw=2:bordercolor=black@0.6"
                     f":x=(w-text_w)/2:y=h-text_h-{max(40, height // 20)}"
                     f":enable='between(t,0,{pc['dur']:.3f})'")
@@ -401,6 +452,8 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
         raise RenderError("ffmpeg render timed out after 2 hours")
     except OSError as exc:
         raise RenderError(f"ffmpeg failed to start: {exc}")
+    finally:
+        _cleanup_caption_files(plan_id)
 
     if proc.returncode != 0:
         tail = (proc.stderr or "").strip().splitlines()[-30:]
