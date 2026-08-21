@@ -73,16 +73,13 @@ def embed_image(image: Union[str, Any]) -> Optional[list]:
     if not available():
         return None
     try:
-        from PIL import Image
+        from ..images import open_rgb
         if isinstance(image, str):
-            img = Image.open(image)
-            img.load()
+            img = open_rgb(image)
         else:
             img = image
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        elif img.mode == "L":
-            img = img.convert("RGB")
+            if img.mode != "RGB":
+                img = img.convert("RGB")
         import torch  # noqa: PLC0415 - deferred heavy import
         with torch.no_grad():
             batch = _preprocess(img).unsqueeze(0).to(_device)
@@ -113,10 +110,17 @@ def embed_text(query: str) -> Optional[list]:
 
 
 def unload() -> None:
-    """Release model weights + CUDA cache (call before other VRAM phases)."""
-    global _model, _preprocess, _tokenizer
+    """Release model weights + CUDA cache (call before other VRAM phases).
+
+    Clears the ``_LOAD_TRIED`` latch as well: unloading means "free VRAM
+    now", not "never load again". Leaving it set made a single VRAM-pressure
+    unload disable CLIP embeddings *and* text search for the rest of the
+    process, because ``_load`` would short-circuit to False forever.
+    """
+    global _model, _preprocess, _tokenizer, _LOAD_TRIED
     _model = None
     _preprocess = None
     _tokenizer = None
+    _LOAD_TRIED = False
     clear_gpu_cache()
     set_model_status("clip", "not_loaded")
