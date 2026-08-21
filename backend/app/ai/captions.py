@@ -17,6 +17,7 @@ import re
 from app import config
 from app.ai import gpu
 from app.ai.ollama_llm import ensure_model, generate, image_to_b64
+from app.images import open_rgb
 
 log = logging.getLogger(__name__)
 
@@ -45,8 +46,6 @@ def _ensure_model_ready() -> bool:
 def _fallback_caption(path: str) -> str:
     """Deterministic fallback: filename stem + dominant colour name."""
     try:
-        from app.images import open_rgb
-
         img = open_rgb(path).resize((64, 64))
         quantized = img.quantize(colors=4)
         palette = quantized.getpalette()
@@ -91,10 +90,17 @@ def caption_image(image_path: str) -> str:
     if not image_path or not os.path.isfile(image_path):
         return "image"
     if _ensure_model_ready():
+        # Encoding is a per-file concern: an unreadable still must not be
+        # reported as an Ollama outage. Only failures from generate() say
+        # anything about the model.
         try:
             b64 = image_to_b64(image_path, max_side=1024)
-            if not b64:
-                return _fallback_caption(image_path)
+        except Exception as exc:  # noqa: BLE001 - one bad file, not a model fault
+            log.debug("caption encode failed for %s: %s", image_path, exc)
+            return _fallback_caption(image_path)
+        if not b64:
+            return _fallback_caption(image_path)
+        try:
             response = generate(
                 model=config.OLLAMA_MODEL,
                 prompt=_CAPTION_PROMPT,

@@ -16,6 +16,7 @@ from typing import Any, Optional, Union
 import numpy as np
 
 from .. import config
+from ..images import open_rgb
 from .gpu import device as gpu_device, set_model_status, clear_gpu_cache
 
 log = logging.getLogger("mediaforge.clip")
@@ -73,7 +74,6 @@ def embed_image(image: Union[str, Any]) -> Optional[list]:
     if not available():
         return None
     try:
-        from ..images import open_rgb
         if isinstance(image, str):
             img = open_rgb(image)
         else:

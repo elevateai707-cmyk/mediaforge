@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover
 
 from .. import config, models
 from ..db import SessionLocal
+from ..images import open_rgb
 from ..ws import broadcast_batch, notify
 from . import metadata, thumbs
 from .place import assign_place
@@ -50,7 +51,6 @@ def _phash_of(path: str) -> Optional[str]:
     if imagehash is None:
         return None
     try:
-        from ..images import open_rgb
         img = open_rgb(path)
         return str(imagehash.phash(img))
     except Exception:

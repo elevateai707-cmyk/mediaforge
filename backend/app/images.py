@@ -3,6 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from PIL import Image, ImageFile
+
+# iPhone libraries carry partially-written stills (interrupted AirDrop/import).
+# Pillow raises OSError("tile cannot extend outside image") on those, which
+# used to abort the caption stage and get reported as an Ollama outage. Decode
+# what is there instead — a slightly short image still captions and hashes fine.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 _HEIF_TRIED = False
 
 
@@ -22,7 +30,6 @@ def ensure_heif() -> None:
 def open_rgb(path: str) -> Any:
     """Open an image path as RGB (HEIC-aware). Caller owns close/lifetime."""
     ensure_heif()
-    from PIL import Image
     img = Image.open(path)
     img.load()
     if img.mode != "RGB":

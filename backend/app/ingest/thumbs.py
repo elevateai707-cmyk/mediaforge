@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 from .. import config
+from ..images import open_rgb
 from ..ingest.metadata import _run
 
 log = logging.getLogger("mediaforge.thumbs")
@@ -24,7 +25,6 @@ PROXY_CRF = 23
 
 def _pil_image(path: str):
     """Open an image with HEIC support if available; None on failure."""
-    from ..images import open_rgb
     return open_rgb(path)
 
 

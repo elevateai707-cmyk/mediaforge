@@ -7,6 +7,7 @@ clear failure message is produced and the calling phase degrades gracefully.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 import subprocess
@@ -16,6 +17,7 @@ from typing import Any, Optional
 import httpx
 
 from .. import config
+from ..images import open_rgb
 from ..proc import tool_env
 from .gpu import set_model_status
 
@@ -188,10 +190,8 @@ def generate(model: str, prompt: str, images: Optional[list[str]] = None,
 
 def image_to_b64(path: str, max_side: int = 768) -> str:
     """Load an image and return base64 JPEG (Ollama vision input)."""
-    from ..images import open_rgb
     img = open_rgb(path)
     img.thumbnail((max_side, max_side))
-    import io
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=85)
     return base64.b64encode(buf.getvalue()).decode("ascii")
