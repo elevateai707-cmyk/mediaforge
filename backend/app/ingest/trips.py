@@ -1,7 +1,9 @@
 """Cluster indexed assets into trips (city + date span).
 
 A trip is a run of assets whose timestamps are within a 36-hour gap of their
-neighbours AND that share a city, sit within 80 km, or live in the same folder.
+neighbours AND that share a place. A known city wins; failing that, GPS within
+80 km; the same-folder fallback applies only when neither asset can be placed
+at all (a phone camera roll puts every city in the same DCIM folder).
 Recompute is idempotent: existing trips are matched by (city, start date, end
 date) so titles survive a rescan.
 """
@@ -48,17 +50,24 @@ def _city_key(asset: models.Asset) -> str:
     return (asset.city or "").strip().lower()
 
 
+def _has_gps(asset: models.Asset) -> bool:
+    return asset.gps_lat is not None and asset.gps_lon is not None
+
+
 def _location_match(a: models.Asset, b: models.Asset) -> bool:
+    """Do two assets belong to the same place?
+
+    Known locations are authoritative. The same-folder fallback only applies
+    when neither side can be placed: a phone camera roll buckets everything
+    into a couple of DCIM folders (100APPLE/101APPLE), so treating "same
+    folder" as "same place" merged every city into one trip.
+    """
     ca, cb = _city_key(a), _city_key(b)
-    if ca and cb and ca == cb:
-        return True
-    if (
-        a.gps_lat is not None and a.gps_lon is not None
-        and b.gps_lat is not None and b.gps_lon is not None
-    ):
-        if haversine_km(float(a.gps_lat), float(a.gps_lon),
-                        float(b.gps_lat), float(b.gps_lon)) < NEAR_KM:
-            return True
+    if ca and cb:
+        return ca == cb
+    if _has_gps(a) and _has_gps(b):
+        return haversine_km(float(a.gps_lat), float(a.gps_lon),
+                            float(b.gps_lat), float(b.gps_lon)) < NEAR_KM
     return _folder(a) == _folder(b)
 
 
@@ -66,6 +75,14 @@ def _can_join(group: list[models.Asset], asset: models.Asset) -> bool:
     prev = group[-1]
     if _when(asset) - _when(prev) > GAP:
         return False
+    # When both the incoming asset and the run already have a known city, the
+    # city decides. Otherwise a single un-placed frame in the middle of the
+    # run acts as a bridge and welds two cities into one trip.
+    asset_city = _city_key(asset)
+    if asset_city:
+        group_cities = {_city_key(m) for m in group if _city_key(m)}
+        if group_cities:
+            return asset_city in group_cities
     return any(_location_match(member, asset) for member in group)
 
 
