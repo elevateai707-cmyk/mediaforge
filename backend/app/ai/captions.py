@@ -45,9 +45,9 @@ def _ensure_model_ready() -> bool:
 def _fallback_caption(path: str) -> str:
     """Deterministic fallback: filename stem + dominant colour name."""
     try:
-        from PIL import Image
+        from app.images import open_rgb
 
-        img = Image.open(path).convert("RGB").resize((64, 64))
+        img = open_rgb(path).resize((64, 64))
         quantized = img.quantize(colors=4)
         palette = quantized.getpalette()
         counts = sorted(quantized.getcolors(), reverse=True)

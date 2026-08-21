@@ -1,9 +1,9 @@
 .venv/
 node_modules/
 dist/
-data/*.db
-data/thumbs/
-data/proxies/
+# Runtime library: the SQLite DB (plus its -wal/-shm sidecars), thumbnails,
+# proxies and render scratch. Several GB — never committed.
+data/
 exports/
 models/
 __pycache__/

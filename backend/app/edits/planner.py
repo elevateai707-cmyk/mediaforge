@@ -490,16 +490,11 @@ def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dic
         return None
 
     prompt = _ollama_prompt(intent, sources, target, ratio)
-    for attempt in (1, 2):
+    for attempt in (1,):
         try:
-            repair = (
-                "Your previous response was not valid JSON. "
-                "Return ONLY a valid JSON object, no markdown, no extra text. "
-                "Same schema as before."
-            ) if attempt == 2 else None
             text = _ollama_generate(
-                "qwen2.5vl:7b", prompt + ("\n" + repair if repair else ""),
-                format="json", temperature=0.2, retries=5,
+                "qwen2.5vl:7b", prompt,
+                format="json", temperature=0.2, retries=1, timeout=12.0,
             )
         except Exception as exc:  # noqa: BLE001 - ollama down -> fallback
             log.warning("ollama plan failed (attempt %d): %s", attempt, exc)

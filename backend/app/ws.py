@@ -25,6 +25,10 @@ class WSManager:
         self._connections: set[WebSocket] = set()
         self._lock = asyncio.Lock()
         self._last_gpu: Optional[dict] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
@@ -49,16 +53,20 @@ class WSManager:
         for ws in conns:
             await self._safe_send(ws, payload)
 
+    def _schedule(self, payload: dict) -> None:
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            log.warning("no running event loop for ws broadcast; dropping event")
+            return
+        asyncio.run_coroutine_threadsafe(self.broadcast(payload), loop)
+
     def set_gpu(self, payload: dict) -> None:
         self._last_gpu = payload
-        asyncio.get_event_loop().create_task(self.broadcast(payload))
+        self._schedule(payload)
 
     def emit(self, payload: dict) -> None:
         """Schedule a broadcast from any thread/context."""
-        try:
-            asyncio.get_event_loop().create_task(self.broadcast(payload))
-        except RuntimeError:
-            log.warning("no running event loop for ws broadcast; dropping event")
+        self._schedule(payload)
 
 
 manager = WSManager()

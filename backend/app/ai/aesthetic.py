@@ -123,9 +123,9 @@ def score_image(image_path: str) -> float:
         features = clip.embed_image(image_path)
         if features is None:
             try:
-                from PIL import Image
+                from app.images import open_rgb
 
-                return _image_stats_score(Image.open(image_path))
+                return _image_stats_score(open_rgb(image_path))
             except Exception:
                 return 5.0
         f = np.asarray(features, dtype=np.float32).reshape(-1)

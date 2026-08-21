@@ -72,7 +72,14 @@ function GpuBadge() {
       </div>
     )
   }
-  const cuda = gpu?.mode === 'cuda'
+  if (!gpu) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs text-muted-foreground">
+        <Cpu className="h-3.5 w-3.5" /> GPU…
+      </div>
+    )
+  }
+  const cuda = gpu.mode === 'cuda'
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -86,13 +93,13 @@ function GpuBadge() {
         >
           {cuda ? <Zap className="h-3.5 w-3.5" /> : <TriangleAlert className="h-3.5 w-3.5" />}
           {cuda ? 'CUDA' : 'CPU'}
-          {gpu?.vram_mb ? <span className="text-muted-foreground">{gpu.vram_mb}MB</span> : null}
+          {gpu.vram_mb ? <span className="text-muted-foreground">{gpu.vram_mb}MB</span> : null}
         </div>
       </TooltipTrigger>
       <TooltipContent>
         {cuda
-          ? `GPU acceleration active${gpu?.vram_mb ? ` · ${gpu.vram_mb} MB VRAM` : ''}`
-          : gpu?.warning ?? 'Running on CPU — AI analysis will be slow.'}
+          ? `GPU acceleration active${gpu.vram_mb ? ` · ${gpu.vram_mb} MB VRAM` : ''}`
+          : gpu.warning ?? 'Running on CPU — AI analysis will be slow.'}
       </TooltipContent>
     </Tooltip>
   )

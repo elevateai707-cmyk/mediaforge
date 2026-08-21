@@ -22,23 +22,10 @@ PROXY_HEIGHT = 720
 PROXY_CRF = 23
 
 
-def _ensure_pil_heif() -> None:
-    try:
-        import pillow_heif  # type: ignore
-        pillow_heif.register_heif_opener()
-    except Exception:
-        pass
-
-
 def _pil_image(path: str):
     """Open an image with HEIC support if available; None on failure."""
-    _ensure_pil_heif()
-    from PIL import Image
-    img = Image.open(path)
-    img.load()
-    if img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
-    return img
+    from ..images import open_rgb
+    return open_rgb(path)
 
 
 def make_thumb(path: str, kind: str, asset_id: int) -> str | None:

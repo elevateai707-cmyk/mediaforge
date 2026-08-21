@@ -11,14 +11,18 @@ cluster names at serialization time.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
 
 import numpy as np
+from sqlalchemy import text
 
 from app import config, db
 from app.ai import gpu
+from app.images import open_rgb
+from app.ingest import thumbs
 from app.models import Asset, FaceDetection
 
 log = logging.getLogger(__name__)
@@ -27,6 +31,10 @@ FACE_DISTANCE_THRESHOLD = 0.45
 
 _model = None
 _init_error: str | None = None
+
+
+def _exec(db_session, sql: str, params: dict[str, Any] | None = None):
+    return db_session.execute(text(sql), params or {})
 
 
 # --------------------------------------------------------------------------
@@ -87,7 +95,9 @@ def detect_faces(image_path: str) -> list[dict[str, Any]]:
     if app is None:
         return []
     try:
-        faces = app.get(np.asarray(db.load_image(image_path)))
+        img = open_rgb(image_path)
+        bgr = np.asarray(img)[:, :, ::-1].copy()
+        faces = app.get(bgr)
         out: list[dict[str, Any]] = []
         for f in faces:
             if f is None or not hasattr(f, "normed_embedding"):
@@ -108,8 +118,9 @@ def detect_faces(image_path: str) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------
 def _all_clusters(db_session) -> list[dict[str, Any]]:
     """[(id, name, member_count, centroid_array), ...] from face_clusters."""
-    rows = db_session.execute(
-        "SELECT id, name, member_count, centroid FROM face_clusters"
+    rows = _exec(
+        db_session,
+        "SELECT id, name, member_count, centroid FROM face_clusters",
     ).fetchall()
     clusters = []
     for row in rows:
@@ -161,7 +172,8 @@ def _upsert_cluster(db_session, embedding: list[float]) -> int:
             if cl["id"] == match:
                 n = int(cl["member_count"])
                 centroid = (n * cl["centroid"] + emb) / (n + 1)
-                db_session.execute(
+                _exec(
+                    db_session,
                     "UPDATE face_clusters SET centroid = :c, member_count = :n WHERE id = :i",
                     {
                         "c": db.pack_embedding(centroid),
@@ -170,7 +182,8 @@ def _upsert_cluster(db_session, embedding: list[float]) -> int:
                     },
                 )
                 return match
-    res = db_session.execute(
+    res = _exec(
+        db_session,
         "INSERT INTO face_clusters (name, centroid, member_count) VALUES (:n, :c, 1)",
         {"n": f"Person {_next_person_index(db_session)}", "c": db.pack_embedding(emb)},
     )
@@ -178,8 +191,9 @@ def _upsert_cluster(db_session, embedding: list[float]) -> int:
 
 
 def _next_person_index(db_session) -> int:
-    row = db_session.execute(
-        "SELECT COUNT(*) FROM face_clusters WHERE name LIKE 'Person %'"
+    row = _exec(
+        db_session,
+        "SELECT COUNT(*) FROM face_clusters WHERE name LIKE 'Person %'",
     ).fetchone()
     return int(row[0]) + 1
 
@@ -189,16 +203,16 @@ def _next_person_index(db_session) -> int:
 # --------------------------------------------------------------------------
 def _frames_for_asset(asset: Asset) -> list[tuple[str, float]]:
     """[(image_path, frame_time)] to analyse for a given asset."""
-    from app.ingest import thumbs
-
     if asset.kind != "video" or not asset.duration or asset.duration <= 0:
         return [(asset.path, 0.0)]
     frames: list[tuple[str, float]] = []
     for frac in (0.25, 0.5, 0.75):
-        t = asset.duration * frac
-        out = thumbs.extract_frame(asset.path, t, asset.id, f"face_{int(frac * 100)}")
-        if out:
-            frames.append((out, t))
+        t = float(asset.duration) * frac
+        out = config.THUMBS_DIR / f"{asset.id}" / f"face_{int(frac * 100)}.jpg"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        path = thumbs.extract_frame(asset.path, str(out), at=t)
+        if path:
+            frames.append((path, t))
     return frames
 
 
@@ -221,8 +235,8 @@ def process_faces_for_asset(db_session, asset: Asset) -> int:
                     asset_id=asset.id,
                     cluster_id=cluster_id,
                     frame_time=frame_time,
-                    bbox=db.json_dumps(det["bbox"]),
-                    embedding=db.json_dumps(det["embedding"]),
+                    bbox=json.dumps(det["bbox"]),
+                    embedding=json.dumps(det["embedding"]),
                 )
             )
             stored += 1
@@ -237,8 +251,10 @@ def rename_cluster(db_session, cluster_id: int, name: str) -> bool:
     name = (name or "").strip()
     if not name:
         return False
-    res = db_session.execute(
-        "UPDATE face_clusters SET name = :n WHERE id = :i", {"n": name, "i": cluster_id}
+    res = _exec(
+        db_session,
+        "UPDATE face_clusters SET name = :n WHERE id = :i",
+        {"n": name, "i": cluster_id},
     )
     return res.rowcount > 0
 
@@ -247,11 +263,15 @@ def merge_clusters(db_session, from_id: int, into_id: int) -> bool:
     """Move all detections of ``from_id`` into ``into_id`` and merge centroids."""
     if from_id == into_id:
         return False
-    src = db_session.execute(
-        "SELECT member_count, centroid FROM face_clusters WHERE id = :i", {"i": from_id}
+    src = _exec(
+        db_session,
+        "SELECT member_count, centroid FROM face_clusters WHERE id = :i",
+        {"i": from_id},
     ).fetchone()
-    dst = db_session.execute(
-        "SELECT member_count, centroid FROM face_clusters WHERE id = :i", {"i": into_id}
+    dst = _exec(
+        db_session,
+        "SELECT member_count, centroid FROM face_clusters WHERE id = :i",
+        {"i": into_id},
     ).fetchone()
     if not src or not dst:
         return False
@@ -262,27 +282,30 @@ def merge_clusters(db_session, from_id: int, into_id: int) -> bool:
         centroid = (int(src[0]) * src_c + int(dst[0]) * dst_c) / n
     else:
         centroid = dst_c if dst_c is not None else src_c
-    db_session.execute(
+    _exec(
+        db_session,
         "UPDATE face_clusters SET centroid = :c, member_count = :n WHERE id = :i",
         {"c": db.pack_embedding(centroid) if centroid is not None else None, "n": n, "i": into_id},
     )
-    db_session.execute(
+    _exec(
+        db_session,
         "UPDATE face_detections SET cluster_id = :to WHERE cluster_id = :fr",
         {"to": into_id, "fr": from_id},
     )
-    db_session.execute("DELETE FROM face_clusters WHERE id = :i", {"i": from_id})
+    _exec(db_session, "DELETE FROM face_clusters WHERE id = :i", {"i": from_id})
     return True
 
 
 def cluster_summary(db_session) -> list[dict[str, Any]]:
     """All clusters with name, member count and a representative asset id."""
-    rows = db_session.execute(
+    rows = _exec(
+        db_session,
         """
         SELECT c.id, c.name, c.member_count,
                (SELECT d.asset_id FROM face_detections d
                 WHERE d.cluster_id = c.id ORDER BY d.id LIMIT 1) AS asset_id
         FROM face_clusters c ORDER BY c.member_count DESC, c.id ASC
-        """
+        """,
     ).fetchall()
     return [
         {"id": r[0], "name": r[1], "member_count": r[2], "asset_id": r[3]} for r in rows
@@ -291,7 +314,8 @@ def cluster_summary(db_session) -> list[dict[str, Any]]:
 
 def faces_for_asset(db_session, asset_id: int) -> list[dict[str, Any]]:
     """Named face clusters present in an asset (deduplicated, by count)."""
-    rows = db_session.execute(
+    rows = _exec(
+        db_session,
         """
         SELECT c.id, c.name, COUNT(*) AS n
         FROM face_detections d JOIN face_clusters c ON c.id = d.cluster_id

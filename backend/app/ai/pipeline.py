@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
 import numpy as np
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .. import config, models
@@ -43,6 +44,27 @@ STAGE_ORDER = {
 
 AI_JOB_ID = "ai-worker"
 ProgressFn = Optional[Callable[[float, str], None]]
+
+# An asset that raises before reaching status='indexed' is re-selected by
+# next_pending_ids on the very next poll, so a single reproducible failure
+# starves the whole queue — that is how the SQLAlchemy-2 FTS crash took the
+# worker down and flooded the job tray. After MAX_ASSET_FAILURES consecutive
+# failures we quarantine the id for this process so the queue keeps draining.
+# The error stays on Asset.status_error, and a restart retries it.
+MAX_ASSET_FAILURES = 3
+_failures: dict[int, int] = {}
+_quarantined: set[int] = set()
+
+
+def quarantined_ids() -> set[int]:
+    """Asset ids skipped this process after repeated pipeline failures."""
+    return set(_quarantined)
+
+
+def clear_quarantine() -> None:
+    """Forget failure history (used by tests and a manual re-queue)."""
+    _failures.clear()
+    _quarantined.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -80,12 +102,14 @@ def _rebuild_fts(db: Session, asset: models.Asset) -> None:
     ).strip()
     payload = f"{transcript_text}\n{caption_text}\n{scene_text}".strip()
     db.execute(
-        "DELETE FROM asset_fts WHERE asset_id = :a",
+        text("DELETE FROM asset_fts WHERE asset_id = :a"),
         {"a": asset.id},
     )
     db.execute(
-        "INSERT INTO asset_fts (asset_id, transcript, caption) "
-        "VALUES (:a, :t, :c)",
+        text(
+            "INSERT INTO asset_fts (asset_id, transcript, caption) "
+            "VALUES (:a, :t, :c)"
+        ),
         {"a": asset.id, "t": payload, "c": caption_text},
     )
 
@@ -218,6 +242,9 @@ def process_asset(db: Session, asset_id: int,
     if cur < 6:
         _rebuild_fts(db, asset)
         asset.status = "indexed"
+        # Drop any error left over from an earlier failed attempt so the UI
+        # does not keep showing a crash that has since been fixed.
+        asset.status_error = None
         db.commit()
         stages_run.append("indexed")
         prog(1.0, f"asset {asset_id}: indexed")
@@ -228,15 +255,19 @@ def process_asset(db: Session, asset_id: int,
 
 
 def next_pending_ids(limit: int = 1) -> list[int]:
-    """Oldest non-indexed asset ids. Never uses (count-1) as an id."""
+    """Oldest non-indexed asset ids. Never uses (count-1) as an id.
+
+    Quarantined ids (see MAX_ASSET_FAILURES) are skipped so one poison asset
+    cannot block every asset queued behind it.
+    """
     with SessionLocal() as db:
-        rows = (
+        q = (
             db.query(models.Asset.id)
             .filter(models.Asset.status != "indexed")
-            .order_by(models.Asset.id.asc())
-            .limit(max(1, limit))
-            .all()
         )
+        if _quarantined:
+            q = q.filter(~models.Asset.id.in_(_quarantined))
+        rows = q.order_by(models.Asset.id.asc()).limit(max(1, limit)).all()
         return [int(r[0]) for r in rows]
 
 
@@ -301,11 +332,21 @@ def _process_one_sync(asset_id: int) -> None:
         try:
             process_asset(db, asset_id, progress=_progress)
         except Exception as exc:  # noqa: BLE001 - per-asset resilience
-            log.exception("pipeline failed for asset %s", asset_id)
+            count = _failures.get(asset_id, 0) + 1
+            _failures[asset_id] = count
+            log.exception("pipeline failed for asset %s (attempt %s/%s)",
+                          asset_id, count, MAX_ASSET_FAILURES)
+            db.rollback()
             asset = db.get(models.Asset, asset_id)
             if asset is not None:
                 asset.status_error = f"{type(exc).__name__}: {exc}"
                 db.commit()
+            if count >= MAX_ASSET_FAILURES:
+                _quarantined.add(asset_id)
+                log.error("asset %s quarantined after %s failures; skipping "
+                          "it so the queue keeps draining", asset_id, count)
+        else:
+            _failures.pop(asset_id, None)
 
 
 async def _queue_loop() -> None:
@@ -321,7 +362,11 @@ async def _queue_loop() -> None:
                     return
                 ids = next_pending_ids(workers)
                 if not ids:
-                    _report(1.0, "queue idle")
+                    if _quarantined:
+                        _report(1.0, f"queue idle ({len(_quarantined)} asset(s) "
+                                     "skipped after repeated failures)")
+                    else:
+                        _report(1.0, "queue idle")
                     continue
                 loop = asyncio.get_running_loop()
                 futs = [

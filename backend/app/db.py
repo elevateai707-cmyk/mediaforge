@@ -27,24 +27,31 @@ VEC_LOAD_ERROR: str = ""
 
 
 def _load_vec(conn) -> None:
-    """Enable and load the sqlite-vec extension on a raw connection."""
+    """Enable and load the sqlite-vec extension on every raw connection.
+
+    sqlite-vec must be loaded per connection. Caching only VEC_AVAILABLE
+    and skipping load on later connects caused INSERT INTO clip_embeddings_vec
+    to fail with 'no such module: vec0'.
+    """
     global VEC_AVAILABLE, VEC_LOAD_ERROR
-    if VEC_AVAILABLE or VEC_LOAD_ERROR:
-        return
     try:
         import sqlite_vec  # type: ignore
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
+        if not VEC_AVAILABLE:
+            log.info("sqlite-vec loaded: vec0 virtual tables enabled")
         VEC_AVAILABLE = True
-        log.info("sqlite-vec loaded: vec0 virtual tables enabled")
+        VEC_LOAD_ERROR = ""
     except Exception as exc:  # pragma: no cover - env dependent
+        first = not VEC_LOAD_ERROR
         VEC_AVAILABLE = False
         VEC_LOAD_ERROR = f"{type(exc).__name__}: {exc}"
-        log.warning(
-            "sqlite-vec unavailable (%s); vector search will fall back to "
-            "exact cosine scan over stored float32 BLOBs.", VEC_LOAD_ERROR
-        )
+        if first:
+            log.warning(
+                "sqlite-vec unavailable (%s); vector search will fall back to "
+                "exact cosine scan over stored float32 BLOBs.", VEC_LOAD_ERROR
+            )
 
 
 config.ensure_dirs()
@@ -179,15 +186,22 @@ def store_embedding(session: Session, asset_id: int, vec: np.ndarray) -> None:
     """Store an embedding: always as BLOB; mirrored into vec0 when available."""
     blob = pack_embedding(vec)
     session.execute(
-        text("INSERT INTO clip_embeddings (asset_id, embedding) VALUES (:a, :b)")
-        .bindparams(a=asset_id, b=blob)
+        text(
+            "INSERT OR REPLACE INTO clip_embeddings (asset_id, embedding) "
+            "VALUES (:a, :b)"
+        ).bindparams(a=asset_id, b=blob)
     )
     if VEC_AVAILABLE:
-        dims = list(np.asarray(vec, dtype=np.float32).tolist())
-        session.execute(
-            text("INSERT OR REPLACE INTO clip_embeddings_vec (rowid, embedding) VALUES (:a, :b)")
-            .bindparams(a=asset_id, b=struct.pack(f"<{len(dims)}f", *dims))
-        )
+        try:
+            dims = list(np.asarray(vec, dtype=np.float32).tolist())
+            session.execute(
+                text(
+                    "INSERT OR REPLACE INTO clip_embeddings_vec "
+                    "(rowid, embedding) VALUES (:a, :b)"
+                ).bindparams(a=asset_id, b=struct.pack(f"<{len(dims)}f", *dims))
+            )
+        except Exception as exc:
+            log.warning("vec0 insert skipped for asset %s: %s", asset_id, exc)
     session.commit()
 
 

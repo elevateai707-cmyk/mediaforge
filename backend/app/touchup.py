@@ -23,6 +23,7 @@ from PIL import Image, ImageFilter, ImageOps
 
 from . import config, models
 from .db import SessionLocal
+from .images import open_rgb
 
 log = logging.getLogger("mediaforge.touchup")
 
@@ -37,17 +38,8 @@ except Exception:  # pragma: no cover - opencv optional
 
 
 def _open_image(path: str) -> Image.Image:
-    """Open an image (HEIC-aware, like ingest/thumbs)."""
-    try:
-        import pillow_heif  # type: ignore
-        pillow_heif.register_heif_opener()
-    except Exception:
-        pass
-    img = Image.open(path)
-    img.load()
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    return img
+    """Open an image (HEIC-aware)."""
+    return open_rgb(path)
 
 
 def _autocontrast(img: Image.Image) -> Image.Image:

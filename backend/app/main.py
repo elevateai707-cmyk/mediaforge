@@ -61,6 +61,7 @@ _RENDER_OUTPUTS: dict[str, str] = {}
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ws_manager.bind_loop(asyncio.get_running_loop())
     init_db()
     try:
         with SessionLocal() as db:

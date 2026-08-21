@@ -25,8 +25,11 @@ OLLAMA_STATE: dict[str, Any] = {"reachable": None, "error": None,
                                 "model_installed": None}
 
 
-def _client() -> httpx.Client:
-    return httpx.Client(base_url=config.OLLAMA_HOST, timeout=config.OLLAMA_TIMEOUT)
+def _client(timeout: Optional[float] = None) -> httpx.Client:
+    return httpx.Client(
+        base_url=config.OLLAMA_HOST,
+        timeout=timeout if timeout is not None else config.OLLAMA_TIMEOUT,
+    )
 
 
 def ollama_reachable() -> bool:
@@ -132,7 +135,7 @@ class OllamaClient:
 
 def generate(model: str, prompt: str, images: Optional[list[str]] = None,
              format: Optional[str] = None, temperature: float = 0.2,
-             retries: int = 5) -> str:
+             retries: int = 5, timeout: Optional[float] = None) -> str:
     """Call /api/generate with retries on transient connection errors.
 
     images: list of base64-encoded JPEGs. Returns the model's text response.
@@ -152,7 +155,7 @@ def generate(model: str, prompt: str, images: Optional[list[str]] = None,
         payload["format"] = format
     for attempt in range(1, retries + 1):
         try:
-            with _client() as client:
+            with _client(timeout=timeout) as client:
                 resp = client.post("/api/generate", json=payload)
                 if resp.status_code == 404:
                     raise RuntimeError(
@@ -185,11 +188,8 @@ def generate(model: str, prompt: str, images: Optional[list[str]] = None,
 
 def image_to_b64(path: str, max_side: int = 768) -> str:
     """Load an image and return base64 JPEG (Ollama vision input)."""
-    from PIL import Image
-    img = Image.open(path)
-    img.load()
-    if img.mode != "RGB":
-        img = img.convert("RGB")
+    from ..images import open_rgb
+    img = open_rgb(path)
     img.thumbnail((max_side, max_side))
     import io
     buf = io.BytesIO()

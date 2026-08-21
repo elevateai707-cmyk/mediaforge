@@ -15,8 +15,6 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
-
-from PIL import Image
 from sqlalchemy.orm import Session
 
 try:
@@ -52,8 +50,8 @@ def _phash_of(path: str) -> Optional[str]:
     if imagehash is None:
         return None
     try:
-        img = Image.open(path)
-        img.load()
+        from ..images import open_rgb
+        img = open_rgb(path)
         return str(imagehash.phash(img))
     except Exception:
         return None
