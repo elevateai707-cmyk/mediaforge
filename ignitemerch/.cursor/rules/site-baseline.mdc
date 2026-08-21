@@ -1,0 +1,16 @@
+---
+description: Launch hardening, GEO/AEO, and no fake metrics for IgniteMerch and future sites.
+alwaysApply: true
+---
+
+# Site baseline
+
+- Security headers: HSTS, CSP, nosniff, frame deny, referrer, permissions. No `X-Powered-By`.
+- Secrets only in env. Kits live in `content/kits`, never `public/`.
+- `/command` and `/api/agents` require `COMMAND_SECRET` in production.
+- robots: allow storefront, disallow `/command` and `/api/`. Allow GPTBot/PerplexityBot on FAQ, shop, llms.txt.
+- Every page: canonical, description, truthful JSON-LD only. No fake ratings.
+- GEO: `llms.txt`, FAQ with FAQPage schema, quotable answers, product facts from Prisma.
+- AEO: FAQ page + desk chatbot that answers from FAQ and catalog only.
+- Agents may tick merchandising (`/api/agents/tick`). They may not publish, refund, or change price without approval.
+- Empty states, never invented KPIs.

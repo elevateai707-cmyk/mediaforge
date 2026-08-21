@@ -1,0 +1,95 @@
+{
+  "name": "Ignite Lead Qualify",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ignite-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-lead",
+      "name": "Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "ignite-lead"
+    },
+    {
+      "parameters": {
+        "functionCode": "const body = items[0].json.body || items[0].json;\nconst email = String(body.email || '').trim().toLowerCase();\nconst role = String(body.role || '').trim();\nconst company = String(body.company || '').trim();\nconst spam = !email.includes('@') || email.endsWith('.ru.com') || /seo|crypto pump/i.test(String(body.message || ''));\nlet score = 0;\nif (email) score += 20;\nif (company) score += 20;\nif (/operator|founder|owner|agency/i.test(role)) score += 30;\nif (/shopify|etsy|comfy|n8n|cursor/i.test(String(body.message || ''))) score += 20;\nif ((body.budget || 0) >= 29) score += 10;\nreturn [{ json: { email, role, company, message: body.message || '', spam, score, sku: body.sku || 'heat-press-photo-desk' } }];"
+      },
+      "id": "code-score",
+      "name": "Spam + ICP score",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.spam}}",
+              "value2": false
+            }
+          ],
+          "number": [
+            {
+              "value1": "={{$json.score}}",
+              "operation": "largerEqual",
+              "value2": 50
+            }
+          ]
+        }
+      },
+      "id": "if-qualify",
+      "name": "Qualified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, qualified: true, score: $json.score, sku: $json.sku } }}"
+      },
+      "id": "res-yes",
+      "name": "Return qualified",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [720, -80]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "options": { "responseCode": 202 },
+        "responseBody": "={{ { ok: true, qualified: false, score: $json.score } }}"
+      },
+      "id": "res-no",
+      "name": "Return rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [720, 80]
+    }
+  ],
+  "connections": {
+    "Lead Webhook": {
+      "main": [[{ "node": "Spam + ICP score", "type": "main", "index": 0 }]]
+    },
+    "Spam + ICP score": {
+      "main": [[{ "node": "Qualified?", "type": "main", "index": 0 }]]
+    },
+    "Qualified?": {
+      "main": [
+        [{ "node": "Return qualified", "type": "main", "index": 0 }],
+        [{ "node": "Return rejected", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "1.0.0",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

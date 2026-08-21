@@ -1,0 +1,12 @@
+# Thumbnail titles
+
+No fake view counts. No red arrows on a shocked face.
+
+1. WALL SHOT vs LINEN
+2. $200 vs $49
+3. IMPORT THIS JSON
+4. 30% FACE. REST IS PRODUCT.
+5. n8n TO STRIPE
+6. CURSOR, STOP INVENTING PAGES
+7. ONE PROMISE PER LISTING
+8. ZIP AFTER CHECKOUT

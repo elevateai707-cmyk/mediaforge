@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --soot: oklch(0.17 0.028 48);
+  --ink: oklch(0.21 0.032 46);
+  --press: oklch(0.26 0.036 44);
+  --ember: oklch(0.7 0.185 48);
+  --ember-hot: oklch(0.78 0.19 55);
+  --bone: oklch(0.93 0.022 88);
+  --ash: oklch(0.72 0.02 60);
+  --steel: oklch(0.58 0.018 52);
+  --rust: oklch(0.58 0.14 42);
+}
+
+html {
+  background: var(--soot);
+}
+
+body {
+  background: var(--soot);
+  color: var(--bone);
+  font-family: var(--font-body), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+}
+
+::selection {
+  background: var(--ember);
+  color: var(--soot);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 3px;
+}
+
+.font-display {
+  font-family: var(--font-display), sans-serif;
+  text-wrap: balance;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.press-grain {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+}
+
+.heat-wash {
+  background:
+    radial-gradient(1200px 520px at 8% -10%, oklch(0.55 0.18 48 / 0.28), transparent 55%),
+    radial-gradient(900px 480px at 100% 0%, oklch(0.35 0.08 40 / 0.4), transparent 50%),
+    var(--soot);
+}
+
+.ticket-perf {
+  background-image: radial-gradient(circle, var(--soot) 2.5px, transparent 2.6px);
+  background-size: 12px 12px;
+  background-position: center;
+}
+
+.enter {
+  animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.enter-2 { animation-delay: 90ms; }
+.enter-3 { animation-delay: 180ms; }
+.enter-4 { animation-delay: 270ms; }
+.enter-5 { animation-delay: 360ms; }
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter,
+  .enter-2,
+  .enter-3,
+  .enter-4,
+  .enter-5 {
+    animation: none;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--soot);
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0.04 48);
+}

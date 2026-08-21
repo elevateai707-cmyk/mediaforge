@@ -1,0 +1,391 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ProductType {
+  BUSINESS_KIT
+  CREATOR_KIT
+  WORKFLOW
+  PROMPT_PACK
+  AUTOMATION_TEMPLATE
+  BUNDLE
+  SUBSCRIPTION
+}
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+}
+
+enum AgentPermissionLevel {
+  READ_ONLY
+  NEEDS_APPROVAL
+  AUTONOMOUS
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum PlatformType {
+  TIKTOK
+  YOUTUBE_SHORTS
+  X
+  INSTAGRAM
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  role      UserRole  @default(CUSTOMER)
+  customer  Customer?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Customer {
+  id            String         @id @default(cuid())
+  userId        String         @unique
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeId      String?        @unique
+  orders        Order[]
+  subscriptions Subscription[]
+  reviews       Review[]
+  downloads     Download[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Product {
+  id             String           @id @default(cuid())
+  name           String
+  slug           String           @unique
+  subtitle       String?
+  description    String           @db.Text
+  price          Float
+  compareAtPrice Float?
+  type           ProductType
+  status         ProductStatus    @default(DRAFT)
+  version        String           @default("1.0.0")
+  license        String           @default("commercial")
+  commercialUse  Boolean          @default(true)
+  aiCreated      Boolean          @default(true)
+  featured       Boolean          @default(false)
+  lotNumber      String
+  coverTone      String           @default("ember")
+  researchNote   String           @db.Text
+  contents       String           @db.Text
+  trendingScore  Float            @default(0.0)
+  conversionRate Float            @default(0.0)
+  views          Int              @default(0)
+  purchases      Int              @default(0)
+  revenue        Float            @default(0.0)
+  categoryId     String?
+  category       Category?        @relation(fields: [categoryId], references: [id])
+  assets         ProductAsset[]
+  versions       ProductVersion[]
+  inBundles      BundleItem[]
+  orderItems     OrderItem[]
+  cartItems      CartItem[]
+  reviews        Review[]
+  geoIndex       GeoIndex?
+  downloads      Download[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([slug])
+  @@index([status])
+  @@index([trendingScore])
+}
+
+model ProductAsset {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  fileType  String
+  sizeBytes Int
+  url       String
+  createdAt DateTime @default(now())
+}
+
+model ProductVersion {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  version   String
+  changelog String   @db.Text
+  assetUrl  String
+  createdAt DateTime @default(now())
+}
+
+model Bundle {
+  id             String       @id @default(cuid())
+  name           String
+  slug           String       @unique
+  description    String       @db.Text
+  price          Float
+  compareAtPrice Float
+  featured       Boolean      @default(false)
+  items          BundleItem[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model BundleItem {
+  id        String  @id @default(cuid())
+  bundleId  String
+  bundle    Bundle  @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model CartItem {
+  id        String   @id @default(cuid())
+  sessionId String
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sessionId])
+  @@unique([sessionId, productId])
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  stripeId      String?     @unique
+  customerId    String?
+  customer      Customer?   @relation(fields: [customerId], references: [id])
+  customerEmail String
+  total         Float
+  status        OrderStatus @default(PENDING)
+  items         OrderItem[]
+  downloads     Download[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  price     Float
+}
+
+model MembershipPlan {
+  id            String         @id @default(cuid())
+  name          String
+  stripePriceId String         @unique
+  price         Float
+  interval      String         @default("month")
+  features      String         @db.Text
+  subscriptions Subscription[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Subscription {
+  id                String             @id @default(cuid())
+  customerId        String
+  customer          Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  membershipPlanId  String
+  membershipPlan    MembershipPlan     @relation(fields: [membershipPlanId], references: [id])
+  stripeSubId       String             @unique
+  status            SubscriptionStatus @default(TRIALING)
+  currentPeriodEnd  DateTime
+  cancelAtPeriodEnd Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+}
+
+model Download {
+  id                 String    @id @default(cuid())
+  orderId            String
+  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId          String
+  product            Product   @relation(fields: [productId], references: [id])
+  customerId         String?
+  customer           Customer? @relation(fields: [customerId], references: [id])
+  token              String    @unique @default(cuid())
+  downloadsRemaining Int       @default(5)
+  expiresAt          DateTime
+  createdAt          DateTime  @default(now())
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  rating     Int
+  comment    String   @db.Text
+  verified   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+}
+
+model Agent {
+  id              String               @id @default(cuid())
+  name            String               @unique
+  model           String
+  provider        String
+  permissionLevel AgentPermissionLevel @default(NEEDS_APPROVAL)
+  purpose         String
+  runs            AgentRun[]
+  tasks           AgentTask[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+}
+
+model AgentRun {
+  id           String    @id @default(cuid())
+  agentId      String
+  agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  status       String
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  durationMs   Int?
+  costUsd      Float?    @default(0.0)
+  errorMessage String?   @db.Text
+}
+
+model AgentTask {
+  id          String    @id @default(cuid())
+  agentId     String
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title       String
+  payload     Json
+  status      JobStatus @default(PENDING)
+  scheduledAt DateTime  @default(now())
+  completedAt DateTime?
+}
+
+model ApprovalRequest {
+  id              String         @id @default(cuid())
+  actionType      String
+  proposedAction  String
+  reasoning       String         @db.Text
+  expectedBenefit String
+  riskLevel       String
+  confidenceScore Float
+  costEstimate    Float?
+  status          ApprovalStatus @default(PENDING)
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Campaign {
+  id        String             @id @default(cuid())
+  name      String
+  budget    Float
+  spend     Float              @default(0.0)
+  creatives CampaignCreative[]
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+}
+
+model CampaignCreative {
+  id             String       @id @default(cuid())
+  campaignId     String
+  campaign       Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  platform       PlatformType
+  hookText       String
+  bodyBrollUrls  String[]
+  avatarVideoUrl String?
+  isSynthetic    Boolean      @default(true)
+  disclosureTag  Boolean      @default(true)
+  retentionScore Float?
+  status         String       @default("PENDING")
+  createdAt      DateTime     @default(now())
+}
+
+model Experiment {
+  id         String              @id @default(cuid())
+  name       String
+  hypothesis String
+  status     String
+  winnerId   String?
+  variants   ExperimentVariant[]
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+}
+
+model ExperimentVariant {
+  id           String     @id @default(cuid())
+  experimentId String
+  experiment   Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  name         String
+  trafficSplit Float
+  conversions  Int        @default(0)
+  impressions  Int        @default(0)
+  config       Json
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  eventType String
+  sessionId String
+  metadata  Json
+  createdAt DateTime @default(now())
+
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+model GeoIndex {
+  id               String   @id @default(cuid())
+  productId        String   @unique
+  product          Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  structuredSchema Json
+  llmSummaryText   String   @db.Text
+  lastIndexedAt    DateTime @default(now())
+}

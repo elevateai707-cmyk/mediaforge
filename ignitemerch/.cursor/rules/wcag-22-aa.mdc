@@ -1,0 +1,24 @@
+---
+description: WCAG 2.2 AA is a release requirement. No overlay widgets. Semantic HTML, keyboard, contrast, axe in CI.
+alwaysApply: true
+---
+
+# Accessibility baseline (WCAG 2.2 AA)
+
+Accessibility is source code, not a plugin. Do not add accessiBe, UserWay, or similar overlays.
+
+- Semantic landmarks: header, nav, main, footer. Skip link to `#main`.
+- Keyboard: every menu, dialog, form, and CTA. Escape closes dialogs. Focus returns to the opener.
+- Visible `:focus-visible`. Do not set `outline: none` without a replacement.
+- Contrast AA for body text (4.5:1). Dark ember/soot palettes must be checked, not assumed.
+- Errors are text in the DOM (`role="alert"`), not color-only borders.
+- Labels on every input. Required state announced.
+- Meaningful images get descriptive alt. Decorative images get `alt=""`.
+- ARIA only when native HTML cannot express the control.
+- `prefers-reduced-motion` disables entrance animation.
+- Primary targets at least 44px. Zoom is never disabled.
+- FAQ and product facts remain on pages without the chatbot.
+- Run `eslint-plugin-jsx-a11y` and axe/Playwright before calling a site done.
+- Ship `/accessibility` with a contact method. Log issues. Do not claim certification.
+
+US Title II for governments currently cites WCAG 2.1 AA. Conforming to 2.2 AA covers 2.1 AA. Use 2.2 AA on every Elevate / AlbertaWeb.Design build.

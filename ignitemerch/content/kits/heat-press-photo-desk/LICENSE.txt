@@ -1,0 +1,5 @@
+Commercial license. Use these files to run your own listings, ads, support, and client work.
+
+Do not resell, republish, or list this pack (or a thin remix) as a competing digital product.
+
+Keep credentials out of git. You are responsible for platform policies (Stripe, Meta, TikTok, n8n, ComfyUI node licenses).

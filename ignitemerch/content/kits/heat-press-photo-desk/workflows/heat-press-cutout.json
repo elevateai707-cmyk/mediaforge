@@ -1,0 +1,78 @@
+{
+  "id": "heat-press-cutout",
+  "revision": 0,
+  "last_node_id": 6,
+  "last_link_id": 5,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [60, 80],
+      "size": [320, 314],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [1], "slot_index": 0 },
+        { "name": "MASK", "type": "MASK", "links": null }
+      ],
+      "properties": { "Node name for S&R": "LoadImage" },
+      "widgets_values": ["product-wall-shot.png", "image"],
+      "title": "Phone photo (plain wall)"
+    },
+    {
+      "id": 2,
+      "type": "ImageScale",
+      "pos": [420, 80],
+      "size": [270, 130],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [{ "name": "image", "type": "IMAGE", "link": 1 }],
+      "outputs": [{ "name": "IMAGE", "type": "IMAGE", "links": [2], "slot_index": 0 }],
+      "properties": { "Node name for S&R": "ImageScale" },
+      "widgets_values": ["nearest-exact", 1024, 1024, "disabled"]
+    },
+    {
+      "id": 3,
+      "type": "Note",
+      "pos": [420, 260],
+      "size": [320, 160],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "properties": {},
+      "widgets_values": [
+        "Cutout desk\n\n1. Shoot against a plain wall. No busy rooms.\n2. After you install BiRefNet, splice it between ImageScale and SaveImage.\n3. If logos melt, the source is too small. Reshoot. Do not raise denoise."
+      ]
+    },
+    {
+      "id": 4,
+      "type": "SaveImage",
+      "pos": [760, 80],
+      "size": [270, 270],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [{ "name": "images", "type": "IMAGE", "link": 2 }],
+      "properties": { "Node name for S&R": "SaveImage" },
+      "widgets_values": ["heat-press-cutout"]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "IMAGE"],
+    [2, 2, 0, 4, 0, "IMAGE"]
+  ],
+  "groups": [
+    {
+      "title": "HEAT PRESS CUTOUT",
+      "bbox": [40, 20, 1020, 430],
+      "color": "#a84"
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": { "scale": 1, "offset": [0, 0] }
+  },
+  "version": 0.4
+}

@@ -1,0 +1,87 @@
+{
+  "name": "Ignite Fulfill Download",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ignite-stripe-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-stripe",
+      "name": "Stripe webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "ignite-stripe-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "const event = items[0].json.body || items[0].json;\nif (event.type !== 'checkout.session.completed') {\n  return [{ json: { skip: true, type: event.type } }];\n}\nconst session = event.data.object;\nconst email = session.customer_email || (session.customer_details && session.customer_details.email);\nconst sku = (session.metadata && session.metadata.sku) || 'heat-press-photo-desk';\nconst token = 'tok_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);\nreturn [{ json: { skip: false, email, sku, token, expiresAt: new Date(Date.now() + 30*24*60*60*1000).toISOString(), downloadsRemaining: 5 } }];"
+      },
+      "id": "parse-event",
+      "name": "Parse session",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{$json.skip}}", "value2": false }]
+        }
+      },
+      "id": "if-paid",
+      "name": "Paid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{$env.FROM_EMAIL}}",
+        "toEmail": "={{$json.email}}",
+        "subject": "Your Ignite ticket",
+        "text": "=Lot {{$json.sku}}\nToken {{$json.token}}\n5 pulls. Expires {{$json.expiresAt}}\nDownload: {{$env.SITE_URL}}/api/downloads/{{$json.token}}"
+      },
+      "id": "mail",
+      "name": "Send ticket",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [720, -80]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { received: true, skipped: $json.skip || false } }}"
+      },
+      "id": "ack",
+      "name": "Ack Stripe",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [960, 0]
+    }
+  ],
+  "connections": {
+    "Stripe webhook": {
+      "main": [[{ "node": "Parse session", "type": "main", "index": 0 }]]
+    },
+    "Parse session": {
+      "main": [[{ "node": "Paid?", "type": "main", "index": 0 }]]
+    },
+    "Paid?": {
+      "main": [
+        [{ "node": "Send ticket", "type": "main", "index": 0 }],
+        [{ "node": "Ack Stripe", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send ticket": {
+      "main": [[{ "node": "Ack Stripe", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "1.0.0",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

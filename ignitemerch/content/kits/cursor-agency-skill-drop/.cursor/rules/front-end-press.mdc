@@ -1,0 +1,16 @@
+---
+description: Front-end press rules for client sites.
+globs: **/*.{tsx,jsx,css}
+alwaysApply: false
+---
+
+# Front-end press
+
+- Semantic HTML: header, nav, main, footer, button, labeled inputs.
+- Visible :focus-visible. Keyboard every menu, dialog, and form.
+- No `transition: all`. Press scale is 0.96. Bounce is 0.
+- No Inter, no purple haze, no glass cards as default, no gradient text.
+- Contrast AA on body text. Do not communicate errors by color alone.
+- `prefers-reduced-motion` disables entrance animation.
+- Touch targets at least 44px on primary actions.
+- ARIA only when native HTML cannot express the control.

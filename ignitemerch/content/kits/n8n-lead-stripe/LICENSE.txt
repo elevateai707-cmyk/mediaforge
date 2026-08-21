@@ -1,0 +1,1 @@
+Commercial license. Run inside your company. Do not list these graphs on a template marketplace. Keep Stripe keys in n8n credentials, not in the JSON.

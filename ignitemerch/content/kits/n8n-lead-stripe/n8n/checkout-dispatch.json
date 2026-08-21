@@ -1,0 +1,109 @@
+{
+  "name": "Ignite Checkout Dispatch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ignite-checkout",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-check",
+      "name": "Checkout Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "ignite-checkout"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/checkout/sessions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "mode", "value": "payment" },
+            { "name": "success_url", "value": "={{$env.SITE_URL}}/checkout/success?session_id={CHECKOUT_SESSION_ID}" },
+            { "name": "cancel_url", "value": "={{$env.SITE_URL}}/cart" },
+            { "name": "customer_email", "value": "={{$json.body.email || $json.email}}" },
+            { "name": "line_items[0][quantity]", "value": "1" },
+            { "name": "line_items[0][price_data][currency]", "value": "usd" },
+            { "name": "line_items[0][price_data][unit_amount]", "value": "={{$json.body.unit_amount || 4900}}" },
+            { "name": "line_items[0][price_data][product_data][name]", "value": "={{$json.body.sku || 'Heat Press Photo Desk'}}" },
+            { "name": "metadata[sku]", "value": "={{$json.body.sku || 'heat-press-photo-desk'}}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "stripe-session",
+      "name": "Create Checkout Session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [260, 0],
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.url}}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-url",
+      "name": "Has URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { url: $json.url, id: $json.id } }}"
+      },
+      "id": "res-url",
+      "name": "Return URL",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [760, -80]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "options": { "responseCode": 502 },
+        "responseBody": "{ \"error\": \"Stripe did not return a URL. Kill switch: disable Lead Qualify if this happens 3 times in 10 minutes.\" }"
+      },
+      "id": "res-fail",
+      "name": "Stripe fail",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [760, 80]
+    }
+  ],
+  "connections": {
+    "Checkout Webhook": {
+      "main": [[{ "node": "Create Checkout Session", "type": "main", "index": 0 }]]
+    },
+    "Create Checkout Session": {
+      "main": [[{ "node": "Has URL?", "type": "main", "index": 0 }]]
+    },
+    "Has URL?": {
+      "main": [
+        [{ "node": "Return URL", "type": "main", "index": 0 }],
+        [{ "node": "Stripe fail", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1", "errorWorkflow": "" },
+  "versionId": "1.0.0",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

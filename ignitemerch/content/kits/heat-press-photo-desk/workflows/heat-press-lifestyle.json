@@ -1,0 +1,124 @@
+{
+  "id": "heat-press-lifestyle",
+  "revision": 0,
+  "last_node_id": 8,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [40, 60],
+      "size": [320, 314],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [1], "slot_index": 0 },
+        { "name": "MASK", "type": "MASK", "links": null }
+      ],
+      "properties": { "Node name for S&R": "LoadImage" },
+      "widgets_values": ["heat-press-cutout.png", "image"],
+      "title": "Clean cutout only"
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [40, 420],
+      "size": [320, 314],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "outputs": [
+        { "name": "IMAGE", "type": "IMAGE", "links": [2], "slot_index": 0 },
+        { "name": "MASK", "type": "MASK", "links": null }
+      ],
+      "properties": { "Node name for S&R": "LoadImage" },
+      "widgets_values": ["scene-linen.png", "image"],
+      "title": "Scene plate (optional)"
+    },
+    {
+      "id": 3,
+      "type": "CLIPTextEncode",
+      "pos": [400, 60],
+      "size": [400, 180],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [{ "name": "clip", "type": "CLIP", "link": null }],
+      "outputs": [{ "name": "CONDITIONING", "type": "CONDITIONING", "links": [3], "slot_index": 0 }],
+      "properties": { "Node name for S&R": "CLIPTextEncode" },
+      "widgets_values": [
+        "professional product photo, linen table, 45 degree key light, fill at 30 percent, no colored gels, sharp logo, catalog still"
+      ],
+      "title": "Recipe: linen"
+    },
+    {
+      "id": 4,
+      "type": "CLIPTextEncode",
+      "pos": [400, 270],
+      "size": [400, 160],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [{ "name": "clip", "type": "CLIP", "link": null }],
+      "outputs": [{ "name": "CONDITIONING", "type": "CONDITIONING", "links": [4], "slot_index": 0 }],
+      "properties": { "Node name for S&R": "CLIPTextEncode" },
+      "widgets_values": [
+        "melted logo, warped type, extra fingers, busy room, neon gel, plastic shine, fake watermark, text overlay"
+      ],
+      "title": "Negatives"
+    },
+    {
+      "id": 5,
+      "type": "Note",
+      "pos": [400, 460],
+      "size": [400, 220],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "properties": {},
+      "widgets_values": [
+        "Swap the positive prompt from recipes/lighting.md:\n- Linen table\n- Tungsten loft 3200K\n- Overcast\n- Cyclorama #f4f4f1\n\nKeep denoise at 0.35 if the product warps.\nIC-Light V1 only. Do not use V2 for commercial listings."
+      ]
+    },
+    {
+      "id": 6,
+      "type": "ImageScale",
+      "pos": [840, 60],
+      "size": [270, 130],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [{ "name": "image", "type": "IMAGE", "link": 1 }],
+      "outputs": [{ "name": "IMAGE", "type": "IMAGE", "links": [5], "slot_index": 0 }],
+      "properties": { "Node name for S&R": "ImageScale" },
+      "widgets_values": ["nearest-exact", 1024, 1280, "disabled"]
+    },
+    {
+      "id": 7,
+      "type": "SaveImage",
+      "pos": [1150, 60],
+      "size": [270, 270],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [{ "name": "images", "type": "IMAGE", "link": 5 }],
+      "properties": { "Node name for S&R": "SaveImage" },
+      "widgets_values": ["heat-press-lifestyle"]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 6, 0, "IMAGE"],
+    [5, 6, 0, 7, 0, "IMAGE"]
+  ],
+  "groups": [
+    {
+      "title": "HEAT PRESS LIFESTYLE",
+      "bbox": [20, 10, 1440, 740],
+      "color": "#a84"
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

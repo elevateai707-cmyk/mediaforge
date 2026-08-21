@@ -1,0 +1,14 @@
+---
+description: Keep client delivery on-scope. No fake metrics. No extra pages.
+alwaysApply: true
+---
+
+# Agency delivery
+
+Ship only what the brief asked for.
+
+- Do not invent testimonials, KPIs, customer counts, or “N minutes ago”.
+- Do not add dashboard routes, auth, or extra pages unless the brief names them.
+- Empty states say “No runs yet” or “None yet”. Never a plausible number.
+- If demo data must show, badge it `DEMO DATA`.
+- Conventional commits. No force push. No commit unless asked.

@@ -1,0 +1,3 @@
+Commercial license. Use on your own work.
+Do not resell or republish this pack as a competing product.
+Keep secrets out of git.
