@@ -295,7 +295,7 @@ export function EditStudioPage() {
   const [ratio, setRatio] = useState<RenderRatio>('9:16')
   const [width, setWidth] = useState(1080)
   const [height, setHeight] = useState(1920)
-  const [captions, setCaptions] = useState(true)
+  const [captions, setCaptions] = useState(false)
   const [musicPath, setMusicPath] = useState('')
   const [approved, setApproved] = useState(false)
 
@@ -692,9 +692,9 @@ export function EditStudioPage() {
 
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <Label htmlFor="captions" className="text-xs text-foreground">
-                    Burn captions
+                    Show clip descriptions
                     <span className="block text-[10px] font-normal text-muted-foreground">
-                      Whisper word timings as burned subtitles
+                      Burns each clip's AI scene description on screen
                     </span>
                   </Label>
                   <Switch id="captions" checked={captions} onCheckedChange={setCaptions} />
@@ -757,7 +757,7 @@ export function EditStudioPage() {
                   <h3 className="font-semibold">Approval gate</h3>
                   <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
                     Approving locks the timeline and starts the FFmpeg render ({ratio}, {width}×{height}
-                    {captions ? ', burned captions' : ''}
+                    {captions ? ', clip descriptions on screen' : ''}
                     {musicPath.trim() ? ', beat-synced' : ''}). You can re-render any time after approval.
                   </p>
                 </div>

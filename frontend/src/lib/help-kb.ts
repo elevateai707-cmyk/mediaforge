@@ -248,7 +248,7 @@ const ARTICLES: HelpArticle[] = [
     reply: {
       title: 'Render an MP4, or hand the cut to an editor',
       paragraphs: [
-        'Approve first. FFmpeg then trims, crossfades, loudnorms, crops to ratio, and can burn Whisper captions. Optional music path enables beat-sync.',
+        'Approve first. FFmpeg then trims, crossfades, loudnorms, crops to ratio, and can optionally print the AI scene description of each clip on screen (off by default). Optional music path enables beat-sync.',
       ],
       bullets: [
         'DaVinci Resolve — live timeline, only if Resolve is running with scripting on. A 503 means it is not.',

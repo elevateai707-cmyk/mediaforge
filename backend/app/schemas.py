@@ -209,7 +209,7 @@ class RenderRequest(BaseModel):
     plan_id: str
     ratio: str = "9:16"
     music_path: Optional[str] = None
-    captions: bool = True
+    captions: bool = False
     width: int = 1080
     height: int = 1920
 
