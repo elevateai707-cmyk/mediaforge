@@ -1,10 +1,10 @@
 # Editor v2 validation — 2026-09-16
 
-Tests ran on Ubuntu with the repository's Python 3.12 virtual environment, system FFmpeg/libass and an RTX 3080 with 10 GB VRAM. Tests use isolated databases and synthetic media; the user's production database and original library were not migrated or changed during verification.
+Tests ran on Ubuntu with the repository's Python 3.12 virtual environment, system FFmpeg/libass and an RTX 3080 with 10 GB VRAM. Tests use isolated databases and synthetic media; the original library remains untouched. After testing, the production database was backed up to `data/mediaforge.db.pre-editor-v2.bak` (0600), migrated additively, and an existing project was opened successfully in the live editor.
 
 ## Automated checks
 
-- Full backend suite: **149 passed**, including the atomic-backup regression. The editor/provider targeted suite also passed independently (25 tests). Existing geography, deterministic planning, NLE exports, CUDA fallback and subprocess environment tests remain passing.
+- Full backend suite: **151 passed**, including the atomic-backup regression. The editor/provider targeted suite also passed independently (25 tests). Existing geography, deterministic planning, NLE exports, CUDA fallback and subprocess environment tests remain passing.
 - Frontend TypeScript and production Vite build: passed. Existing large-bundle warning remains.
 - Frontend lint: no errors; two existing Fast Refresh warnings in `ui/button.tsx` and `ui/badge.tsx`.
 - Python undefined-name checks: passed.
@@ -32,8 +32,12 @@ A separate local CPU run used cached faster-whisper `base` with English and an F
 
 - Providers are implemented and mock-tested, but require keys and a compatible account workflow for live verification.
 - Model quality, multilingual accuracy, HDR tone-mapping appearance, phone rotation/VFR edge cases and NVENC performance were not exhaustively benchmarked across the user's library.
-- Active-word style displays one word at a time. Forced alignment is not separately installed; word timing can be corrected manually or refreshed by explicit transcription.
+- Active-word style keeps the phrase visible and highlights the current word; two rendered frames were inspected to confirm the moving highlight. Forced alignment is not separately installed; word timing can be corrected manually or refreshed by explicit transcription.
 - Preview is an asynchronous FFmpeg render, not a live frame-accurate NLE canvas.
 - Existing NLE exporters do not carry every v2 styled-text, speed and audio-mix feature; see the fidelity table in `EDITOR_V2.md`.
 - Daily job counts are local usage controls, not a guaranteed monetary ceiling. Ambiguous paid submissions are never automatically repeated.
 - No voice cloning, automatic narration time-stretch, authenticated public hosting, or deployment to unrelated services was added.
+
+## Completed local launch
+
+The updated app is running as the enabled `mediaforge.service` user service, listening only on 127.0.0.1:8420. Live browser checks passed for an existing migrated project, both switches, reload and Settings, with no uncaught exceptions. The old stale render is now honestly marked interrupted; completed outputs are retained. The optional provider keys are currently missing, so only mocked provider verification was performed. Python dependency consistency and shell syntax checks passed.

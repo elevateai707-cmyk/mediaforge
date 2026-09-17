@@ -11,10 +11,10 @@ backend/.venv/bin/pip install -r backend/requirements.txt
 backend/.venv/bin/pip install -r backend/requirements-cloud.txt
 npm ci --prefix frontend
 npm run build --prefix frontend
-./scripts/run.sh
+./scripts/install-service.sh
 ```
 
-Open http://localhost:8420/studio. Stop an older running MediaForge process before restarting with the new version; the launch script does not replace an existing process. The unrelated `ignitemerch` application is not involved.
+Open http://localhost:8420/studio. The user service keeps the app alive independently of a terminal and starts at login. Restart after updates with `systemctl --user restart mediaforge.service`; inspect logs with `journalctl --user -u mediaforge.service`. `.env` defaults load before configuration; explicit process environment variables take precedence. Stop an older manually launched MediaForge process before installing the service. The unrelated `ignitemerch` application is not involved.
 
 For remote use, keep the application bound to loopback and forward the port:
 
@@ -50,7 +50,7 @@ The machine used for validation has an RTX 3080, 10,240 MiB VRAM. Models use int
 
 First use of a profile may download model weights. The CPU fallback is slower, particularly for large-v3. Language can be automatic or explicitly selected. VAD and low-confidence/no-speech filtering reduce unwanted music/silence transcripts; model output still needs review. The app never substitutes scene descriptions as dialogue. Empty/uncertain results are surfaced instead of fabricated captions.
 
-Word timestamps feed phrase segmentation and the Active-word preset. This preset shows one active word at a time. Clean and Bold presets show readable phrases. Fonts, size, colour, outline, background, position, line count and safe margins are editable. Long phrases split into successive readable groups; unusually long words wrap. Manual text/timing correction clears stale word alignment for the affected cue. Individual word boundaries can be refined manually; a higher-quality retranscription provides fresh model alignment. There is no separate forced-alignment model installed by this change.
+Word timestamps feed phrase segmentation and the Active-word preset. This preset keeps the phrase visible and highlights the currently spoken word, leaving gaps unhighlighted. Clean and Bold presets show readable phrases. Fonts, size, colour, outline, background, position, line count and safe margins are editable. Long phrases split into successive readable groups; unusually long words wrap. Manual text/timing correction clears stale word alignment for the affected cue. Individual word boundaries can be refined manually; a higher-quality retranscription provides fresh model alignment. There is no separate forced-alignment model installed by this change.
 
 ## Comfy Cloud connection
 

@@ -62,15 +62,22 @@ for pid_file in "$BACKEND_PID_FILE" "$VITE_PID_FILE"; do
   fi
 done
 
+# Prefer the persistent user service when installed.
+SERVICE_MANAGED=0
+if command -v systemctl >/dev/null && [ "$(systemctl --user show mediaforge.service -p LoadState --value 2>/dev/null || true)" = "loaded" ]; then
+  systemctl --user start mediaforge.service
+  SERVICE_MANAGED=1
+fi
+
 # --- Backend ----------------------------------------------------------------
 echo
 echo "── Backend (uvicorn :$PORT) ────────────────────────────────────"
 
-if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
-  ok "backend already answering on port $PORT."
+if [ "$SERVICE_MANAGED" = 1 ] || curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+  ok "backend is started; verifying readiness on port $PORT."
 else
   info "starting uvicorn ..."
-  (cd "$BACKEND_DIR" && "$VENV_DIR/bin/python" -m uvicorn app.main:app \
+  (cd "$BACKEND_DIR" && exec nohup "$VENV_DIR/bin/python" -m uvicorn app.main:app \
       --host 127.0.0.1 --port "$PORT") \
       >/tmp/mediaforge_backend.log 2>&1 &
   echo $! > "$BACKEND_PID_FILE"
@@ -88,7 +95,7 @@ else
     ok "Vite dev server already running (pid $(cat "$VITE_PID_FILE"))."
   else
     info "frontend/dist missing — starting Vite dev server as fallback ..."
-    (cd "$FRONTEND_DIR" && npm run dev -- --port "$VITE_PORT" --host 127.0.0.1) \
+    (cd "$FRONTEND_DIR" && exec nohup npm run dev -- --port "$VITE_PORT" --host 127.0.0.1) \
         >/tmp/mediaforge_vite.log 2>&1 &
     echo $! > "$VITE_PID_FILE"
     ok "Vite started (pid $(cat "$VITE_PID_FILE"), log /tmp/mediaforge_vite.log)"
@@ -99,17 +106,21 @@ fi
 echo
 echo "── Health check ────────────────────────────────────────────────"
 
-sleep 3
-HEALTH_JSON="$(curl -s --max-time 5 "http://127.0.0.1:$PORT/api/health" || true)"
-if [ -n "$HEALTH_JSON" ]; then
-  ok "GET /api/health -> $HEALTH_JSON"
-else
-  warn "no response from /api/health yet — backend may still be warming up."
-  warn "tail -f /tmp/mediaforge_backend.log to watch it."
+ready=0
+for attempt in $(seq 1 45); do
+  if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "$ready" != 1 ]; then
+  err "Backend did not become healthy. See /tmp/mediaforge_backend.log."
+  exit 1
 fi
+ok "Backend health check passed."
 
 # --- URLs -------------------------------------------------------------------
-LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 echo "================================================================"
 echo "  MediaForge is up"

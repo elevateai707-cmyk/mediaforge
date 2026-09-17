@@ -454,3 +454,46 @@ def test_backup_precedes_migration(tmp_path, monkeypatch):
         ).fetchone()
     database.init_db()
     engine.dispose()
+
+
+def test_active_word_keeps_phrase_and_changes_highlight():
+    from app.edits.subtitles import active_events
+
+    cue = Cue(
+        start=0,
+        end=2,
+        text="Hello café",
+        words=[
+            Word(start=0, end=0.8, text="Hello"),
+            Word(start=1, end=1.8, text="café"),
+        ],
+    )
+    events = active_events(cue, Style(preset="active"), "S", 30)
+    assert len(events) == 4  # Two spoken intervals and two gaps.
+    assert all("Hello" in event and "café" in event for event in events)
+    assert r"{\c&H00FFFF&}Hello" in events[0]
+    assert r"{\c&H00FFFF&}café" in events[2]
+    assert r"{\\c" not in "\n".join(events)
+
+
+def test_environment_file_loaded_before_settings(tmp_path):
+    import os
+    import sys
+
+    (tmp_path / ".env").write_text("MF_PORT=9123\nMF_WHISPER_MODEL=base\n")
+    env = {
+        k: v for k, v in os.environ.items() if k not in ("MF_PORT", "MF_WHISPER_MODEL")
+    }
+    env.update(
+        MF_ROOT=str(tmp_path), PYTHONPATH=str(Path(__file__).resolve().parents[1])
+    )
+    code = "from app import config; print(config.APP_PORT, config.WHISPER_MODEL)"
+    result = subprocess.check_output([sys.executable, "-c", code], env=env, text=True)
+    assert result.strip() == "9123 base"
+    env["MF_PORT"] = "9876"
+    assert (
+        subprocess.check_output(
+            [sys.executable, "-c", code], env=env, text=True
+        ).strip()
+        == "9876 base"
+    )

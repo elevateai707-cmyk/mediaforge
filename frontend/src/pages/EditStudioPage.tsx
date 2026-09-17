@@ -487,95 +487,106 @@ export function EditStudioPage() {
           <div className="grid items-start lg:grid-cols-[1.2fr_1fr] gap-5">
             <section className="glass rounded-xl p-5">
               <h2 className="font-semibold">3 · Review proposed sequence</h2>
-              {p.clips.map((c, i) => (
-                <article
-                  className={`border rounded-lg p-3 my-3 ${i === clipIndex ? "border-teal-400" : ""}`}
-                  key={c.uid}
-                >
-                  <button className="mf-button" onClick={() => setClipIndex(i)}>
-                    Clip {i + 1} · asset {c.asset_id}
-                  </button>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["start", "end", "speed"] as const).map((k) => (
-                      <label className="mf-field" key={k}>
-                        {k}
-                        <input
-                          type="number"
-                          className="mf-input"
-                          step=".05"
-                          value={c[k]}
-                          onChange={(e) =>
-                            changed({
-                              ...p,
-                              clips: p.clips.map((x, n) =>
-                                n === i
-                                  ? { ...x, [k]: Number(e.target.value) }
-                                  : x,
-                              ),
-                            })
-                          }
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <label className="mf-field">
-                    Transition to next
-                    <select
-                      className="mf-input"
-                      value={c.transition}
-                      onChange={(e) =>
-                        changed({
-                          ...p,
-                          clips: p.clips.map((x, n) =>
-                            n === i
-                              ? {
-                                  ...x,
-                                  transition: e.target.value as
-                                    "cut" | "crossfade",
-                                }
-                              : x,
-                          ),
-                        })
-                      }
-                    >
-                      <option value="cut">Cut</option>
-                      <option value="crossfade">Crossfade (up to 0.3s)</option>
-                    </select>
-                  </label>
-                  {[-1, 1].map((direction) => (
+              <div
+                className="max-h-[65vh] overflow-auto pr-2"
+                tabIndex={0}
+                aria-label="Proposed clip sequence"
+              >
+                {p.clips.map((c, i) => (
+                  <article
+                    className={`border rounded-lg p-3 my-3 ${i === clipIndex ? "border-teal-400" : ""}`}
+                    key={c.uid}
+                  >
                     <button
                       className="mf-button"
-                      key={direction}
-                      disabled={
-                        i + direction < 0 || i + direction >= p.clips.length
-                      }
+                      onClick={() => setClipIndex(i)}
+                    >
+                      Clip {i + 1} · asset {c.asset_id}
+                    </button>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(["start", "end", "speed"] as const).map((k) => (
+                        <label className="mf-field" key={k}>
+                          {k}
+                          <input
+                            type="number"
+                            className="mf-input"
+                            step=".05"
+                            value={c[k]}
+                            onChange={(e) =>
+                              changed({
+                                ...p,
+                                clips: p.clips.map((x, n) =>
+                                  n === i
+                                    ? { ...x, [k]: Number(e.target.value) }
+                                    : x,
+                                ),
+                              })
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <label className="mf-field">
+                      Transition to next
+                      <select
+                        className="mf-input"
+                        value={c.transition}
+                        onChange={(e) =>
+                          changed({
+                            ...p,
+                            clips: p.clips.map((x, n) =>
+                              n === i
+                                ? {
+                                    ...x,
+                                    transition: e.target.value as
+                                      "cut" | "crossfade",
+                                  }
+                                : x,
+                            ),
+                          })
+                        }
+                      >
+                        <option value="cut">Cut</option>
+                        <option value="crossfade">
+                          Crossfade (up to 0.3s)
+                        </option>
+                      </select>
+                    </label>
+                    {[-1, 1].map((direction) => (
+                      <button
+                        className="mf-button"
+                        key={direction}
+                        disabled={
+                          i + direction < 0 || i + direction >= p.clips.length
+                        }
+                        onClick={() => {
+                          const clips = [...p.clips];
+                          [clips[i], clips[i + direction]] = [
+                            clips[i + direction],
+                            clips[i],
+                          ];
+                          changed({ ...p, clips });
+                          setClipIndex(i + direction);
+                        }}
+                      >
+                        {direction === -1 ? "Move up" : "Move down"}
+                      </button>
+                    ))}
+                    <button
+                      className="mf-button"
                       onClick={() => {
-                        const clips = [...p.clips];
-                        [clips[i], clips[i + direction]] = [
-                          clips[i + direction],
-                          clips[i],
-                        ];
-                        changed({ ...p, clips });
-                        setClipIndex(i + direction);
+                        changed({
+                          ...p,
+                          clips: p.clips.filter((_, n) => n !== i),
+                        });
+                        setClipIndex(0);
                       }}
                     >
-                      {direction === -1 ? "Move up" : "Move down"}
+                      Remove from edit
                     </button>
-                  ))}
-                  <button
-                    className="mf-button"
-                    onClick={() => {
-                      changed({
-                        ...p,
-                        clips: p.clips.filter((_, n) => n !== i),
-                      });
-                      setClipIndex(0);
-                    }}
-                  >
-                    Remove from edit
-                  </button>
-                </article>
-              ))}
+                  </article>
+                ))}
+              </div>
             </section>
             <section className="glass rounded-xl p-5 space-y-3">
               <h2 className="font-semibold">Preview & text visibility</h2>

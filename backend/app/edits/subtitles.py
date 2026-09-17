@@ -121,12 +121,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"Style: {name},{style.font},{size:.2f},{ass_color(style.color)},&H0000FFFF,&H00000000,&H80000000,{-1 if style.preset == 'bold' else 0},0,0,0,100,100,0,0,{3 if style.background else 1},{style.outline},0,{align},{margin},{margin},{vertical},1"
         )
         if style.preset == "active" and cue.words:
-            # Active-word preset intentionally displays one timed word at a time.
-            for w in cue.words:
-                body = safe_ass("\n".join(textwrap.wrap(w.text, width=chars)))
-                events.append(
-                    f"Dialogue: 0,{stamp(w.start, True)},{stamp(w.end, True)},{name},,0,0,0,,{{\\c&H00FFFF&}}{body}"
-                )
+            events.extend(active_events(cue, style, name, chars))
         else:
             for j, chunk in enumerate(chunks):
                 a = cue.start + (cue.end - cue.start) * j / len(chunks)
@@ -139,6 +134,69 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         + "\n".join(events)
         + "\n"
     )
+
+
+def active_events(cue, style, name, chars):
+    """Keep a readable phrase visible while coloring only the currently spoken word."""
+    words = sorted(
+        (w for w in cue.words if w.end > cue.start and w.start < cue.end),
+        key=lambda w: w.start,
+    )
+    groups = []
+    current = []
+    for word in words:
+        proposed = " ".join(w.text.strip() for w in [*current, word])
+        if current and len(textwrap.wrap(proposed, width=chars)) > style.max_lines:
+            groups.append(current)
+            current = []
+        current.append(word)
+    if current:
+        groups.append(current)
+    events = []
+    for i, group in enumerate(groups):
+        start = cue.start if i == 0 else max(cue.start, group[0].start)
+        end = min(cue.end, groups[i + 1][0].start) if i + 1 < len(groups) else cue.end
+        boundaries = sorted(
+            {
+                start,
+                end,
+                *(max(start, min(end, t)) for w in group for t in (w.start, w.end)),
+            }
+        )
+        # Wrap plain characters first so ASS tags don't distort measured line lengths.
+        plain = " ".join(w.text.strip() for w in group)
+        wrapped = "\n".join(textwrap.wrap(plain, width=chars))
+        spans = []
+        cursor = 0
+        for w in group:
+            spans.append((cursor, cursor + len("".join(w.text.split())), w))
+            cursor += len("".join(w.text.split()))
+        for a, b in zip(boundaries, boundaries[1:]):
+            if b <= a:
+                continue
+            middle = (a + b) / 2
+            body = []
+            pos = 0
+            previous = False
+            for ch in wrapped:
+                active = not ch.isspace() and any(
+                    left <= pos < right and w.start <= middle < w.end
+                    for left, right, w in spans
+                )
+                if active != previous:
+                    body.append(
+                        r"{\c&H00FFFF&}"
+                        if active
+                        else "{\\c" + ass_color(style.color) + "&}"
+                    )
+                    previous = active
+                body.append(safe_ass(ch))
+                if not ch.isspace():
+                    pos += 1
+            events.append(
+                f"Dialogue: 0,{stamp(a, True)},{stamp(b, True)},{name},,0,0,0,,{''.join(body)}"
+            )
+    return events
 
 
 def sidecar(project, kind):

@@ -13,6 +13,11 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 MF_ROOT = Path(os.environ.get("MF_ROOT", "/home/bfam/mediaforge")).resolve()
 
+# Read file defaults before deriving settings; explicit process environment wins.
+from dotenv import load_dotenv
+
+load_dotenv(MF_ROOT / ".env", override=False)
+
 # ---------------------------------------------------------------------------
 # Data directories (override for tests via env)
 # ---------------------------------------------------------------------------
