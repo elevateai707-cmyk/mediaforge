@@ -13,6 +13,11 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 MF_ROOT = Path(os.environ.get("MF_ROOT", "/home/bfam/mediaforge")).resolve()
 
+# Read file defaults before deriving settings; explicit process environment wins.
+from dotenv import load_dotenv
+
+load_dotenv(MF_ROOT / ".env", override=False)
+
 # ---------------------------------------------------------------------------
 # Data directories (override for tests via env)
 # ---------------------------------------------------------------------------
@@ -26,7 +31,7 @@ DB_PATH = Path(os.environ.get("MF_DB_PATH", str(DATA_DIR / "mediaforge.db"))).re
 RENDER_TMP_DIR = Path(os.environ.get("MF_RENDER_TMP", str(DATA_DIR / "render_tmp"))).resolve()
 
 VERSION = "2.0.0"
-APP_HOST = os.environ.get("MF_HOST", "0.0.0.0")
+APP_HOST = os.environ.get("MF_HOST", "127.0.0.1")
 APP_PORT = int(os.environ.get("MF_PORT", "8420"))
 
 # ---------------------------------------------------------------------------

@@ -185,3 +185,30 @@ class TripAsset(Base):
     asset_id = Column(Integer, ForeignKey("assets.id"), primary_key=True, index=True)
 
     trip = relationship("Trip", back_populates="members")
+
+class ProjectDocument(Base):
+    __tablename__ = 'project_documents'
+    plan_id = Column(String, ForeignKey('edit_plans.id'), primary_key=True)
+    document = Column(Text, nullable=False)
+    approved_revision = Column(Integer, nullable=True)
+    approved_document = Column(Text, nullable=True)
+
+class ProjectRevision(Base):
+    __tablename__ = 'project_revisions'
+    id = Column(Integer, primary_key=True)
+    plan_id = Column(String, nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    document = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+
+class ProviderJob(Base):
+    __tablename__ = 'provider_jobs'
+    id = Column(String, primary_key=True)
+    provider = Column(String, nullable=False)
+    cache_key = Column(String, unique=True, nullable=False)
+    status = Column(String, default='queued')
+    remote_id = Column(String, nullable=True)
+    request_json = Column(Text, nullable=False)
+    result_json = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)

@@ -5,6 +5,7 @@ can surface exactly which models loaded, which failed, and why. A model that
 fails to load sets status='unavailable' with an error; the pipeline skips the
 corresponding phase and continues on CPU/fallbacks — it never crashes.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,6 +21,7 @@ GPU_WARNING: str = ""
 
 def _torch():
     import torch
+
     return torch
 
 
@@ -110,3 +112,38 @@ def gpu_payload() -> dict:
         "vram_mb": vram_total_mb(),
         "warning": warnings_list()[0] if warnings_list() else "",
     }
+
+
+# One process-wide reentrant lease; Ollama itself lives in a separate process.
+import threading
+from functools import wraps
+
+WORKLOAD_LOCK = threading.RLock()
+
+
+def serialized(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        with WORKLOAD_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def release_ollama():
+    """Unload resident Ollama models before another GPU workload (no generation)."""
+    import httpx
+    from .. import config
+
+    try:
+        with httpx.Client(timeout=20) as client:
+            r = client.get(config.OLLAMA_HOST + "/api/ps")
+            r.raise_for_status()
+            for model in r.json().get("models", []):
+                client.post(
+                    config.OLLAMA_HOST + "/api/generate",
+                    json={"model": model["name"], "keep_alive": 0},
+                ).raise_for_status()
+        return True
+    except Exception:
+        return False
