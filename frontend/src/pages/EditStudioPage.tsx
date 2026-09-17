@@ -672,7 +672,6 @@ export function EditStudioPage() {
                       type="number"
                       min={1}
                       value={width}
-                      disabled={approved}
                       onChange={(e) => setWidth(Math.max(1, Number(e.target.value) || 1))}
                       className="h-8 text-xs"
                     />
@@ -685,7 +684,6 @@ export function EditStudioPage() {
                       type="number"
                       min={1}
                       value={height}
-                      disabled={approved}
                       onChange={(e) => setHeight(Math.max(1, Number(e.target.value) || 1))}
                       className="h-8 text-xs"
                     />
@@ -699,7 +697,7 @@ export function EditStudioPage() {
                       Whisper word timings as burned subtitles
                     </span>
                   </Label>
-                  <Switch id="captions" checked={captions} onCheckedChange={setCaptions} disabled={approved} />
+                  <Switch id="captions" checked={captions} onCheckedChange={setCaptions} />
                 </div>
 
                 <div>
@@ -709,7 +707,6 @@ export function EditStudioPage() {
                   <Input
                     value={musicPath}
                     onChange={(e) => setMusicPath(e.target.value)}
-                    disabled={approved}
                     placeholder="/home/bfam/mediaforge/music/beat.mp3"
                     className="h-8 text-xs"
                   />
