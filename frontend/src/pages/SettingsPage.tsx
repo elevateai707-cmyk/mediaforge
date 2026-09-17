@@ -1,3 +1,4 @@
+import { ProviderSettings } from '@/components/ProviderSettings'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -124,6 +125,7 @@ export function SettingsPage() {
 
   return (
     <div>
+      <ProviderSettings />
       <PageHeader
         title={
           <>

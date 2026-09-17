@@ -1,951 +1,1389 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useLocation } from 'react-router-dom'
-import { motion, Reorder, useDragControls } from 'framer-motion'
-import type { LucideIcon } from 'lucide-react'
+import { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
+import { PageHeader } from "@/components/PageHeader";
+import { Switch } from "@/components/ui/switch";
+import { ProviderStudio } from "@/components/ProviderStudio";
+import { proxyUrl, thumbUrl } from "@/lib/api";
 import {
-  Check,
-  Clapperboard,
-  Download,
-  FileText,
-  Film,
-  GripVertical,
-  List,
-  Loader2,
-  Music,
-  Play,
-  Save,
-  Scissors,
-  Sparkles,
-  TriangleAlert,
-  Wand2,
-} from 'lucide-react'
-import {
-  ApiError,
-  approvePlan,
-  exportPlan,
-  exportedFileUrl,
-  getRenderStatus,
-  planEdit,
-  startRender,
-  thumbUrl,
-  proxyUrl,
-  updatePlan,
-} from '@/lib/api'
-import type { Clip, EditPlan, ExportFormat, RenderRatio, RenderStatus } from '@/lib/types'
-import { RENDER_RATIOS, ratioDimensions } from '@/lib/types'
-import { onJobEvent, useWsStore } from '@/lib/ws'
-import { PageHeader } from '@/components/PageHeader'
-import { EmptyState } from '@/components/EmptyState'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Progress } from '@/components/ui/progress'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
-import { cn, clipDuration, formatDuration, formatTimecode, toPercent } from '@/lib/utils'
+  editorRequest,
+  copyText,
+  duration,
+  mediaUrl,
+  type Project,
+  type ProjectEnvelope,
+  type EditorJob,
+  type TextStyle,
+  type Cue,
+} from "@/lib/editor";
+import type { Asset, EditPlan } from "@/lib/types";
 
-const TRANSITIONS = ['cut', 'crossfade', 'dip_to_black'] as const
-
-const EXPORT_FORMATS: {
-  format: ExportFormat
-  label: string
-  hint: string
-  icon: LucideIcon
-}[] = [
-  { format: 'resolve', label: 'DaVinci Resolve', hint: 'Import into a running Resolve session', icon: Film },
-  { format: 'fcpxml', label: 'FCPXML', hint: 'Final Cut Pro interchange file', icon: FileText },
-  { format: 'edl', label: 'EDL', hint: 'CMX3600 edit decision list', icon: List },
-  { format: 'capcut', label: 'CapCut', hint: 'draft_content.json for CapCut desktop', icon: Scissors },
-]
-
-const EXAMPLE_INTENTS = [
-  '60-second highlight reel of the Vancouver trip, upbeat, vertical 9:16 for TikTok',
-  'Birthday party recap, warm and sentimental, 16:9 for YouTube',
-  'Beach day shorts compilation, punchy cuts, square 1:1 for Instagram',
-]
-
-let uidCounter = 0
-function nextUid(): string {
-  uidCounter += 1
-  return `clip-${uidCounter}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function num(v: string): number {
-  const n = Number.parseFloat(v)
-  return Number.isFinite(n) && n >= 0 ? n : 0
-}
-
-interface ClipDraft {
-  uid: string
-  asset_id: number
-  scene_id: number | null
-  start: string
-  end: string
-  caption: string
-  transition: string
-  score: number
-}
-
-function draftFromClip(c: Clip): ClipDraft {
-  return {
-    uid: nextUid(),
-    asset_id: c.asset_id,
-    scene_id: c.scene_id,
-    start: String(c.start),
-    end: String(c.end),
-    caption: c.caption,
-    transition: c.transition,
-    score: c.score,
-  }
-}
-
-function draftsToClips(drafts: ClipDraft[]): Clip[] {
-  return drafts.map((d) => ({
-    asset_id: d.asset_id,
-    scene_id: d.scene_id,
-    start: num(d.start),
-    end: num(d.end),
-    caption: d.caption,
-    transition: d.transition,
-    score: d.score,
-  }))
-}
-
-function clipsEqual(a: Clip, b: Clip): boolean {
-  return (
-    a.asset_id === b.asset_id &&
-    a.scene_id === b.scene_id &&
-    Math.abs(a.start - b.start) < 1e-6 &&
-    Math.abs(a.end - b.end) < 1e-6 &&
-    a.caption === b.caption &&
-    a.transition === b.transition &&
-    Math.abs(a.score - b.score) < 1e-6
-  )
-}
-
-function scoreVariant(score: number): 'success' | 'default' | 'outline' {
-  if (score >= 8) return 'success'
-  if (score >= 6) return 'default'
-  return 'outline'
-}
-
-function ClipRow({
-  draft,
-  index,
-  locked,
-  selected,
+function StyleEditor({
+  style,
   onChange,
-  onPreview,
 }: {
-  draft: ClipDraft
-  index: number
-  locked: boolean
-  selected: boolean
-  onChange: (uid: string, patch: Partial<ClipDraft>) => void
-  onPreview: (uid: string) => void
+  style: TextStyle;
+  onChange: (s: TextStyle) => void;
 }) {
-  const controls = useDragControls()
-  const start = num(draft.start)
-  const end = num(draft.end)
-  const duration = clipDuration({ start, end })
-
   return (
-    <Reorder.Item
-      value={draft.uid}
-      dragListener={false}
-      dragControls={controls}
-      whileDrag={{ scale: 1.02, boxShadow: '0 10px 44px rgba(168, 85, 247, 0.35)' }}
-      className="glass-strong rounded-xl p-3"
-    >
-      <div className="flex items-start gap-3">
-        <div className="flex shrink-0 flex-col items-center gap-1.5 pt-2">
-          <span
-            onPointerDown={(e) => controls.start(e)}
-            className="cursor-grab touch-none rounded-md p-1 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground active:cursor-grabbing"
-            title="Drag to reorder"
-            aria-label={`Drag clip ${index + 1} to reorder`}
-          >
-            <GripVertical className="h-5 w-5" />
-          </span>
-          <span className="text-[10px] font-semibold text-muted-foreground">#{index + 1}</span>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => onPreview(draft.uid)}
-          className={cn(
-            'h-16 w-24 shrink-0 overflow-hidden rounded-lg border bg-white/5',
-            selected ? 'border-primary ring-1 ring-primary/50' : 'border-border',
-          )}
-          aria-label={`Preview clip ${index + 1}`}
+    <div className="grid grid-cols-2 gap-2">
+      <label className="mf-field">
+        Preset
+        <select
+          className="mf-input"
+          value={style.preset}
+          onChange={(e) =>
+            onChange({
+              ...style,
+              preset: e.target.value as TextStyle["preset"],
+            })
+          }
         >
-          <img
-            src={thumbUrl(draft.asset_id)}
-            alt=""
-            loading="lazy"
-            className="h-full w-full object-cover"
-            onError={(e) => {
-              e.currentTarget.style.visibility = 'hidden'
-            }}
+          <option value="clean">Clean subtitles</option>
+          <option value="bold">Bold social captions</option>
+          <option value="active">Active-word highlighting</option>
+        </select>
+      </label>
+      <label className="mf-field">
+        Font
+        <select
+          className="mf-input"
+          value={style.font}
+          onChange={(e) =>
+            onChange({ ...style, font: e.target.value as TextStyle["font"] })
+          }
+        >
+          <option>DejaVu Sans</option>
+          <option>Liberation Sans</option>
+        </select>
+      </label>
+      {(["size", "outline", "max_lines", "margin"] as const).map((k) => (
+        <label className="mf-field" key={k}>
+          {
+            {
+              size: "Size (at 1920px high)",
+              outline: "Outline",
+              max_lines: "Maximum lines",
+              margin: "Safe margin (fraction)",
+            }[k]
+          }
+          <input
+            className="mf-input"
+            type="number"
+            step={k === "margin" ? 0.01 : 1}
+            value={style[k]}
+            onChange={(e) =>
+              onChange({ ...style, [k]: Number(e.target.value) })
+            }
           />
-        </button>
-
-        <div className="grid min-w-0 flex-1 gap-x-3 gap-y-2 sm:grid-cols-2 lg:grid-cols-[110px_110px_minmax(0,1fr)_150px]">
-          <div>
-            <Label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              In (s)
-            </Label>
-            <Input
-              type="number"
-              min={0}
-              step={0.1}
-              value={draft.start}
-              disabled={locked}
-              onChange={(e) => onChange(draft.uid, { start: e.target.value })}
-              className="h-8 text-xs"
-            />
-          </div>
-          <div>
-            <Label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Out (s)
-            </Label>
-            <Input
-              type="number"
-              min={0}
-              step={0.1}
-              value={draft.end}
-              disabled={locked}
-              onChange={(e) => onChange(draft.uid, { end: e.target.value })}
-              className="h-8 text-xs"
-            />
-          </div>
-          <div className="sm:col-span-2 lg:col-span-1">
-            <Label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Caption
-            </Label>
-            <Input
-              value={draft.caption}
-              disabled={locked}
-              onChange={(e) => onChange(draft.uid, { caption: e.target.value })}
-              placeholder="On-screen caption"
-              className="h-8 text-xs"
-            />
-          </div>
-          <div>
-            <Label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Transition
-            </Label>
-            <Select
-              value={draft.transition}
-              disabled={locked}
-              onValueChange={(v) => onChange(draft.uid, { transition: v })}
-            >
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TRANSITIONS.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t.replace(/_/g, ' ')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 flex-col items-end justify-between gap-1 self-stretch py-0.5">
-          <Badge variant={scoreVariant(draft.score)}>{draft.score.toFixed(1)}</Badge>
-          <span className="whitespace-nowrap text-[10px] text-muted-foreground">
-            {formatTimecode(start)}–{formatTimecode(end)} · {formatDuration(duration)}
-          </span>
-        </div>
-      </div>
-    </Reorder.Item>
-  )
+        </label>
+      ))}
+      <label className="mf-field">
+        Colour
+        <input
+          type="color"
+          className="mf-input"
+          value={style.color}
+          onChange={(e) => onChange({ ...style, color: e.target.value })}
+        />
+      </label>
+      <label className="mf-field">
+        Position
+        <select
+          className="mf-input"
+          value={style.position}
+          onChange={(e) =>
+            onChange({
+              ...style,
+              position: e.target.value as TextStyle["position"],
+            })
+          }
+        >
+          <option value="bottom">Bottom</option>
+          <option value="center">Centre</option>
+          <option value="top">Top</option>
+        </select>
+      </label>
+      <label className="mf-field">
+        <input
+          type="checkbox"
+          checked={style.background}
+          onChange={(e) => onChange({ ...style, background: e.target.checked })}
+        />{" "}
+        Background
+      </label>
+    </div>
+  );
 }
-
 export function EditStudioPage() {
-  const location = useLocation()
-  const seeded = location.state as { intent?: string; plan?: EditPlan } | null
-  // ---- intent → plan ----
-  const [intent, setIntent] = useState(seeded?.intent ?? '')
-  const [plan, setPlan] = useState<EditPlan | null>(null)
-  const [drafts, setDrafts] = useState<ClipDraft[]>([])
-  const [previewUid, setPreviewUid] = useState<string | null>(null)
-  const [planBusy, setPlanBusy] = useState(false)
-  const [planError, setPlanError] = useState<string | null>(null)
-
-  // ---- review settings ----
-  const [ratio, setRatio] = useState<RenderRatio>('9:16')
-  const [width, setWidth] = useState(1080)
-  const [height, setHeight] = useState(1920)
-  const [captions, setCaptions] = useState(false)
-  const [musicPath, setMusicPath] = useState('')
-  const [approved, setApproved] = useState(false)
-
-  // ---- save ----
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [savedAt, setSavedAt] = useState<number | null>(null)
-
-  // ---- approval + render ----
-  const [approving, setApproving] = useState(false)
-  const [approveError, setApproveError] = useState<string | null>(null)
-  const [renderJobId, setRenderJobId] = useState<string | null>(null)
-  const [renderStatus, setRenderStatus] = useState<RenderStatus | null>(null)
-
-  // ---- NLE exports ----
-  const [exporting, setExporting] = useState<ExportFormat | null>(null)
-  const [exportResults, setExportResults] = useState<Partial<Record<ExportFormat, string>>>({})
-  const [exportErrors, setExportErrors] = useState<Partial<Record<ExportFormat, string>>>({})
-  const [resolveInfo, setResolveInfo] = useState<{ resolve?: string; project?: string } | null>(null)
-  const [exportDialog, setExportDialog] = useState<{ format: ExportFormat; message: string } | null>(null)
-
-  // live render job state from the shared WebSocket store
-  const renderLive = useWsStore((s) => (renderJobId ? s.jobs[renderJobId] : undefined))
-
-  const applyPlan = useCallback((p: EditPlan) => {
-    setPlan(p)
-    setDrafts(p.clips.map((c) => draftFromClip(c)))
-    setPreviewUid(null)
-    setApproved(p.status === 'approved')
-    setPlanError(null)
-    setSaveError(null)
-    setSavedAt(null)
-    if (p.target_ratio === '9:16' || p.target_ratio === '1:1' || p.target_ratio === '16:9') {
-      setRatio(p.target_ratio)
-      const dims = ratioDimensions(p.target_ratio)
-      setWidth(dims.width)
-      setHeight(dims.height)
-    }
-    // fresh plan → clear stale render/export state
-    setRenderJobId(null)
-    setRenderStatus(null)
-    setExportResults({})
-    setExportErrors({})
-    setResolveInfo(null)
-  }, [])
-
-  const generatePlan = async (override?: string) => {
-    const text = (override ?? intent).trim()
-    if (!text || planBusy) return
-    setIntent(text)
-    setPlanBusy(true)
-    setPlanError(null)
-    try {
-      const p = await planEdit(text)
-      applyPlan(p)
-    } catch (e) {
-      setPlanError(e instanceof Error ? e.message : 'Failed to generate plan.')
-    } finally {
-      setPlanBusy(false)
-    }
+  const [params] = useSearchParams();
+  const [planId, setPlanId] = useState(
+    params.get("plan_id") ?? localStorage.getItem("mf-project") ?? "",
+  );
+  const [plans, setPlans] = useState<EditPlan[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [intent, setIntent] = useState("30-second highlight reel, upbeat");
+  const [p, setP] = useState<Project>();
+  const [approved, setApproved] = useState<number | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [clipIndex, setClipIndex] = useState(0);
+  const [jobId, setJobId] = useState(
+    localStorage.getItem("mf-editor-job") ?? "",
+  );
+  const [job, setJob] = useState<EditorJob>();
+  const [preview, setPreview] = useState("");
+  const [outputs, setOutputs] = useState<Record<string, string>>({});
+  const [profile, setProfile] = useState("balanced");
+  const [language, setLanguage] = useState("");
+  const [city, setCity] = useState("");
+  const [codecs, setCodecs] = useState(["libx264"]);
+  const [scanPath, setScanPath] = useState("");
+  const active = p?.clips[clipIndex];
+  const captionKey =
+    p?.caption_source === "narration" ? "narration" : active?.uid;
+  const cues =
+    p?.caption_source === "narration"
+      ? p.narration_captions
+      : (p?.captions[active?.uid ?? ""] ?? []);
+  const currentPlan = useRef(planId);
+  currentPlan.current = planId;
+  const latest = useRef<{ project?: Project; dirty: boolean }>({
+    dirty: false,
+  });
+  function changed(next: Project) {
+    latest.current = { project: next, dirty: true };
+    setP(next);
+    setDirty(true);
+    setApproved(null);
+    setPreview("");
   }
-
+  function loaded(e: ProjectEnvelope) {
+    latest.current = { project: e.project, dirty: false };
+    setP(e.project);
+    setApproved(e.approved_revision);
+    setDirty(false);
+  }
+  async function refreshAssets() {
+    const data = await editorRequest<{ items: Asset[] }>(
+      `/api/assets?limit=200${city ? "&city=" + encodeURIComponent(city) : ""}`,
+    );
+    setAssets(data.items);
+  }
   useEffect(() => {
-    if (seeded?.plan) applyPlan(seeded.plan)
-    else if (seeded?.intent) void generatePlan(seeded.intent)
-    // seed once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const patchDraft = useCallback((uid: string, patch: Partial<ClipDraft>) => {
-    setDrafts((ds) => ds.map((d) => (d.uid === uid ? { ...d, ...patch } : d)))
-  }, [])
-
-  const dirty = useMemo(() => {
-    if (!plan) return false
-    const current = draftsToClips(drafts)
-    if (current.length !== plan.clips.length) return true
-    return current.some((c, i) => !clipsEqual(c, plan.clips[i] ?? c))
-  }, [plan, drafts])
-
-  const runningTotal = useMemo(
-    () => drafts.reduce((sum, d) => sum + clipDuration({ start: num(d.start), end: num(d.end) }), 0),
-    [drafts],
-  )
-
-  const previewDraft = useMemo(() => {
-    if (drafts.length === 0) return null
-    return drafts.find((d) => d.uid === previewUid) ?? drafts[0]
-  }, [drafts, previewUid])
-
-  const saveEdits = async () => {
-    if (!plan || saving || approved) return
-    setSaving(true)
-    setSaveError(null)
-    try {
-      const updated = await updatePlan(plan.plan_id, draftsToClips(drafts))
-      setPlan(updated)
-      setDrafts(updated.clips.map((c) => draftFromClip(c)))
-      setSavedAt(Date.now())
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Failed to save edits.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  // ---- hard approval gate → approve, then render ----
-  const approveAndRender = async () => {
-    if (!plan || approving) return
-    setApproving(true)
-    setApproveError(null)
-    try {
-      await approvePlan(plan.plan_id)
-      setApproved(true)
-      const job = await startRender({
-        plan_id: plan.plan_id,
-        ratio,
-        music_path: musicPath.trim() || null,
-        captions,
-        width,
-        height,
-      })
-      setRenderJobId(job.job_id)
-      setRenderStatus({ status: 'running', output_path: null, progress: 0 })
-    } catch (e) {
-      setApproveError(e instanceof Error ? e.message : 'Approval or render start failed.')
-    } finally {
-      setApproving(false)
-    }
-  }
-
-  // live WS: when the render job finishes, fetch its output
+    editorRequest<EditPlan[]>("/api/edits/plans")
+      .then(setPlans)
+      .catch((e) => setMessage(e.message));
+    editorRequest<{ items: Asset[] }>("/api/assets?limit=200")
+      .then((data) => setAssets(data.items))
+      .catch((e) => setMessage(e.message));
+    editorRequest<{ codecs: string[] }>("/api/editor/capabilities")
+      .then((x) => setCodecs(x.codecs))
+      .catch((e) => setMessage(e.message));
+  }, []);
   useEffect(() => {
-    if (!renderJobId) return
-    return onJobEvent((job) => {
-      if (job.job_id !== renderJobId) return
-      if (job.status === 'done') {
-        getRenderStatus(renderJobId)
-          .then(setRenderStatus)
-          .catch(() => {})
-      } else if (job.status === 'error') {
-        setRenderStatus({ status: 'error', output_path: null, progress: job.progress })
-      }
-    })
-  }, [renderJobId])
-
-  // poll fallback in case the WebSocket is disconnected
-  const renderTerminal = renderStatus?.status === 'done' || renderStatus?.status === 'error'
+    if (!planId) return;
+    localStorage.setItem("mf-project", planId);
+    editorRequest<ProjectEnvelope>(`/api/editor/${planId}`)
+      .then(loaded)
+      .catch((e) => setMessage(e.message));
+    setClipIndex(0);
+    setPreview("");
+  }, [planId]);
   useEffect(() => {
-    if (!renderJobId || renderTerminal) return
-    const t = window.setInterval(() => {
-      getRenderStatus(renderJobId)
-        .then((r) => {
-          setRenderStatus(r)
-          if (r.status === 'done' || r.status === 'error') window.clearInterval(t)
-        })
-        .catch(() => {})
-    }, 3000)
-    return () => window.clearInterval(t)
-  }, [renderJobId, renderTerminal])
-
-  const outputUrl = exportedFileUrl(renderStatus?.output_path)
-  const renderProgress = renderLive?.progress ?? renderStatus?.progress ?? 0
-  const renderRunning = renderJobId !== null && !renderTerminal
-  const renderDone = renderStatus?.status === 'done' && outputUrl !== null
-  const renderFailed = renderStatus?.status === 'error'
-
-  const handleExport = async (format: ExportFormat) => {
-    if (!plan || exporting) return
-    setExporting(format)
-    setExportErrors((e) => ({ ...e, [format]: undefined }))
-    setExportResults((r) => ({ ...r, [format]: undefined }))
-    if (format === 'resolve') setResolveInfo(null)
-    try {
-      const res = await exportPlan(format, plan.plan_id)
-      if (format === 'resolve') {
-        setResolveInfo({ resolve: res.resolve, project: res.project })
-      } else if (res.path) {
-        setExportResults((r) => ({ ...r, [format]: exportedFileUrl(res.path) ?? '' }))
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Export failed.'
-      if (e instanceof ApiError && e.status === 503) {
-        // e.g. DaVinci Resolve not running — surface the backend's helpful message
-        setExportDialog({ format, message })
-      } else {
-        setExportErrors((er) => ({ ...er, [format]: message }))
-      }
-    } finally {
-      setExporting(null)
-    }
-  }
-
-  const canExport = Boolean(plan) && (approved || renderDone)
-
-  return (
-    <div>
-      <PageHeader
-        title={
-          <>
-            AI <span className="neon-text">Edit Studio</span>
-          </>
+    if (!jobId) return;
+    localStorage.setItem("mf-editor-job", jobId);
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const j = await editorRequest<EditorJob>(`/api/jobs/${jobId}`);
+        if (stopped) return;
+        setJob(j);
+        if (
+          j.status === "done" &&
+          j.meta?.result &&
+          j.meta.plan_id === currentPlan.current
+        ) {
+          const result = j.meta.result;
+          if (result.video) {
+            if (result.video.split("/").pop()?.startsWith("preview_")) {
+              if (
+                !latest.current.dirty &&
+                result.revision === latest.current.project?.revision
+              )
+                setPreview(mediaUrl(result.video));
+            } else
+              setOutputs(
+                Object.fromEntries(
+                  Object.entries(result).filter(
+                    ([k, v]) =>
+                      ["video", "clean_master", "srt", "vtt", "ass"].includes(
+                        k,
+                      ) && typeof v === "string",
+                  ),
+                ) as Record<string, string>,
+              );
+          }
+          setMessage("Job completed.");
         }
-        description="Describe the video you want — MediaForge plans the cut, you review and approve it, then it renders and exports to your NLE."
+        if (["done", "error", "cancelled", "interrupted"].includes(j.status)) {
+          clearInterval(timer);
+        }
+      } catch (e) {
+        setMessage(String(e));
+        clearInterval(timer);
+      }
+    };
+    const timer = setInterval(poll, 700);
+    void poll();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [jobId]);
+  async function save(next = p) {
+    if (!next) return;
+    setBusy(true);
+    try {
+      const e = await editorRequest<ProjectEnvelope>(
+        `/api/editor/${planId}`,
+        "PUT",
+        next,
+      );
+      if (latest.current.project === next || !latest.current.project) loaded(e);
+      else {
+        const nextDraft = {
+          ...latest.current.project,
+          revision: e.project.revision,
+        };
+        latest.current = { project: nextDraft, dirty: true };
+        setP(nextDraft);
+        setDirty(true);
+      }
+      setMessage(
+        "Saved. Review this revision and approve before final export.",
+      );
+      return e.project;
+    } catch (e) {
+      setMessage(String(e));
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function action(fn: () => Promise<void>) {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e) {
+      setMessage(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function beginRender(isPreview: boolean) {
+    if (!p) return;
+    let current = p;
+    if (dirty) {
+      const saved = await save();
+      if (saved) current = saved;
+    }
+    if (!isPreview) {
+      loaded(
+        await editorRequest(`/api/editor/${planId}/approve`, "POST", {
+          revision: current.revision,
+        }),
+      );
+    }
+    const r = await editorRequest<{ job_id: string }>(
+      `/api/editor/${planId}/render?preview=${isPreview}`,
+      "POST",
+    );
+    setJob(undefined);
+    setJobId(r.job_id);
+  }
+  function setCues(next: Cue[]) {
+    if (!p || !captionKey) return;
+    changed(
+      p.caption_source === "narration"
+        ? { ...p, narration_captions: next }
+        : { ...p, captions: { ...p.captions, [captionKey]: next } },
+    );
+  }
+  const running = job && ["queued", "running"].includes(job.status);
+  return (
+    <div className="space-y-5 pb-16">
+      <PageHeader
+        title="Edit Studio"
+        description="Select footage → describe → review → adjust → preview and export"
       />
-
-      {/* ---------- intent input ---------- */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass mb-6 rounded-xl p-4"
-      >
-        <Label htmlFor="intent" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          What should MediaForge make?
-        </Label>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <Textarea
-            id="intent"
-            value={intent}
-            onChange={(e) => setIntent(e.target.value)}
-            disabled={planBusy}
-            placeholder='e.g. "60-second highlight reel of the Vancouver trip, upbeat, vertical 9:16 for TikTok"'
-            className="min-h-[92px] flex-1"
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void generatePlan()
-            }}
-          />
-          <Button
-            variant="gradient"
-            size="lg"
-            disabled={!intent.trim() || planBusy}
-            onClick={() => void generatePlan()}
-            className="h-auto sm:w-44"
+      <section className="glass rounded-xl p-5 space-y-3">
+        <h2 className="font-semibold">1 · Select footage</h2>
+        <div className="flex gap-2 flex-wrap">
+          <label className="grow mf-field">
+            Import folder or file
+            <input
+              className="mf-input"
+              value={scanPath}
+              onChange={(e) => setScanPath(e.target.value)}
+              placeholder="/home/you/Videos/trip"
+            />
+          </label>
+          <button
+            className="mf-button"
+            disabled={busy || !scanPath}
+            onClick={() =>
+              void action(async () => {
+                const j = await editorRequest<{ job_id: string }>(
+                  "/api/scan",
+                  "POST",
+                  { paths: [scanPath] },
+                );
+                setJobId(j.job_id);
+                setMessage(
+                  "Import started. Refresh footage when the scan finishes.",
+                );
+              })
+            }
           >
-            {planBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-            {planBusy ? 'Planning…' : 'Generate plan'}
-          </Button>
+            Import
+          </button>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          Try:
-          {EXAMPLE_INTENTS.map((s) => (
+        <label className="mf-field">
+          Filter city
+          <input
+            className="mf-input"
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+          />
+        </label>
+        <button
+          className="mf-button"
+          onClick={() => void action(refreshAssets)}
+        >
+          Refresh footage
+        </button>
+        <details>
+          <summary>
+            {selected.length
+              ? `${selected.length} selected`
+              : "Use matching library footage, or select specific sources"}
+          </summary>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-h-72 overflow-auto mt-3">
+            {assets.map((a) => (
+              <label key={a.id} className="border rounded-lg p-2 text-xs">
+                <img
+                  src={thumbUrl(a.id)}
+                  alt=""
+                  className="h-20 w-full object-cover"
+                />
+                <input
+                  type="checkbox"
+                  checked={selected.includes(a.id)}
+                  onChange={(e) =>
+                    setSelected(
+                      e.target.checked
+                        ? [...selected, a.id]
+                        : selected.filter((id) => id !== a.id),
+                    )
+                  }
+                />
+                <span className="break-all">{a.path.split("/").pop()}</span>
+                {a.city && <span className="block">{a.city}</span>}
+              </label>
+            ))}
+          </div>
+        </details>
+        <h2 className="font-semibold">2 · Describe your edit</h2>
+        <textarea
+          aria-label="Describe the edit"
+          className="mf-input"
+          value={intent}
+          onChange={(e) => setIntent(e.target.value)}
+        />
+        <button
+          className="mf-button"
+          disabled={busy || !intent.trim()}
+          onClick={() =>
+            void action(async () => {
+              const plan = await editorRequest<EditPlan>(
+                "/api/edits/plan",
+                "POST",
+                {
+                  intent,
+                  asset_ids: selected.length ? selected : undefined,
+                  trip_id: params.get("trip_id")
+                    ? Number(params.get("trip_id"))
+                    : undefined,
+                },
+              );
+              setPlans([plan, ...plans]);
+              setPlanId(plan.plan_id);
+              setMessage(plan.summary ?? "Review the sequence");
+            })
+          }
+        >
+          Generate local plan
+        </button>
+        <label className="mf-field">
+          Open saved project
+          <select
+            className="mf-input"
+            value={planId}
+            onChange={(e) => setPlanId(e.target.value)}
+          >
+            <option value="">Choose project</option>
+            {plans.map((plan) => (
+              <option key={plan.plan_id} value={plan.plan_id}>
+                {plan.summary ?? plan.plan_id} · {plan.plan_id.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+      <p
+        role="status"
+        className="border rounded-lg p-3 text-sm whitespace-pre-wrap"
+      >
+        {message ||
+          "No cloud generation occurs unless you explicitly request it."}
+      </p>
+      {p && (
+        <>
+          <div className="flex gap-3 items-center flex-wrap">
+            <span>
+              Revision {p.revision} ·{" "}
+              {dirty
+                ? "Unsaved changes"
+                : approved === p.revision
+                  ? "Approved"
+                  : "Needs approval"}{" "}
+              · {duration(p).toFixed(2)} seconds
+            </span>
             <button
-              key={s}
-              onClick={() => setIntent(s)}
-              className="cursor-pointer rounded-full border border-border px-2.5 py-1 transition-colors hover:border-primary/50 hover:text-primary"
+              className="mf-button"
+              disabled={busy || !dirty}
+              onClick={() =>
+                void action(async () => {
+                  await save();
+                })
+              }
             >
-              {s}
+              Save project
             </button>
-          ))}
-        </div>
-        {planError && (
-          <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {planError}
+            <button
+              className="mf-button"
+              disabled={busy}
+              onClick={() =>
+                void action(async () =>
+                  loaded(await editorRequest(`/api/editor/${planId}`)),
+                )
+              }
+            >
+              Reload saved project
+            </button>
           </div>
-        )}
-      </motion.div>
-
-      {/* ---------- plan review ---------- */}
-      {plan && (
-        <div className="space-y-4">
-          <div className="glass rounded-xl p-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={approved ? 'success' : 'warning'}>
-                {approved ? 'Approved' : 'Draft'}
-              </Badge>
-              <Badge variant="outline">plan {plan.plan_id.slice(0, 8)}</Badge>
-              <Badge variant="outline">AI target {formatDuration(plan.total_duration)}</Badge>
-              <Badge variant="secondary">timeline {formatDuration(runningTotal)}</Badge>
-              <Badge variant="outline">{ratio}</Badge>
-              {dirty && <Badge variant="warning">Unsaved changes</Badge>}
-            </div>
-            <p className="mt-3 text-sm leading-relaxed text-foreground/90">{plan.summary}</p>
-          </div>
-
-          <div className="grid items-start gap-4 lg:grid-cols-[1fr_300px]">
-            {/* timeline */}
-            <div className="glass rounded-xl p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                  Timeline · {drafts.length} clips · {formatDuration(runningTotal)}
-                </h3>
-                <p className="text-xs text-muted-foreground">drag ⋮⋮ to reorder</p>
-              </div>
-              {drafts.length === 0 ? (
-                <p className="py-10 text-center text-sm text-muted-foreground">
-                  The plan came back with no clips. Adjust the intent and generate again.
-                </p>
-              ) : (
-                <Reorder.Group
-                  axis="y"
-                  values={drafts.map((d) => d.uid)}
-                  onReorder={(uids) => {
-                    const byUid = new Map(drafts.map((d) => [d.uid, d]))
-                    const reordered = uids
-                      .map((uid) => byUid.get(uid))
-                      .filter((d): d is ClipDraft => Boolean(d))
-                    setDrafts(reordered)
-                  }}
-                  className="space-y-3"
+          <div className="grid items-start lg:grid-cols-[1.2fr_1fr] gap-5">
+            <section className="glass rounded-xl p-5">
+              <h2 className="font-semibold">3 · Review proposed sequence</h2>
+              {p.clips.map((c, i) => (
+                <article
+                  className={`border rounded-lg p-3 my-3 ${i === clipIndex ? "border-teal-400" : ""}`}
+                  key={c.uid}
                 >
-                  {drafts.map((d, i) => (
-                    <ClipRow
-                      key={d.uid}
-                      draft={d}
-                      index={i}
-                      locked={approved}
-                      selected={(previewUid ?? drafts[0]?.uid) === d.uid}
-                      onChange={patchDraft}
-                      onPreview={setPreviewUid}
-                    />
-                  ))}
-                </Reorder.Group>
-              )}
-            </div>
-
-            {/* settings */}
-            <div className="space-y-4">
-              {previewDraft && (
-                <div className="glass rounded-xl p-4">
-                  <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                    Clip proxy
-                  </h3>
-                  <video
-                    key={`${previewDraft.asset_id}-${previewDraft.start}-${previewDraft.end}`}
-                    controls
-                    poster={thumbUrl(previewDraft.asset_id)}
-                    src={`${proxyUrl(previewDraft.asset_id)}#t=${num(previewDraft.start)},${num(previewDraft.end)}`}
-                    className="aspect-video w-full rounded-lg border border-border bg-black"
-                    onLoadedMetadata={(e) => {
-                      const start = num(previewDraft.start)
-                      if (start > 0) e.currentTarget.currentTime = start
-                    }}
-                  />
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    720p proxy · {formatTimecode(num(previewDraft.start))}–
-                    {formatTimecode(num(previewDraft.end))}
-                  </p>
-                </div>
-              )}
-              <div className="glass rounded-xl p-4">
-                <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                  Output settings
-                </h3>
-
-                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Ratio</Label>
-                <div className="mb-3 flex gap-1 rounded-lg border border-border bg-white/[0.03] p-1">
-                  {RENDER_RATIOS.map((r) => (
-                    <button
-                      key={r}
-                      onClick={() => {
-                        setRatio(r)
-                        const dims = ratioDimensions(r)
-                        setWidth(dims.width)
-                        setHeight(dims.height)
-                      }}
-                      className={cn(
-                        'flex-1 cursor-pointer rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
-                        ratio === r
-                          ? 'bg-gradient-to-r from-primary to-secondary text-white'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
+                  <button className="mf-button" onClick={() => setClipIndex(i)}>
+                    Clip {i + 1} · asset {c.asset_id}
+                  </button>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["start", "end", "speed"] as const).map((k) => (
+                      <label className="mf-field" key={k}>
+                        {k}
+                        <input
+                          type="number"
+                          className="mf-input"
+                          step=".05"
+                          value={c[k]}
+                          onChange={(e) =>
+                            changed({
+                              ...p,
+                              clips: p.clips.map((x, n) =>
+                                n === i
+                                  ? { ...x, [k]: Number(e.target.value) }
+                                  : x,
+                              ),
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <label className="mf-field">
+                    Transition to next
+                    <select
+                      className="mf-input"
+                      value={c.transition}
+                      onChange={(e) =>
+                        changed({
+                          ...p,
+                          clips: p.clips.map((x, n) =>
+                            n === i
+                              ? {
+                                  ...x,
+                                  transition: e.target.value as
+                                    "cut" | "crossfade",
+                                }
+                              : x,
+                          ),
+                        })
+                      }
                     >
-                      {r}
+                      <option value="cut">Cut</option>
+                      <option value="crossfade">Crossfade (up to 0.3s)</option>
+                    </select>
+                  </label>
+                  {[-1, 1].map((direction) => (
+                    <button
+                      className="mf-button"
+                      key={direction}
+                      disabled={
+                        i + direction < 0 || i + direction >= p.clips.length
+                      }
+                      onClick={() => {
+                        const clips = [...p.clips];
+                        [clips[i], clips[i + direction]] = [
+                          clips[i + direction],
+                          clips[i],
+                        ];
+                        changed({ ...p, clips });
+                        setClipIndex(i + direction);
+                      }}
+                    >
+                      {direction === -1 ? "Move up" : "Move down"}
                     </button>
                   ))}
-                </div>
-
-                <div className="mb-3 grid grid-cols-2 gap-2">
-                  <div>
-                    <Label className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Width
-                    </Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={width}
-                      onChange={(e) => setWidth(Math.max(1, Number(e.target.value) || 1))}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <Label className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Height
-                    </Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={height}
-                      onChange={(e) => setHeight(Math.max(1, Number(e.target.value) || 1))}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <Label htmlFor="captions" className="text-xs text-foreground">
-                    Show clip descriptions
-                    <span className="block text-[10px] font-normal text-muted-foreground">
-                      Burns each clip's AI scene description on screen
+                  <button
+                    className="mf-button"
+                    onClick={() => {
+                      changed({
+                        ...p,
+                        clips: p.clips.filter((_, n) => n !== i),
+                      });
+                      setClipIndex(0);
+                    }}
+                  >
+                    Remove from edit
+                  </button>
+                </article>
+              ))}
+            </section>
+            <section className="glass rounded-xl p-5 space-y-3">
+              <h2 className="font-semibold">Preview & text visibility</h2>
+              <div className="border rounded-lg p-3 space-y-3">
+                {(["speech_captions", "on_video_text"] as const).map((k) => (
+                  <label
+                    key={k}
+                    className="flex justify-between gap-3 items-center"
+                    htmlFor={k}
+                  >
+                    <span className="font-semibold">
+                      {k === "speech_captions"
+                        ? "Speech captions"
+                        : "On-video text"}
                     </span>
-                  </Label>
-                  <Switch id="captions" checked={captions} onCheckedChange={setCaptions} />
-                </div>
-
-                <div>
-                  <Label className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Music className="h-3.5 w-3.5" /> Music path (optional)
-                  </Label>
-                  <Input
-                    value={musicPath}
-                    onChange={(e) => setMusicPath(e.target.value)}
-                    placeholder="/home/bfam/mediaforge/music/beat.mp3"
-                    className="h-8 text-xs"
+                    <Switch
+                      id={k}
+                      checked={p[k]}
+                      disabled={busy}
+                      onCheckedChange={(v) => {
+                        const next = { ...p, [k]: v };
+                        changed(next);
+                        void save(next).catch(() => {});
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs">
+                Switches save immediately and never retranscribe or call a paid
+                API. Changing settings requires reapproval.
+              </p>
+              {preview ? (
+                <video
+                  aria-label="Rendered project preview"
+                  controls
+                  src={preview}
+                  className="max-h-96 w-full rounded bg-black"
+                />
+              ) : active ? (
+                <>
+                  <video
+                    aria-label="Source footage reference"
+                    key={active.uid}
+                    controls
+                    src={`${proxyUrl(active.asset_id)}#t=${active.start},${active.end}`}
+                    poster={thumbUrl(active.asset_id)}
+                    className="max-h-72 w-full rounded bg-black"
                   />
-                  <p className="mt-1 text-[10px] text-muted-foreground">
-                    Absolute path on the backend machine — enables beat-synced cuts.
+                  <p className="text-xs">
+                    Source reference only. Generate a preview to see the exact
+                    captions, overlays, transitions and audio mix.
                   </p>
-                </div>
-              </div>
-
-              <div className="glass rounded-xl p-4">
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  disabled={!dirty || saving || approved}
-                  onClick={() => void saveEdits()}
-                >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {saving ? 'Saving…' : 'Save edits'}
-                </Button>
-                {approved && (
-                  <p className="mt-2 text-center text-[11px] text-muted-foreground">
-                    Plan approved — edits are locked.
-                  </p>
-                )}
-                {!approved && dirty && (
-                  <p className="mt-2 text-center text-[11px] text-muted-foreground">
-                    Unsaved changes — save before approving.
-                  </p>
-                )}
-                {saveError && (
-                  <p className="mt-2 text-center text-[11px] text-destructive">{saveError}</p>
-                )}
-                {savedAt && !dirty && (
-                  <p className="mt-2 flex items-center justify-center gap-1 text-[11px] text-emerald-400">
-                    <Check className="h-3 w-3" /> Saved {new Date(savedAt).toLocaleTimeString()}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* ---------- hard approval gate ---------- */}
-          <div className="neon-border rounded-xl bg-gradient-to-br from-primary/10 via-transparent to-secondary/10 p-5">
-            <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-secondary" />
-                <div>
-                  <h3 className="font-semibold">Approval gate</h3>
-                  <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
-                    Approving locks the timeline and starts the FFmpeg render ({ratio}, {width}×{height}
-                    {captions ? ', clip descriptions on screen' : ''}
-                    {musicPath.trim() ? ', beat-synced' : ''}). You can re-render any time after approval.
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="gradient"
-                size="lg"
-                disabled={!plan || approving || (renderRunning && !renderFailed)}
-                onClick={() => void approveAndRender()}
-                className="shrink-0 shadow-[0_0_40px_-8px] shadow-secondary/60"
+                </>
+              ) : null}
+              <button
+                className="mf-button"
+                disabled={busy || !!running || !p.clips.length}
+                onClick={() => void action(() => beginRender(true))}
               >
-                {approving ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Sparkles className="h-5 w-5" />
+                Generate local preview
+              </button>
+              <h2 className="font-semibold">4 · Adjust captions and text</h2>
+              <details>
+                <summary>Speech captions · editable timing</summary>
+                <label className="mf-field">
+                  Caption source
+                  <select
+                    className="mf-input"
+                    value={p.caption_source}
+                    onChange={(e) =>
+                      changed({
+                        ...p,
+                        caption_source: e.target.value as
+                          "original" | "narration",
+                      })
+                    }
+                  >
+                    <option value="original">Original speech</option>
+                    <option value="narration">Generated narration</option>
+                  </select>
+                </label>
+                <label className="mf-field">
+                  Local transcription profile
+                  <select
+                    className="mf-input"
+                    value={profile}
+                    onChange={(e) => setProfile(e.target.value)}
+                  >
+                    <option value="fast">Fast · multilingual base</option>
+                    <option value="balanced">
+                      Balanced · multilingual small
+                    </option>
+                    <option value="quality">
+                      Higher accuracy · large-v3 (slower CPU fallback)
+                    </option>
+                  </select>
+                </label>
+                <label className="mf-field">
+                  Language (blank detects automatically)
+                  <input
+                    className="mf-input"
+                    placeholder="en, fr, es…"
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                  />
+                </label>
+                <button
+                  className="mf-button"
+                  disabled={busy || !!running || !active}
+                  onClick={() =>
+                    void action(async () => {
+                      const saved = dirty ? await save() : p;
+                      if (!saved || !active) return;
+                      const j = await editorRequest<{ job_id: string }>(
+                        `/api/editor/${planId}/transcribe`,
+                        "POST",
+                        {
+                          clip_uid: active.uid,
+                          revision: saved.revision,
+                          profile,
+                          language: language || null,
+                        },
+                      );
+                      setJobId(j.job_id);
+                      setJob(undefined);
+                    })
+                  }
+                >
+                  Transcribe selected clip locally
+                </button>
+                {job?.meta?.plan_id === planId && job?.meta?.result?.cues && (
+                  <button
+                    className="mf-button"
+                    onClick={() => {
+                      const r = job.meta!.result!;
+                      if (r.revision !== p.revision) {
+                        setMessage(
+                          "Project changed since transcription started. Review timing before applying.",
+                        );
+                      }
+                      if (
+                        r.clip_uid &&
+                        p.clips.some((c) => c.uid === r.clip_uid)
+                      )
+                        changed({
+                          ...p,
+                          captions: { ...p.captions, [r.clip_uid]: r.cues! },
+                        });
+                    }}
+                  >
+                    Apply transcription result
+                  </button>
                 )}
-                {approving
-                  ? 'Approving & starting render…'
-                  : approved
-                    ? renderDone
-                      ? 'Re-render'
-                      : 'Render again'
-                    : 'Approve plan & render'}
-              </Button>
+                <p className="text-xs">
+                  Original speech timings are source seconds; narration uses
+                  edited-timeline seconds. Trim, order, speed and transition
+                  changes are mapped on export. Manual text correction clears
+                  stale word alignment for that cue.
+                </p>
+                {cues.map((cue, i) => (
+                  <div className="border rounded p-2 my-2" key={i}>
+                    <textarea
+                      aria-label={`Caption ${i + 1}`}
+                      className="mf-input"
+                      value={cue.text}
+                      onChange={(e) =>
+                        setCues(
+                          cues.map((c, n) =>
+                            n === i
+                              ? { ...c, text: e.target.value, words: [] }
+                              : c,
+                          ),
+                        )
+                      }
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["start", "end"] as const).map((k) => (
+                        <label className="mf-field" key={k}>
+                          {k}
+                          <input
+                            className="mf-input"
+                            type="number"
+                            step=".01"
+                            value={cue[k]}
+                            onChange={(e) =>
+                              setCues(
+                                cues.map((c, n) =>
+                                  n === i
+                                    ? {
+                                        ...c,
+                                        [k]: Number(e.target.value),
+                                        words: [],
+                                      }
+                                    : c,
+                                ),
+                              )
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <details>
+                      <summary>Refine word timing (optional)</summary>
+                      <p className="text-xs">
+                        Edit individual word boundaries for active-word
+                        captions. Retranscribe at higher quality for a fresh
+                        local alignment.
+                      </p>
+                      {cue.words.map((word, wi) => (
+                        <div key={wi} className="grid grid-cols-3 gap-1">
+                          <label className="mf-field">
+                            Word
+                            <input
+                              className="mf-input"
+                              value={word.text}
+                              onChange={(e) =>
+                                setCues(
+                                  cues.map((c, n) =>
+                                    n === i
+                                      ? {
+                                          ...c,
+                                          words: c.words.map((w, j) =>
+                                            j === wi
+                                              ? { ...w, text: e.target.value }
+                                              : w,
+                                          ),
+                                        }
+                                      : c,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          {(["start", "end"] as const).map((k) => (
+                            <label key={k} className="mf-field">
+                              {k}
+                              <input
+                                type="number"
+                                step=".01"
+                                className="mf-input"
+                                value={word[k]}
+                                onChange={(e) =>
+                                  setCues(
+                                    cues.map((c, n) =>
+                                      n === i
+                                        ? {
+                                            ...c,
+                                            words: c.words.map((w, j) =>
+                                              j === wi
+                                                ? {
+                                                    ...w,
+                                                    [k]: Number(e.target.value),
+                                                  }
+                                                : w,
+                                            ),
+                                          }
+                                        : c,
+                                    ),
+                                  )
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      ))}
+                    </details>
+                    <button
+                      className="mf-button"
+                      onClick={() => setCues(cues.filter((_, n) => n !== i))}
+                    >
+                      Remove cue
+                    </button>
+                  </div>
+                ))}
+                <button
+                  className="mf-button"
+                  disabled={!active}
+                  onClick={() =>
+                    setCues([
+                      ...cues,
+                      {
+                        start:
+                          p.caption_source === "narration" ? 0 : active!.start,
+                        end: p.caption_source === "narration" ? 2 : active!.end,
+                        text: "",
+                        words: [],
+                      },
+                    ])
+                  }
+                >
+                  Add speech cue
+                </button>
+                <StyleEditor
+                  style={p.caption_style}
+                  onChange={(s) => changed({ ...p, caption_style: s })}
+                />
+              </details>
+              {active && (
+                <details>
+                  <summary>On-video text · titles and labels</summary>
+                  {(p.overlays[active.uid] ?? []).map((cue, i) => (
+                    <div className="border rounded p-2 my-2" key={i}>
+                      <textarea
+                        aria-label={`Overlay ${i + 1}`}
+                        className="mf-input"
+                        value={cue.text}
+                        onChange={(e) =>
+                          changed({
+                            ...p,
+                            overlays: {
+                              ...p.overlays,
+                              [active.uid]: p.overlays[active.uid].map(
+                                (c, n) =>
+                                  n === i ? { ...c, text: e.target.value } : c,
+                              ),
+                            },
+                          })
+                        }
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        {(["start", "end"] as const).map((k) => (
+                          <label className="mf-field" key={k}>
+                            Source {k}
+                            <input
+                              className="mf-input"
+                              type="number"
+                              step=".01"
+                              value={cue[k]}
+                              onChange={(e) =>
+                                changed({
+                                  ...p,
+                                  overlays: {
+                                    ...p.overlays,
+                                    [active.uid]: p.overlays[active.uid].map(
+                                      (c, n) =>
+                                        n === i
+                                          ? {
+                                              ...c,
+                                              [k]: Number(e.target.value),
+                                            }
+                                          : c,
+                                    ),
+                                  },
+                                })
+                              }
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <StyleEditor
+                        style={cue.style ?? p.caption_style}
+                        onChange={(s) =>
+                          changed({
+                            ...p,
+                            overlays: {
+                              ...p.overlays,
+                              [active.uid]: p.overlays[active.uid].map(
+                                (c, n) => (n === i ? { ...c, style: s } : c),
+                              ),
+                            },
+                          })
+                        }
+                      />
+                      <button
+                        className="mf-button"
+                        onClick={() =>
+                          changed({
+                            ...p,
+                            overlays: {
+                              ...p.overlays,
+                              [active.uid]: p.overlays[active.uid].filter(
+                                (_, n) => n !== i,
+                              ),
+                            },
+                          })
+                        }
+                      >
+                        Remove overlay
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    className="mf-button"
+                    onClick={() =>
+                      changed({
+                        ...p,
+                        overlays: {
+                          ...p.overlays,
+                          [active.uid]: [
+                            ...(p.overlays[active.uid] ?? []),
+                            {
+                              start: active.start,
+                              end: active.end,
+                              text: "New title",
+                              words: [],
+                              style: {
+                                ...p.caption_style,
+                                preset: "bold",
+                                position: "top",
+                              },
+                            },
+                          ],
+                        },
+                      })
+                    }
+                  >
+                    Add overlay
+                  </button>
+                </details>
+              )}
+            </section>
+          </div>
+          <details className="glass rounded-xl p-5">
+            <summary className="font-semibold">
+              Post description · never burned into video
+            </summary>
+            {(["post_title", "post_description", "hashtags"] as const).map(
+              (k) => (
+                <div key={k} className="my-3">
+                  <label className="mf-field">
+                    {
+                      {
+                        post_title: "Post title",
+                        post_description: "Description",
+                        hashtags: "Hashtags",
+                      }[k]
+                    }
+                    <textarea
+                      className="mf-input"
+                      aria-label={
+                        {
+                          post_title: "Post title",
+                          post_description: "Description",
+                          hashtags: "Hashtags",
+                        }[k]
+                      }
+                      value={p[k]}
+                      onChange={(e) => changed({ ...p, [k]: e.target.value })}
+                    />
+                  </label>
+                  <button
+                    className="mf-button"
+                    onClick={() =>
+                      void action(async () => {
+                        await copyText(p[k]);
+                        setMessage("Copied");
+                      })
+                    }
+                  >
+                    Copy{" "}
+                    {k === "post_title"
+                      ? "title"
+                      : k === "post_description"
+                        ? "description"
+                        : "hashtags"}
+                  </button>
+                  {active && (
+                    <button
+                      className="mf-button"
+                      onClick={() =>
+                        changed({
+                          ...p,
+                          overlays: {
+                            ...p.overlays,
+                            [active.uid]: [
+                              ...(p.overlays[active.uid] ?? []),
+                              {
+                                start: active.start,
+                                end: active.end,
+                                text: p[k],
+                                words: [],
+                                style: p.caption_style,
+                              },
+                            ],
+                          },
+                        })
+                      }
+                    >
+                      Explicitly convert to overlay
+                    </button>
+                  )}
+                </div>
+              ),
+            )}
+            <button
+              className="mf-button"
+              onClick={() =>
+                void action(async () => {
+                  await copyText(
+                    [p.post_title, p.post_description, p.hashtags]
+                      .filter(Boolean)
+                      .join("\n\n"),
+                  );
+                  setMessage("Copied all post text");
+                })
+              }
+            >
+              Copy all
+            </button>
+          </details>
+          <details className="glass rounded-xl p-5">
+            <summary className="font-semibold">Audio mix</summary>
+            <div className="grid md:grid-cols-3 gap-4">
+              {(["original_audio", "voice_over", "music"] as const).map((k) => (
+                <div key={k}>
+                  <h3>
+                    {
+                      {
+                        original_audio: "Original audio",
+                        voice_over: "Voice-over",
+                        music: "Background music",
+                      }[k]
+                    }
+                  </h3>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={p[k].enabled}
+                      onChange={(e) =>
+                        changed({
+                          ...p,
+                          [k]: { ...p[k], enabled: e.target.checked },
+                        })
+                      }
+                    />{" "}
+                    Enabled
+                  </label>
+                  {k !== "original_audio" && (
+                    <label className="mf-field">
+                      Audio file path
+                      <input
+                        className="mf-input"
+                        value={p[k].path ?? ""}
+                        onChange={(e) =>
+                          changed({
+                            ...p,
+                            [k]: { ...p[k], path: e.target.value || null },
+                          })
+                        }
+                      />
+                    </label>
+                  )}
+                  {(
+                    [
+                      "volume",
+                      "fade_in",
+                      "fade_out",
+                      ...(k !== "original_audio" ? (["start"] as const) : []),
+                    ] as const
+                  ).map((field) => (
+                    <label className="mf-field" key={field}>
+                      {field.replace("_", " ")}
+                      <input
+                        className="mf-input"
+                        type="number"
+                        min="0"
+                        step=".1"
+                        value={p[k][field]}
+                        onChange={(e) =>
+                          changed({
+                            ...p,
+                            [k]: { ...p[k], [field]: Number(e.target.value) },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              ))}
             </div>
-            {approveError && (
-              <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {approveError}
+            <label>
+              <input
+                type="checkbox"
+                checked={p.ducking}
+                onChange={(e) => changed({ ...p, ducking: e.target.checked })}
+              />{" "}
+              Duck background music under speech
+            </label>
+            <label className="mf-field">
+              Ducking ratio
+              <input
+                className="mf-input"
+                type="number"
+                min="1"
+                max="20"
+                value={p.ducking_ratio}
+                onChange={(e) =>
+                  changed({ ...p, ducking_ratio: Number(e.target.value) })
+                }
+              />
+            </label>
+          </details>
+          <ProviderStudio project={p} assets={assets} onChange={changed} />
+          <section className="glass rounded-xl p-5 space-y-3">
+            <h2 className="font-semibold">5 · Preview & export</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <label className="mf-field">
+                Format
+                <select
+                  className="mf-input"
+                  value={p.export.ratio}
+                  onChange={(e) =>
+                    changed({
+                      ...p,
+                      export: {
+                        ...p.export,
+                        ratio: e.target.value as Project["export"]["ratio"],
+                      },
+                    })
+                  }
+                >
+                  <option>9:16</option>
+                  <option>1:1</option>
+                  <option>16:9</option>
+                </select>
+              </label>
+              <label className="mf-field">
+                Width
+                <input
+                  className="mf-input"
+                  type="number"
+                  step="2"
+                  value={p.export.width}
+                  onChange={(e) =>
+                    changed({
+                      ...p,
+                      export: { ...p.export, width: Number(e.target.value) },
+                    })
+                  }
+                />
+              </label>
+              <label className="mf-field">
+                Frame rate (0 = first source)
+                <input
+                  className="mf-input"
+                  type="number"
+                  value={p.export.fps}
+                  onChange={(e) =>
+                    changed({
+                      ...p,
+                      export: { ...p.export, fps: Number(e.target.value) },
+                    })
+                  }
+                />
+              </label>
+              <label className="mf-field">
+                Codec
+                <select
+                  className="mf-input"
+                  value={p.export.codec}
+                  onChange={(e) =>
+                    changed({
+                      ...p,
+                      export: {
+                        ...p.export,
+                        codec: e.target.value as Project["export"]["codec"],
+                      },
+                    })
+                  }
+                >
+                  {codecs.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <p className="text-xs">
+              High-quality H.264/AAC, preserved aspect ratio with padding.
+              Sources are not overwritten. HDR is converted to SDR when FFmpeg
+              supports it; otherwise rendering reports an error.
+            </p>
+            <label className="block">
+              <input
+                type="checkbox"
+                checked={p.export.clean_master}
+                onChange={(e) =>
+                  changed({
+                    ...p,
+                    export: { ...p.export, clean_master: e.target.checked },
+                  })
+                }
+              />{" "}
+              Also export a clean master without captions or overlays
+            </label>
+            <p className="text-sm">
+              Burned-in captions cannot be turned off in an exported video.
+              Export a clean master for reuse.
+            </p>
+            <div>
+              Explicit subtitle sidecars{" "}
+              {(["srt", "vtt", "ass"] as const).map((kind) => (
+                <label className="mx-2" key={kind}>
+                  <input
+                    type="checkbox"
+                    checked={p.export.sidecars.includes(kind)}
+                    onChange={(e) =>
+                      changed({
+                        ...p,
+                        export: {
+                          ...p.export,
+                          sidecars: e.target.checked
+                            ? [...p.export.sidecars, kind]
+                            : p.export.sidecars.filter((x) => x !== kind),
+                        },
+                      })
+                    }
+                  />{" "}
+                  {kind.toUpperCase()}
+                </label>
+              ))}
+            </div>
+            <button
+              className="mf-button"
+              disabled={busy || !!running || !p.clips.length}
+              onClick={() => void action(() => beginRender(false))}
+            >
+              Approve this revision & render
+            </button>
+            {job && (
+              <div role="status">
+                <p>
+                  {job.status} · {job.message}
+                  {job.status === "interrupted" && (
+                    <button
+                      className="mf-button"
+                      onClick={() =>
+                        void action(async () => {
+                          const next = await editorRequest<{ job_id: string }>(
+                            `/api/editor/jobs/${job.id}/resume`,
+                            "POST",
+                          );
+                          setJobId(next.job_id);
+                        })
+                      }
+                    >
+                      Resume saved render snapshot
+                    </button>
+                  )}
+                </p>
+                <progress className="w-full" max="1" value={job.progress} />
+                {running && (
+                  <button
+                    className="mf-button"
+                    onClick={() =>
+                      void action(async () => {
+                        await editorRequest("/api/scan/cancel", "POST", {
+                          job_id: job.id,
+                        });
+                      })
+                    }
+                  >
+                    Cancel job
+                  </button>
+                )}
               </div>
             )}
-          </div>
-
-          {/* ---------- render progress / output ---------- */}
-          {(renderJobId || renderStatus || outputUrl) && (
-            <div className="glass rounded-xl p-4">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                <Film className="h-4 w-4" /> Render
-              </h3>
-
-              {renderRunning && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                      {renderLive?.message ?? 'Rendering…'}
-                    </span>
-                    <span>{Math.round(toPercent(renderProgress))}%</span>
-                  </div>
-                  <Progress value={toPercent(renderProgress)} />
-                </div>
-              )}
-
-              {renderFailed && (
-                <div className="flex flex-col items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  <span>Render failed. Check the backend logs or re-render.</span>
-                  <Button size="sm" variant="destructive" onClick={() => void approveAndRender()}>
-                    Retry render
-                  </Button>
-                </div>
-              )}
-
-              {renderDone && outputUrl && (
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Play className="h-4 w-4 text-primary" />
-                    <span className="text-xs font-medium text-emerald-400">Render complete</span>
-                  </div>
-                  <video
-                    controls
-                    src={outputUrl}
-                    className="mt-3 max-h-[420px] w-full rounded-lg border border-border bg-black"
-                  />
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <a
-                      href={outputUrl}
-                      download
-                      className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground transition-colors hover:bg-white/5 hover:text-primary"
-                    >
-                      <Download className="h-3.5 w-3.5" /> Download MP4
-                    </a>
-                    <span className="text-[11px] text-muted-foreground">
-                      {outputUrl.split('/').pop()}
-                    </span>
-                  </div>
-                </div>
-              )}
+            {outputs.video && (
+              <video
+                controls
+                src={mediaUrl(outputs.video)}
+                className="max-h-96 w-full bg-black"
+              />
+            )}
+            <div>
+              {Object.entries(outputs).map(([kind, path]) => (
+                <a
+                  className="mf-button"
+                  href={mediaUrl(path)}
+                  download
+                  key={kind}
+                >
+                  Download {kind.replace("_", " ")}
+                </a>
+              ))}
             </div>
-          )}
-
-          {/* ---------- NLE exports ---------- */}
-          <div className="glass rounded-xl p-4">
-            <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              <Clapperboard className="h-4 w-4" /> Send to an NLE
-            </h3>
-            <p className="mb-3 text-xs text-muted-foreground">
-              {canExport
-                ? 'Timeline exports use the approved plan.'
-                : 'Approve the plan (and render once) to unlock exports.'}
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {EXPORT_FORMATS.map(({ format, label, hint, icon: Icon }) => {
-                const url = exportResults[format]
-                const err = exportErrors[format]
-                const busy = exporting === format
-                return (
-                  <div key={format} className="rounded-xl border border-border bg-white/[0.02] p-3">
-                    <Button
-                      variant="outline"
-                      className="w-full justify-start"
-                      disabled={!canExport || exporting !== null}
-                      onClick={() => void handleExport(format)}
-                    >
-                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
-                      {busy ? 'Exporting…' : label}
-                    </Button>
-                    <p className="mt-2 min-h-[28px] text-[10px] leading-snug text-muted-foreground">{hint}</p>
-                    {format === 'resolve' && resolveInfo && (
-                      <p className="flex items-center gap-1 text-[11px] text-emerald-400">
-                        <Check className="h-3 w-3 shrink-0" />
-                        Imported into Resolve {resolveInfo.resolve ?? ''}
-                        {resolveInfo.project ? ` · ${resolveInfo.project}` : ''}
-                      </p>
-                    )}
-                    {url && (
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 flex items-center gap-1 truncate text-[11px] text-primary hover:underline"
-                        title={url}
-                      >
-                        <Download className="h-3 w-3 shrink-0" />
-                        {url.split('/').pop()}
-                      </a>
-                    )}
-                    {err && (
-                      <p className="mt-1 text-[11px] leading-snug text-destructive">{err}</p>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
+            <details>
+              <summary>NLE exports · source sequence</summary>
+              <p className="text-xs my-2">
+                These existing exporters transfer the source sequence. Edited
+                speech captions, styled overlays, narration/music mixing and
+                speed changes do not round-trip. Use the rendered master and
+                explicit subtitle sidecars for those features.
+              </p>
+              {["fcpxml", "edl", "capcut", "resolve"].map((kind) => (
+                <button
+                  className="mf-button"
+                  key={kind}
+                  disabled={busy || dirty || approved !== p.revision}
+                  onClick={() =>
+                    void action(async () => {
+                      const r = await editorRequest<{ path?: string }>(
+                        `/api/export/${kind}`,
+                        "POST",
+                        { plan_id: planId },
+                      );
+                      if (r.path) setOutputs({ ...outputs, [kind]: r.path });
+                      else setMessage("Imported into Resolve");
+                    })
+                  }
+                >
+                  {kind}
+                </button>
+              ))}
+            </details>
+          </section>
+        </>
       )}
-
-      {/* ---------- empty state ---------- */}
-      {plan && plan.clips.length === 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm">
-          <span>{plan.summary || 'No media found for that place.'}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void generatePlan(`${intent.trim()} widen radius 80km`)}
-          >
-            Widen radius
-          </Button>
-        </div>
-      )}
-      {!plan && !planBusy && (
-        <EmptyState
-          icon={Clapperboard}
-          title="Describe the cut"
-          description="Name a place, a ratio, and a mood. Example: make a highlight reel for tiktok of my trip to edmonton 9:16. Approve before FFmpeg runs."
-        />
-      )}
-
-      {/* ---------- export 503 dialog (e.g. Resolve not running) ---------- */}
-      <Dialog open={exportDialog !== null} onOpenChange={(o) => !o && setExportDialog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Export not available</DialogTitle>
-            <DialogDescription>
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {EXPORT_FORMATS.find((f) => f.format === exportDialog?.format)?.label ?? 'Export'}
-              </span>
-              <span className="block whitespace-pre-wrap text-sm text-foreground">
-                {exportDialog?.message}
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={() => setExportDialog(null)}>
-              Got it
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
-  )
+  );
 }
