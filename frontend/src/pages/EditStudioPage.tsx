@@ -408,7 +408,7 @@ export function EditStudioPage() {
           onClick={() =>
             void action(async () => {
               setMessage(
-                "AI is planning your edit on the local model. This can take up to a minute the first time.",
+                "AI is planning your edit. Cloud plans take a few seconds; the local model can take up to a minute.",
               );
               const plan = await editorRequest<EditPlan>(
                 "/api/edits/plan",

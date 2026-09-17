@@ -1,6 +1,6 @@
 import { ProviderSettings } from '@/components/ProviderSettings'
 import { useEffect, useState, type FormEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Cpu,
   FolderOpen,
@@ -49,6 +49,7 @@ export function SettingsPage() {
   const [cancelling, setCancelling] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
 
+  const queryClient = useQueryClient()
   const { data: config } = useQuery({ queryKey: ['config'], queryFn: getConfig })
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: getHealth })
   const {
@@ -290,8 +291,21 @@ export function SettingsPage() {
                   <dd className="font-mono text-xs">{config?.ollama_model ?? '—'}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="text-muted-foreground">Cloud LLM</dt>
-                  <dd className="font-mono text-xs">{config?.use_cloud_llm ? 'on' : 'off'}</dd>
+                  <dt className="text-muted-foreground">
+                    <label htmlFor="cloud-llm">Cloud edit planner (DeepSeek via OpenRouter)</label>
+                    <span className="block text-xs">
+                      Sends your prompt and scene captions only, never media. Falls back to the local model.
+                    </span>
+                  </dt>
+                  <dd>
+                    <Switch
+                      id="cloud-llm"
+                      checked={config?.use_cloud_llm === true}
+                      onCheckedChange={(on) => {
+                        void putConfig({ use_cloud_llm: on }).then((next) => queryClient.setQueryData(['config'], next))
+                      }}
+                    />
+                  </dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-muted-foreground">DaVinci Resolve</dt>

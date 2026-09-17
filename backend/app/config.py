@@ -54,6 +54,11 @@ OLLAMA_TIMEOUT = float(os.environ.get("MF_OLLAMA_TIMEOUT", "300"))
 # 10 GB card and ends up mostly on CPU (60-100 s/plan); gemma4:e4b fits fully on GPU.
 PLAN_MODEL = os.environ.get("MF_PLAN_MODEL", "gemma4:e4b")
 PLAN_TIMEOUT = float(os.environ.get("MF_PLAN_TIMEOUT", "150"))
+# Cloud planning (Settings -> Cloud LLM). Key never leaves the backend.
+CLOUD_PLAN_MODEL = os.environ.get("MF_CLOUD_PLAN_MODEL", "deepseek/deepseek-v4.1-flash")
+CLOUD_PLAN_TIMEOUT = float(os.environ.get("MF_CLOUD_PLAN_TIMEOUT", "60"))
+CLOUD_PLAN_REASONING = os.environ.get("MF_CLOUD_PLAN_REASONING", "false").lower() in ("1", "true", "yes")
+OPENROUTER_KEY_FILE = os.environ.get("MF_OPENROUTER_KEY_FILE", str(Path.home() / ".openrouter-key"))
 # Alias used by app/ai/captions.py (kept in sync with OLLAMA_HOST).
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", OLLAMA_HOST)
 
