@@ -14,8 +14,8 @@ import logging
 import os
 import re
 
-from app import config
-from app.ai import gpu
+from app import config, persist
+from app.ai import cloud_llm, gpu
 from app.ai.ollama_llm import ensure_model, generate, image_to_b64
 from app.images import open_rgb
 
@@ -27,6 +27,14 @@ _CAPTION_PROMPT = (
     "Describe this image in one short sentence (max 15 words). "
     "Only the description, no preamble."
 )
+
+
+def cloud_captions_enabled() -> bool:
+    """Cloud captions follow the Settings -> Cloud LLM switch and need a key."""
+    try:
+        return persist.use_cloud_llm() and cloud_llm.available()
+    except Exception:  # pragma: no cover - settings table missing in bare tests
+        return False
 
 
 def _ensure_model_ready() -> bool:
@@ -85,10 +93,31 @@ def _color_name(rgb: tuple[int, int, int]) -> str:
     return best
 
 
+def _clean(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip()).strip(" '\".,")[:200]
+
+
 def caption_image(image_path: str) -> str:
-    """Short caption for an image. Always returns a non-empty string."""
+    """Short caption for an image. Always returns a non-empty string.
+
+    Cloud (OpenRouter vision) when Cloud LLM is on and a key exists, else the
+    local Ollama model, else a deterministic filename+colour fallback.
+    """
     if not image_path or not os.path.isfile(image_path):
         return "image"
+    if cloud_captions_enabled():
+        try:
+            b64 = image_to_b64(image_path, max_side=1024)
+        except Exception as exc:  # noqa: BLE001 - one bad file, not a provider fault
+            log.debug("caption encode failed for %s: %s", image_path, exc)
+            b64 = ""
+        if b64:
+            try:
+                text = _clean(cloud_llm.caption(b64))
+                if text:
+                    return text
+            except Exception as exc:  # noqa: BLE001 - fall through to local
+                log.warning("cloud caption failed, using local model: %s", exc)
     if _ensure_model_ready():
         # Encoding is a per-file concern: an unreadable still must not be
         # reported as an Ollama outage. Only failures from generate() say
@@ -106,10 +135,9 @@ def caption_image(image_path: str) -> str:
                 prompt=_CAPTION_PROMPT,
                 images=[b64],
             )
-            text = (response or "").strip()
-            text = re.sub(r"\s+", " ", text).strip(" '\".,")
+            text = _clean(response)
             if text:
-                return text[:200]
+                return text
         except Exception as exc:  # pragma: no cover
             log.debug("ollama caption failed: %s", exc)
             gpu.set_model_status("ollama", "unavailable", str(exc))

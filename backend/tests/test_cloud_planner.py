@@ -73,3 +73,43 @@ def test_generate_json_error_does_not_leak_key(monkeypatch):
         assert "sk-secret" not in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_caption_sends_image_and_uses_caption_model(monkeypatch):
+    seen = {}
+
+    def fake_post(url, headers, json, timeout):
+        seen.update(json)
+        return httpx.Response(200, json={"choices": [{"message": {"content": " a cat  on a mat "}}]})
+
+    monkeypatch.setattr(cloud_llm, "api_key", lambda: "sk-test")
+    monkeypatch.setattr(cloud_llm.httpx, "post", fake_post)
+    assert cloud_llm.caption("BASE64", model="qwen/qwen3-vl-32b-instruct") == "a cat on a mat"
+    content = seen["messages"][0]["content"]
+    assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,BASE64")
+    assert seen["model"] == "qwen/qwen3-vl-32b-instruct"
+
+
+def test_caption_image_falls_back_to_local_when_cloud_fails(monkeypatch, tmp_path):
+    from app.ai import captions
+
+    frame = tmp_path / "f.jpg"
+    frame.write_bytes(b"not-a-real-jpeg")
+    monkeypatch.setattr(captions, "cloud_captions_enabled", lambda: True)
+    monkeypatch.setattr(captions, "image_to_b64", lambda p, max_side=1024: "B64")
+    monkeypatch.setattr(captions.cloud_llm, "caption", lambda b64: (_ for _ in ()).throw(RuntimeError("HTTP 500")))
+    monkeypatch.setattr(captions, "_ensure_model_ready", lambda: True)
+    monkeypatch.setattr(captions, "generate", lambda **kw: "local caption")
+    assert captions.caption_image(str(frame)) == "local caption"
+
+
+def test_caption_image_skips_cloud_when_toggle_off(monkeypatch, tmp_path):
+    from app.ai import captions
+
+    frame = tmp_path / "f.jpg"
+    frame.write_bytes(b"x")
+    monkeypatch.setattr(captions, "cloud_captions_enabled", lambda: False)
+    monkeypatch.setattr(captions.cloud_llm, "caption",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("cloud called")))
+    monkeypatch.setattr(captions, "_ensure_model_ready", lambda: False)
+    assert captions.caption_image(str(frame))  # deterministic fallback, never empty

@@ -36,26 +36,61 @@ def available() -> bool:
     return bool(api_key())
 
 
+CAPTION_PROMPT = (
+    "Describe this frame for a video editor in one sentence (max 25 words): main subject, "
+    "setting, notable action, food, or landmark. Be specific and concrete. Only the description."
+)
+
+
+def caption(image_b64: str, model: Optional[str] = None,
+            timeout: Optional[float] = None) -> str:
+    """One-line caption for a base64 JPEG. Raises RuntimeError on failure."""
+    content = [
+        {"type": "text", "text": CAPTION_PROMPT},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image_b64}},
+    ]
+    text = _chat(
+        [{"role": "user", "content": content}],
+        model or config.CLOUD_CAPTION_MODEL,
+        timeout if timeout is not None else config.CLOUD_CAPTION_TIMEOUT,
+        max_tokens=120,
+    )
+    return " ".join(text.split())
+
+
 def generate_json(prompt: str, model: Optional[str] = None,
                   timeout: Optional[float] = None) -> str:
     """Return the model's JSON text. Raises RuntimeError on any failure."""
+    return _chat(
+        [{"role": "user", "content": prompt}],
+        model or config.CLOUD_PLAN_MODEL,
+        timeout if timeout is not None else config.CLOUD_PLAN_TIMEOUT,
+        response_format={"type": "json_object"},
+    )
+
+
+def _chat(messages: list, model: str, timeout: float, response_format=None,
+          max_tokens: Optional[int] = None) -> str:
     key = api_key()
     if not key:
         raise RuntimeError("no OpenRouter key (set OPENROUTER_API_KEY or MF_OPENROUTER_KEY_FILE)")
     body = {
-        "model": model or config.CLOUD_PLAN_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"},
+        "model": model,
+        "messages": messages,
         "temperature": 0.2,
-        # Reasoning makes plans ~13x slower and ~4x pricier for a marginal gain.
+        # Reasoning makes calls much slower and pricier for a marginal gain.
         "reasoning": {"enabled": config.CLOUD_PLAN_REASONING},
     }
+    if response_format:
+        body["response_format"] = response_format
+    if max_tokens:
+        body["max_tokens"] = max_tokens
     try:
         resp = httpx.post(
             OPENROUTER_URL,
             headers={"Authorization": f"Bearer {key}", "X-Title": "MediaForge"},
             json=body,
-            timeout=timeout if timeout is not None else config.CLOUD_PLAN_TIMEOUT,
+            timeout=timeout,
         )
     except httpx.HTTPError as exc:
         raise RuntimeError(f"OpenRouter request failed: {type(exc).__name__}") from None
@@ -67,6 +102,6 @@ def generate_json(prompt: str, model: Optional[str] = None,
     except (ValueError, KeyError, IndexError, TypeError):
         raise RuntimeError("OpenRouter returned an unexpected response") from None
     usage = data.get("usage") or {}
-    log.info("cloud plan via %s: %s/%s tokens, cost %s", body["model"],
+    log.info("cloud call via %s: %s/%s tokens, cost %s", model,
              usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("cost"))
     return text or ""
