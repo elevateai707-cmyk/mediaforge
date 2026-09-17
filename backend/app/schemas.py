@@ -177,6 +177,7 @@ class ClipOut(BaseModel):
 
 
 class PlanRequest(BaseModel):
+    asset_ids: Optional[list[int]] = None
     intent: str = "30-second highlight reel, upbeat"
     trip_id: Optional[int] = None
     auto_approve: bool = False
@@ -257,6 +258,7 @@ class TouchupOut(BaseModel):
 
 # --- Jobs --------------------------------------------------------------------
 class JobOut(BaseModel):
+    meta: Optional[dict[str, Any]] = None
     id: str
     kind: str
     status: str

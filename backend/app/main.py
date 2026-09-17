@@ -63,6 +63,9 @@ _RENDER_OUTPUTS: dict[str, str] = {}
 async def lifespan(app: FastAPI):
     ws_manager.bind_loop(asyncio.get_running_loop())
     init_db()
+    with SessionLocal() as recovery_db:
+        recovery_db.query(models.Job).filter(models.Job.status.in_(["running","queued"])).update({"status":"interrupted","message":"Application restarted; completed outputs retained. Restart from the saved project."},synchronize_session=False)
+        recovery_db.commit()
     try:
         with SessionLocal() as db:
             n_assets = db.query(models.Asset).count()
@@ -85,11 +88,17 @@ async def lifespan(app: FastAPI):
         ws_manager.set_gpu(gpu.gpu_payload())
     except Exception as exc:  # pragma: no cover
         log.warning("gpu payload failed: %s", exc)
+    from .providers.api import monitor
+    provider_monitor=asyncio.create_task(monitor())
     yield
+    provider_monitor.cancel()
     folder_watcher.stop()
 
 
 app = FastAPI(title="MediaForge", version=config.VERSION, lifespan=lifespan)
+
+from .security import LocalAccess
+app.add_middleware(LocalAccess)
 
 app.add_middleware(
     CORSMiddleware,
@@ -816,7 +825,7 @@ def trip_reel(trip_id: int, req: schemas.TripReelRequest, db: Session = Depends(
 # ---------------------------------------------------------------------------
 @app.post("/api/edits/plan", response_model=schemas.PlanOut)
 def create_plan(req: schemas.PlanRequest):
-    plan = planner.create_plan(req.intent, trip_id=req.trip_id)
+    plan = planner.create_plan(req.intent, trip_id=req.trip_id, selected_ids=req.asset_ids)
     if req.auto_approve and plan.get("clips"):
         planner.approve_plan(plan["plan_id"])
         plan = planner.get_plan(plan["plan_id"]) or plan
@@ -833,6 +842,9 @@ def get_plan(plan_id: str):
 
 @app.put("/api/edits/plan/{plan_id}", response_model=schemas.PlanOut)
 def update_plan(plan_id: str, req: schemas.PlanUpdateRequest):
+    with SessionLocal() as db:
+        if db.get(models.ProjectDocument, plan_id):
+            raise HTTPException(409, "This project uses editor v2; save changes through /api/editor/{plan_id}.")
     clips = [c.model_dump() for c in req.clips]
     plan = planner.update_plan(plan_id, clips)
     if plan is None:
@@ -842,6 +854,9 @@ def update_plan(plan_id: str, req: schemas.PlanUpdateRequest):
 
 @app.post("/api/edits/plan/{plan_id}/approve", response_model=schemas.ApproveOut)
 def approve_plan(plan_id: str):
+    with SessionLocal() as db:
+        if db.get(models.ProjectDocument, plan_id):
+            raise HTTPException(409, "Approve the current revision through /api/editor/{plan_id}/approve.")
     try:
         result = planner.approve_plan(plan_id)
     except ValueError as exc:
@@ -861,6 +876,9 @@ def list_plans(limit: int = Query(50, ge=1, le=200)):
 # ---------------------------------------------------------------------------
 @app.post("/api/render", response_model=schemas.RenderJobOut)
 async def start_render(req: schemas.RenderRequest):
+    with SessionLocal() as db:
+        if db.get(models.ProjectDocument, req.plan_id):
+            raise HTTPException(409, "Use /api/editor/{plan_id}/render so export matches the approved project settings.")
     plan = planner.get_plan(req.plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"plan {req.plan_id!r} not found")
@@ -896,7 +914,8 @@ def render_status(job_id: str):
     job = jobs.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
-    output_path = _RENDER_OUTPUTS.get(job_id) if job["status"] == "done" else None
+    output_path = (_RENDER_OUTPUTS.get(job_id) or (job.get("meta") or {}).get("result")) if job["status"] == "done" else None
+    if isinstance(output_path,dict): output_path=output_path.get("video")
     return schemas.RenderStatusOut(
         status=job["status"], output_path=output_path, progress=job["progress"],
     )
@@ -1008,6 +1027,22 @@ async def websocket_endpoint(ws: WebSocket):
 # ---------------------------------------------------------------------------
 # static mounts (must come after all API routes)
 # ---------------------------------------------------------------------------
+from .editor_api import router as editor_router
+app.include_router(editor_router)
+from .providers.api import router as provider_router
+app.include_router(provider_router)
+
+# Explicit SPA entry routes keep saved projects usable after browser reload.
+@app.get('/studio', include_in_schema=False)
+@app.get('/settings', include_in_schema=False)
+@app.get('/search', include_in_schema=False)
+@app.get('/faces', include_in_schema=False)
+@app.get('/map', include_in_schema=False)
+@app.get('/touchup', include_in_schema=False)
+@app.get('/dedupe', include_in_schema=False)
+def frontend_entry():
+    return FileResponse(config.FRONTEND_DIST / 'index.html')
+
 app.mount("/exports", StaticFiles(directory=str(config.EXPORTS_DIR)), name="exports")
 
 if config.FRONTEND_DIST.is_dir():

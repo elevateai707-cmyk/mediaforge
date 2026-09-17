@@ -159,7 +159,7 @@ def _row_source(asset: models.Asset, scene=None) -> dict:
 
 
 def _candidate_sources(db, parsed: Optional[Intent] = None, limit: int = 40,
-                       trip_id: Optional[int] = None) -> tuple[list[dict], dict]:
+                       trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None) -> tuple[list[dict], dict]:
     """Place-prefiltered scenes. Never mixes another city into a placed request."""
     if parsed is None:
         parsed = parse_intent("", trip_id=trip_id)
@@ -189,6 +189,8 @@ def _candidate_sources(db, parsed: Optional[Intent] = None, limit: int = 40,
                 stats["matched_assets"] = len(ids)
                 stats["radius_km"] = float(parsed.radius_km or 45.0) * 2.0
 
+    if selected_ids is not None:
+        ids = set(selected_ids) if ids is None else ids.intersection(selected_ids)
     sources: list[dict] = []
     scene_q = (
         db.query(models.Scene, models.Asset)
@@ -276,7 +278,7 @@ def _caption_text(asset: models.Asset, scene: Optional[models.Scene]) -> str:
 # ---------------------------------------------------------------------------
 
 def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None,
-                        parsed: Optional[Intent] = None) -> dict:
+                        parsed: Optional[Intent] = None, selected_ids: Optional[list[int]] = None) -> dict:
     """Greedy: place-prefiltered scenes, budgeted to duration."""
     parsed = parsed or parse_intent(intent, trip_id=trip_id)
     if trip_id:
@@ -284,7 +286,7 @@ def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None,
     target = parsed.duration_s
     ratio = parsed.ratio
     keywords = _intent_keywords(intent)
-    sources, stats = _candidate_sources(db, parsed=parsed, trip_id=trip_id)
+    sources, stats = _candidate_sources(db, parsed=parsed, trip_id=trip_id, selected_ids=selected_ids)
 
     if parsed.place and not sources:
         place = parsed.place
@@ -476,7 +478,7 @@ def _normalize_clips(clips: Any, db, allowed_ids: Optional[set[int]] = None) -> 
     return out
 
 
-def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dict]:
+def _ollama_plan(intent: str, db, trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None) -> Optional[dict]:
     """Ask Ollama for the plan; None on any failure (caller falls back)."""
     if _ollama_generate is None:
         log.info("ollama_llm unavailable (%s); using fallback planner",
@@ -485,7 +487,7 @@ def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dic
     parsed = parse_intent(intent, trip_id=trip_id)
     target = parsed.duration_s
     ratio = parsed.ratio
-    sources, stats = _candidate_sources(db, parsed=parsed, limit=30, trip_id=trip_id)
+    sources, stats = _candidate_sources(db, parsed=parsed, limit=30, trip_id=trip_id, selected_ids=selected_ids)
     if not sources:
         return None
 
@@ -562,12 +564,12 @@ def _plan_dict(plan: models.EditPlan) -> dict:
     }
 
 
-def create_plan(intent: str, trip_id: Optional[int] = None) -> dict:
+def create_plan(intent: str, trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None) -> dict:
     """POST /api/edits/plan: build + persist a draft plan."""
     with SessionLocal() as db:
         parsed = parse_intent(intent, trip_id=trip_id)
-        plan_data = _ollama_plan(intent, db, trip_id=trip_id) or _deterministic_plan(
-            intent, db, trip_id=trip_id, parsed=parsed
+        plan_data = _ollama_plan(intent, db, trip_id=trip_id, selected_ids=selected_ids) or _deterministic_plan(
+            intent, db, trip_id=trip_id, parsed=parsed, selected_ids=selected_ids
         )
         plan_id = _new_plan_id()
         blob = json.dumps({
