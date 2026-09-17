@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from sqlalchemy import or_
 
-from .. import models
+from .. import config, models
 from ..db import SessionLocal
 from ..geo.gazetteer import haversine_km
 from ..ingest.trips import trip_asset_ids
@@ -495,8 +495,8 @@ def _ollama_plan(intent: str, db, trip_id: Optional[int] = None, selected_ids: O
     for attempt in (1,):
         try:
             text = _ollama_generate(
-                "qwen2.5vl:7b", prompt,
-                format="json", temperature=0.2, retries=1, timeout=12.0,
+                config.PLAN_MODEL, prompt,
+                format="json", temperature=0.2, retries=1, timeout=config.PLAN_TIMEOUT,
             )
         except Exception as exc:  # noqa: BLE001 - ollama down -> fallback
             log.warning("ollama plan failed (attempt %d): %s", attempt, exc)

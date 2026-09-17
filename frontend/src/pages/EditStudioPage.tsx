@@ -407,6 +407,9 @@ export function EditStudioPage() {
           disabled={busy || !intent.trim()}
           onClick={() =>
             void action(async () => {
+              setMessage(
+                "AI is planning your edit on the local model. This can take up to a minute the first time.",
+              );
               const plan = await editorRequest<EditPlan>(
                 "/api/edits/plan",
                 "POST",

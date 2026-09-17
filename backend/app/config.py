@@ -50,6 +50,10 @@ ALLOW_OLLAMA_PULL = os.environ.get("MF_ALLOW_OLLAMA_PULL", "1") == "1"
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("MF_OLLAMA_MODEL", "qwen2.5vl:7b")
 OLLAMA_TIMEOUT = float(os.environ.get("MF_OLLAMA_TIMEOUT", "300"))
+# Edit planning is text-only. The vision model reserves ~7.8 GB of compute graph on a
+# 10 GB card and ends up mostly on CPU (60-100 s/plan); gemma4:e4b fits fully on GPU.
+PLAN_MODEL = os.environ.get("MF_PLAN_MODEL", "gemma4:e4b")
+PLAN_TIMEOUT = float(os.environ.get("MF_PLAN_TIMEOUT", "150"))
 # Alias used by app/ai/captions.py (kept in sync with OLLAMA_HOST).
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", OLLAMA_HOST)
 
