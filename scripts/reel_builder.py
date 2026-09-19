@@ -206,8 +206,17 @@ def make_whoosh(path: Path) -> Path:
     return path
 
 
-def make_vo(script: str, out: Path, speed: float = 1.2) -> Path | None:
-    """ElevenLabs TTS in the user's cloned voice, sped up, light reverb."""
+def make_vo(script: str, out: Path, speed: float = 1.0,
+            model: str = "eleven_v3", settings: dict | None = None) -> Path | None:
+    """ElevenLabs TTS in the user's cloned voice.
+
+    Deliberately does NOT speed the result up and does NOT add a short slapback.
+    Both were making a real voice clone sound synthetic: a 1.2x atempo flattens
+    the clone's own pacing and adds phase artifacts, and an echo delay under
+    ~25 ms is heard as comb filtering (a metallic ring), not as room.
+    A 7.5 s card window fits the script at natural pace, so there is nothing to
+    compress. `speed` stays available for scripts that genuinely overrun.
+    """
     import base64
     import httpx
     key_file = Path.home() / ".elevenlabs-key"
@@ -220,9 +229,10 @@ def make_vo(script: str, out: Path, speed: float = 1.2) -> Path | None:
         r = httpx.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
             headers={"xi-api-key": key, "Content-Type": "application/json"},
-            json={"text": script, "model_id": "eleven_multilingual_v2",
-                  "voice_settings": {"stability": 0.35, "similarity_boost": 0.85,
-                                     "style": 0.55}},
+            json={"text": script, "model_id": model,
+                  "voice_settings": settings or {
+                      "stability": 0.5, "similarity_boost": 0.9,
+                      "style": 0.2, "use_speaker_boost": True}},
             timeout=180)
     except Exception as exc:                            # noqa: BLE001
         print(f"  VO request failed: {type(exc).__name__}")
@@ -232,11 +242,13 @@ def make_vo(script: str, out: Path, speed: float = 1.2) -> Path | None:
         return None
     raw = out.with_suffix(".raw.mp3")
     raw.write_bytes(r.content)
-    # 1.2x, a touch of room, then broadcast loudness
+    # Rumble filter, gentle levelling, broadcast loudness. No time-stretch and no
+    # sub-25 ms echo: see the docstring.
+    tempo = f"atempo={speed}," if abs(speed - 1.0) > 0.01 else ""
     subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(raw),
-         "-af", f"atempo={speed},aecho=0.85:0.5:18:0.12,highpass=f=90,"
-                "acompressor=threshold=-18dB:ratio=3:attack=5:release=120,"
+         "-af", f"{tempo}highpass=f=85,"
+                "acompressor=threshold=-18dB:ratio=2.5:attack=8:release=140,"
                 "loudnorm=I=-14:TP=-1.5:LRA=11",
          "-ar", "44100", "-ac", "2", str(out), "-y"], check=True, capture_output=True)
     raw.unlink(missing_ok=True)
@@ -258,7 +270,7 @@ def build_video(src: str, start: float, ass_path: Path, out: Path,
         f"subtitles={ass_path}",
     ] + ([f"tpad=stop_mode=add:stop_duration={BLACK}:color=black"] if BLACK > 0 else []))
     for enc in (["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "8M", "-maxrate", "12M"],
-                ["-c:v", "libx264", "-preset", "medium", "-crf", "19"]):
+                ["-c:v", "libx264", "-preset", "medium", "-b:v", "8M", "-maxrate", "12M", "-bufsize", "16M"]):
         r = subprocess.run(
             ["ffmpeg", "-v", "error", "-ss", str(start), "-i", src,
              "-t", str(total + BLACK), "-vf", vf, "-an", *enc,
@@ -339,7 +351,7 @@ def write_copy(which: str, brief: str, preset: Preset) -> tuple[list[dict], str]
     return load_timeline(tmp, preset)
 
 
-def load_timeline(path: Path, preset: Preset) -> tuple[list[dict], str]:
+def load_timeline(path: Path, preset: Preset) -> tuple[list[dict], str, dict]:
     """Accept a hand-written or LLM-written timeline and put it through the
     same shift-and-validate path a preset goes through.
 
@@ -366,7 +378,7 @@ def load_timeline(path: Path, preset: Preset) -> tuple[list[dict], str]:
     shim = Preset(preset.name, preset.primary, preset.secondary, preset.stroke_px,
                   [(c["start"], c["end"], c["text"], c["role"]) for c in cards],
                   data.get("voiceover") or preset.script, preset.audience)
-    return build_timeline(shim), shim.script
+    return build_timeline(shim), shim.script, data.get("vo") or {}
 
 
 def resolve(name: str) -> str:
@@ -401,8 +413,9 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="reel_"))
 
     script = preset.script
+    vo_cfg: dict = {}
     if args.timeline:
-        cards, script = load_timeline(Path(args.timeline), preset)
+        cards, script, vo_cfg = load_timeline(Path(args.timeline), preset)
     elif args.copy:
         cards, script = write_copy(args.copy, args.brief or preset.audience, preset)
     else:
@@ -446,7 +459,11 @@ def main() -> int:
 
     ass_path = write_ass(cards, preset, work / "cards.ass")
     whoosh = make_whoosh(work / "whoosh.wav")
-    vo = None if args.no_vo else make_vo(script, work / "vo.wav")
+    vo = None if args.no_vo else make_vo(
+        script, work / "vo.wav",
+        speed=float(vo_cfg.get("speed", 1.0)),
+        model=str(vo_cfg.get("model", "eleven_v3")),
+        settings=vo_cfg.get("settings"))
 
     silent = work / "silent.mp4"
     build_video(src, start, ass_path, silent, total, speed)

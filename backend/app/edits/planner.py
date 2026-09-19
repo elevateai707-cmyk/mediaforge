@@ -579,12 +579,12 @@ def _plan_dict(plan: models.EditPlan) -> dict:
     }
 
 
-def create_plan(intent: str, trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None) -> dict:
+def create_plan(intent: str, trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None, local_only: bool = False) -> dict:
     """POST /api/edits/plan: build + persist a draft plan."""
     with SessionLocal() as db:
         parsed = parse_intent(intent, trip_id=trip_id)
         plan_data = (
-            _cloud_plan(intent, db, trip_id=trip_id, selected_ids=selected_ids)
+            (None if local_only else _cloud_plan(intent, db, trip_id=trip_id, selected_ids=selected_ids))
             or _ollama_plan(intent, db, trip_id=trip_id, selected_ids=selected_ids)
         ) or _deterministic_plan(
             intent, db, trip_id=trip_id, parsed=parsed, selected_ids=selected_ids
@@ -592,7 +592,7 @@ def create_plan(intent: str, trip_id: Optional[int] = None, selected_ids: Option
         plan_id = _new_plan_id()
         blob = json.dumps({
             "parsed_intent": plan_data.get("parsed_intent") or parsed.to_dict(),
-            "match_stats": plan_data.get("match_stats") or {},
+            "match_stats": {**(plan_data.get("match_stats") or {}), "planner_source": plan_data.get("source", "unknown")},
         })
         plan = models.EditPlan(
             id=plan_id,
