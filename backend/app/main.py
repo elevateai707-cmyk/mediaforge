@@ -1029,6 +1029,10 @@ async def websocket_endpoint(ws: WebSocket):
 # ---------------------------------------------------------------------------
 from .editor_api import router as editor_router
 app.include_router(editor_router)
+from .resolve_api import router as resolve_router
+app.include_router(resolve_router)
+from .commerce import router as commerce_router
+app.include_router(commerce_router)
 from .providers.api import router as provider_router
 app.include_router(provider_router)
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=MediaForge sandbox Reel Pack worker
+After=network.target
+
+[Service]
+WorkingDirectory=/home/bfam/mediaforge/backend
+EnvironmentFile=/home/bfam/.config/mediaforge/commerce-sandbox.env
+ExecStart=/home/bfam/mediaforge/backend/.venv/bin/python -m app.commerce_worker
+Restart=on-failure
+RestartSec=3
+UMask=0077
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
