@@ -155,162 +155,17 @@ def _load_plan(plan_id: str) -> tuple[dict, list[tuple[models.EditClip, models.A
 
 
 def export_to_resolve(plan_id: str) -> dict:
-    """Import media + build the timeline in the live Resolve project.
+    """Legacy route now delegates to the checked revision-aware bridge.
 
-    Returns {"ok": True, "resolve": version, "project": name} on success.
-    Raises ResolveUnavailable (-> 503) when Resolve cannot be reached.
+    Requires a compatible cuts-only editor document; never appends full clips
+    plus trimmed duplicates or silently drops failed Resolve calls.
     """
-    plan, rows = _load_plan(plan_id)
-    with _export_lock:  # Resolve API is single-connection; serialize exports.
-        resolve = _connect()
-
-        try:
-            pm = resolve.GetProjectManager()
-            project_name = f"MediaForge-{plan['id']}"
-            project = None
-            try:
-                project = pm.CreateProject(project_name)
-            except Exception:
-                project = None
-            if project is None:
-                try:
-                    project = pm.LoadProject(project_name)
-                except Exception:
-                    project = None
-            if project is None:
-                try:
-                    project = pm.GetCurrentProject()
-                except Exception:
-                    project = None
-            if project is None:
-                raise ResolveUnavailable(
-                    "Could not create/load a DaVinci Resolve project.")
-            try:
-                project.SetName(project_name)
-            except Exception:  # noqa: BLE001 - cosmetic rename only
-                pass
-
-            # -- media pool: import every unique source file -----------------
-            mp = project.GetMediaPool()
-            fps = 30.0
-            pool_items: dict[int, Any] = {}
-            for c, asset in rows:
-                if asset.id in pool_items:
-                    continue
-                item = None
-                try:
-                    added = mp.AddItemsToMediaPool([asset.path])
-                    if added:
-                        item = added[0]
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("AddItemsToMediaPool(%s) failed: %s",
-                              asset.path, exc)
-                if item is not None:
-                    pool_items[asset.id] = item
-                    fps = probe_fps(asset.path) or fps
-
-            # -- timeline ----------------------------------------------------
-            timeline = None
-            try:
-                items = [pool_items[c.asset_id] for c, _ in rows
-                         if c.asset_id in pool_items]
-                if items:
-                    timeline = mp.CreateTimelineFromClips(project_name, items)
-            except Exception as exc:  # noqa: BLE001
-                log.debug("CreateTimelineFromClips failed: %s", exc)
-            if timeline is None:
-                try:
-                    timeline = mp.CreateEmptyTimeline(project_name)
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("CreateEmptyTimeline failed: %s", exc)
-            if timeline is None:
-                timeline = project.GetCurrentTimeline()
-            if timeline is None:
-                raise ResolveUnavailable(
-                    "Could not create a timeline in the Resolve project.")
-
-            # -- append clips with trims (start/end frame offsets) -----------
-            rec_frame = 0
-            for c, asset in rows:
-                item = pool_items.get(c.asset_id)
-                if item is None:
-                    continue
-                start_frame = int(round(float(c.start) * fps))
-                end_frame = int(round(float(c.end) * fps))
-                try:
-                    ok = mp.AppendToTimeline([{
-                        "mediaPoolItem": item,
-                        "startFrame": start_frame,
-                        "endFrame": end_frame,
-                    }])
-                    if not ok and isinstance(ok, bool):
-                        mp.AppendToTimeline([item])
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("AppendToTimeline failed: %s", exc)
-                    try:
-                        mp.AppendToTimeline([item])
-                    except Exception:  # noqa: BLE001
-                        pass
-                rec_frame += max(1, end_frame - start_frame)
-
-            # -- markers + clip colors (guarded) -----------------------------
-            timeline_items = []
-            try:
-                timeline_items = timeline.GetItemListInTrack("video", 1) or []
-            except Exception:  # noqa: BLE001
-                pass
-            palette = ["Orange", "Cyan", "Green", "Yellow", "Purple", "Pink"]
-            for idx, (c, _asset) in enumerate(rows):
-                ti = None
-                try:
-                    ti = timeline_items[idx] if idx < len(timeline_items) else None
-                except Exception:  # noqa: BLE001
-                    ti = None
-                if ti is None:
-                    continue
-                try:
-                    frame = int(round(float(c.start) * fps))
-                    ti.AddMarker(frame, "MediaForge", c.caption or "clip",
-                                 palette[idx % len(palette)], "")
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("AddMarker failed: %s", exc)
-                try:
-                    ti.SetClipColor(palette[idx % len(palette)])
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("SetClipColor failed: %s", exc)
-
-            # -- subtitle track with captions (guarded) ----------------------
-            try:
-                track_idx = timeline.AddSubtitleTrack("MediaForge Captions")
-                if not track_idx:
-                    track_idx = 1
-                for c, _asset in rows:
-                    caption = (c.caption or "").strip()
-                    if not caption:
-                        continue
-                    try:
-                        timeline.AddSubtitle(
-                            int(track_idx),
-                            int(round(float(c.start) * fps)),
-                            int(round(float(c.end) * fps)),
-                            caption,
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        log.debug("AddSubtitle failed: %s", exc)
-            except Exception as exc:  # noqa: BLE001
-                log.debug("subtitle track failed: %s", exc)
-
-            # -- version string ----------------------------------------------
-            version = "unknown"
-            try:
-                version = str(resolve.GetVersionString() or "unknown")
-            except Exception:  # noqa: BLE001
-                pass
-            if not version.startswith("v"):
-                version = f"v{version}"
-
-            log.info("resolve export ok: project=%s version=%s clips=%d",
-                     project_name, version, len(rows))
-            return {"ok": True, "resolve": version, "project": project_name}
-        finally:
-            pass  # lock released by `with`
+    from . import project, resolve_workflow
+    # Preserve the established unavailable response before legacy plan validation.
+    with _export_lock:
+        _connect(retries=1)
+    try:
+        doc = project.get_project(plan_id)["project"]
+        return resolve_workflow.export(plan_id, doc["revision"])
+    except ValueError as exc:
+        raise ResolveUnavailable(str(exc)) from exc
