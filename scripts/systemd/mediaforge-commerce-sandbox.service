@@ -1,0 +1,14 @@
+[Unit]
+Description=MediaForge sandbox commerce API
+After=network.target
+
+[Service]
+WorkingDirectory=/home/bfam/mediaforge/backend
+EnvironmentFile=/home/bfam/.config/mediaforge/commerce-sandbox.env
+ExecStart=/home/bfam/mediaforge/backend/.venv/bin/python -m uvicorn app.commerce_server:app --host 127.0.0.1 --port 8431
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target

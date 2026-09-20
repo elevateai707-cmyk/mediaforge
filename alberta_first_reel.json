@@ -1,0 +1,37 @@
+{
+  "_note": "Card styling (font size, colour, stroke, position) comes from the contractorPain preset — reel_builder's load_timeline only reads start/end/text/style + voiceover. Line breaks use a literal backslash-N, as in the previous working IG timeline.",
+  "source": "/media/bfam/5C2B-86B2/DCIM/100MEDIA/DJI_0329.MP4",
+  "preset": "contractorPain",
+  "cards": [
+    {
+      "start": 0.0,
+      "end": 1.58,
+      "text": "YOUR SITE\\NLOOKS GOOD",
+      "style": "Gold"
+    },
+    {
+      "start": 1.6,
+      "end": 3.58,
+      "text": "BUT DOES IT\\NBOOK JOBS?",
+      "style": "Big"
+    },
+    {
+      "start": 3.6,
+      "end": 7.5,
+      "text": "FIX SITE\\N\\N→ FILL CALENDAR",
+      "style": "Gold"
+    }
+  ],
+  "voiceover": "Your site looks good... but does it book jobs? Fix the site — fill the calendar.",
+  "_clip_note": "DJI_0329, not 0328: measured frame-difference jitter cv=0.10-0.22 across the whole clip vs 0328's 0.51 at its best segment. 0328 was wind-affected throughout. Trade-off: 0329 is a top-down street track, so no rooftops in frame.",
+  "vo": {
+    "model": "eleven_v3",
+    "speed": 1.0,
+    "settings": {
+      "stability": 0.5,
+      "similarity_boost": 0.9,
+      "style": 0.2,
+      "use_speaker_boost": true
+    }
+  }
+}

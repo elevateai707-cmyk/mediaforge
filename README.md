@@ -151,3 +151,7 @@ sudo ufw deny 8420/tcp      # revert to localhost-only
 
 There is no auth layer yet — treat 0.0.0.0 exposure as deliberate and
 bounded to trusted networks.
+
+## Editor v2: independent text, audio and optional cloud generation
+
+See [Editor v2 setup and workflow](docs/EDITOR_V2.md), [validation results](docs/EDITOR_V2_VALIDATION.md), and the [versioned project schema](docs/project-v2.schema.json). The editor adds independent speech-caption/on-video-text switches, post copy, editable timing, saved approval snapshots, libass rendering and optional Comfy Cloud/ElevenLabs adapters. The server now defaults to local-only access; use an SSH tunnel for remote use. No paid provider is needed for local editing.

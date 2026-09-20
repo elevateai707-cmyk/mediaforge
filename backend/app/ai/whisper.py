@@ -18,6 +18,7 @@ transcripts for an entire library:
   range`` from its feature extractor on a silent/audio-less MP4. We probe with
   ffprobe first and skip cleanly instead of logging a bogus error.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,14 @@ from typing import Any, Optional
 
 from .. import config
 from ..proc import tool_env
-from .gpu import device as gpu_device, set_model_status, clear_gpu_cache
+from .gpu import (
+    device as gpu_device,
+    set_model_status,
+    clear_gpu_cache,
+    serialized,
+    release_ollama,
+    vram_free_mb,
+)
 
 log = logging.getLogger("mediaforge.whisper")
 
@@ -38,6 +46,10 @@ _LOAD_TRIED = False
 # Set once CTranslate2 has proven it cannot use this box's GPU. Survives
 # unload/reload cycles so we never re-pay the failed-CUDA-load cost.
 _CUDA_BROKEN = False
+_FORCE_CPU = False
+_SELECTED_MODEL = None
+_LANGUAGE = None
+_BEAM = 5
 
 # Substrings that mean "this box cannot run CTranslate2 on the GPU" rather
 # than "this particular file is bad". Matched case-insensitively.
@@ -50,6 +62,7 @@ _CUDA_ERROR_HINTS = (
     "cuda failed",
     "no cuda-capable device",
     "cudnn",
+    "out of memory",
 )
 
 
@@ -62,9 +75,11 @@ def _is_cuda_error(exc: Exception) -> bool:
 def _build(device: str) -> Any:
     """Construct a WhisperModel on `device` (raises on failure)."""
     from faster_whisper import WhisperModel  # type: ignore
+
     compute = config.WHISPER_COMPUTE if device == "cuda" else "int8"
-    return WhisperModel(config.WHISPER_MODEL, device=device,
-                        compute_type=compute)
+    return WhisperModel(
+        _SELECTED_MODEL or config.WHISPER_MODEL, device=device, compute_type=compute
+    )
 
 
 def has_audio(path: str) -> bool:
@@ -75,9 +90,23 @@ def has_audio(path: str) -> bool:
     """
     try:
         proc = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "a",
-             "-show_entries", "stream=index", "-print_format", "json", path],
-            capture_output=True, text=True, timeout=30, env=tool_env())
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=index",
+                "-print_format",
+                "json",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=tool_env(),
+        )
         if proc.returncode != 0:
             return True
         streams = json.loads(proc.stdout or "{}").get("streams") or []
@@ -95,18 +124,21 @@ def _load() -> bool:
         return False
     _LOAD_TRIED = True
     try:
-        _device = "cpu" if _CUDA_BROKEN else gpu_device()
+        _device = "cpu" if (_CUDA_BROKEN or _FORCE_CPU) else gpu_device()
         _model = _build(_device)
         set_model_status("whisper", "loaded")
-        log.info("whisper %s (%s) loaded on %s", config.WHISPER_MODEL,
-                 config.WHISPER_COMPUTE, _device)
+        log.info(
+            "whisper %s (%s) loaded on %s",
+            config.WHISPER_MODEL,
+            config.WHISPER_COMPUTE,
+            _device,
+        )
         return True
     except Exception as exc:  # noqa: BLE001 - registry + degrade, never crash
         if _device == "cuda" and _is_cuda_error(exc):
             return _fallback_to_cpu(exc)
         _model = None
-        set_model_status("whisper", "unavailable",
-                         f"{type(exc).__name__}: {exc}")
+        set_model_status("whisper", "unavailable", f"{type(exc).__name__}: {exc}")
         log.warning("whisper model unavailable: %s", exc)
         return False
 
@@ -122,13 +154,13 @@ def _fallback_to_cpu(exc: Exception) -> bool:
     try:
         _model = _build("cpu")
         set_model_status("whisper", "loaded")
-        log.info("whisper %s loaded on cpu (CUDA unavailable)",
-                 config.WHISPER_MODEL)
+        log.info("whisper %s loaded on cpu (CUDA unavailable)", config.WHISPER_MODEL)
         return True
     except Exception as cpu_exc:  # noqa: BLE001
         _model = None
-        set_model_status("whisper", "unavailable",
-                         f"{type(cpu_exc).__name__}: {cpu_exc}")
+        set_model_status(
+            "whisper", "unavailable", f"{type(cpu_exc).__name__}: {cpu_exc}"
+        )
         log.warning("whisper unavailable on CPU too: %s", cpu_exc)
         return False
 
@@ -144,26 +176,47 @@ def device() -> str:
 
 def _run(path: str) -> Optional[dict]:
     """One transcribe pass against the loaded model."""
-    segments_iter, _info = _model.transcribe(path, word_timestamps=True)
+    segments_iter, _info = _model.transcribe(
+        path,
+        word_timestamps=True,
+        language=_LANGUAGE,
+        beam_size=_BEAM,
+        vad_filter=True,
+        condition_on_previous_text=False,
+    )
     segments: list[dict] = []
     words: list[dict] = []
     for seg in segments_iter:
-        segments.append({
-            "start": round(float(seg.start), 3),
-            "end": round(float(seg.end), 3),
-            "text": (seg.text or "").strip(),
-        })
-        for w in (seg.words or []):
-            words.append({
-                "start": round(float(w.start), 3),
-                "end": round(float(w.end), 3),
-                "word": (w.word or "").strip(),
-            })
+        if (
+            getattr(seg, "no_speech_prob", 0) > 0.8
+            or getattr(seg, "avg_logprob", 0) < -1.2
+        ):
+            continue
+        segments.append(
+            {
+                "start": round(float(seg.start), 3),
+                "end": round(float(seg.end), 3),
+                "text": (seg.text or "").strip(),
+            }
+        )
+        for w in seg.words or []:
+            words.append(
+                {
+                    "start": round(float(w.start), 3),
+                    "end": round(float(w.end), 3),
+                    "word": (w.word or "").strip(),
+                }
+            )
     if not segments:
         return None
-    return {"segments": segments, "words": words}
+    return {
+        "segments": segments,
+        "words": words,
+        "language": getattr(_info, "language", None),
+    }
 
 
+@serialized
 def transcribe(path: str) -> Optional[dict]:
     """Transcribe a media file.
 
@@ -190,8 +243,7 @@ def transcribe(path: str) -> Optional[dict]:
                 try:
                     return _run(path)
                 except Exception as retry_exc:  # noqa: BLE001
-                    log.warning("whisper transcribe failed for %s: %s",
-                                path, retry_exc)
+                    log.warning("whisper transcribe failed for %s: %s", path, retry_exc)
                     return None
             return None
         log.warning("whisper transcribe failed for %s: %s", path, exc)
@@ -211,3 +263,57 @@ def unload() -> None:
     _LOAD_TRIED = False
     clear_gpu_cache()
     set_model_status("whisper", "not_loaded")
+
+
+PROFILES = {
+    "fast": {"model": "base", "label": "Fast local · multilingual base", "beam": 1},
+    "balanced": {
+        "model": "small",
+        "label": "Balanced local · multilingual small",
+        "beam": 5,
+    },
+    "quality": {
+        "model": "large-v3",
+        "label": "Higher accuracy local · large-v3 (slower on CPU)",
+        "beam": 5,
+    },
+}
+
+
+@serialized
+def transcribe_profile(path, profile="balanced", language=None):
+    global _SELECTED_MODEL, _LANGUAGE, _BEAM, _FORCE_CPU
+    if profile not in PROFILES:
+        raise ValueError("Unknown local transcription profile")
+    if language and (len(language) > 8 or not language.replace("-", "").isalpha()):
+        raise ValueError("Use a language code or auto detection")
+    if not has_audio(path):
+        return {
+            "segments": [],
+            "words": [],
+            "notice": "No audio stream; no transcription was attempted.",
+        }
+    from . import clip
+
+    clip.unload()
+    released = release_ollama()
+    # 10 GB 3080: int8 large-v3 only after releasing other workloads. If an
+    # external Ollama process cannot be evicted, use CPU rather than competing.
+    _FORCE_CPU = not released or (gpu_device() == "cuda" and vram_free_mb() < 4500)
+    unload()
+    _SELECTED_MODEL = PROFILES[profile]["model"]
+    _LANGUAGE = language
+    _BEAM = PROFILES[profile]["beam"]
+    try:
+        result = transcribe(path)
+        return result or {
+            "segments": [],
+            "words": [],
+            "notice": "No reliable speech detected, missing audio, or transcription unavailable; no dialogue was invented.",
+        }
+    finally:
+        unload()
+        _SELECTED_MODEL = None
+        _LANGUAGE = None
+        _BEAM = 5
+        _FORCE_CPU = False

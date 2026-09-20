@@ -244,7 +244,7 @@ def _progress_callable(job: Any) -> Callable[[float, str], None]:
 
 
 def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
-                height: int = 1920, captions: bool = True,
+                height: int = 1920, captions: bool = False,
                 music_path: Optional[str] = None,
                 job: Any = None) -> str:
     """Render an approved plan to exports/reel_<plan_id>_<ts>.mp4.

@@ -128,7 +128,7 @@ def _no_ollama(monkeypatch):
     fallback by stubbing the ollama planning step to return None."""
     import app.edits.planner as planner_mod
 
-    monkeypatch.setattr(planner_mod, "_ollama_plan", lambda intent, db, trip_id=None: None)
+    monkeypatch.setattr(planner_mod, "_ollama_plan", lambda intent, db, trip_id=None, selected_ids=None: None)
 
 
 @pytest.fixture()

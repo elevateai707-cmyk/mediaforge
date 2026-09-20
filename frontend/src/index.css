@@ -203,3 +203,9 @@ img.media-frame {
   outline: 1px solid rgba(243, 234, 216, 0.12);
   outline-offset: -1px;
 }
+
+.mf-input { display:block; width:100%; border:1px solid var(--color-border, #38414e); border-radius:.5rem; padding:.55rem .7rem; margin-top:.3rem; background:var(--color-surface); color:var(--color-foreground); }
+.mf-button { display:inline-flex; align-items:center; border:1px solid #637889; border-radius:.5rem; padding:.5rem .8rem; margin:.2rem; cursor:pointer; background:var(--color-card); color:var(--color-foreground); }
+.mf-button:disabled { opacity:.5; cursor:wait; }
+.mf-button:focus-visible,.mf-input:focus-visible,summary:focus-visible { outline:3px solid #5ce5cc; outline-offset:3px; }
+.mf-field { display:block; font-size:.85rem; }

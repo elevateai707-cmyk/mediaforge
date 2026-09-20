@@ -118,6 +118,7 @@ def _rebuild_fts(db: Session, asset: models.Asset) -> None:
 # Per-asset processing (single stage guard, resumable)
 # ---------------------------------------------------------------------------
 
+@gpu.serialized
 def process_asset(db: Session, asset_id: int,
                   progress: ProgressFn = None) -> dict:
     """Run all pending stages for one asset. Never raises.
@@ -187,6 +188,8 @@ def process_asset(db: Session, asset_id: int,
     if cur < 3:
         if asset.kind == "video" and not config.SKIP_WHISPER:
             try:
+                clip.unload()
+                gpu.release_ollama()
                 result = whisper.transcribe(asset.path)
                 if result and result.get("segments"):
                     db.query(models.TranscriptSegment) \
@@ -196,6 +199,7 @@ def process_asset(db: Session, asset_id: int,
                         db.add(models.TranscriptSegment(
                             asset_id=asset.id, start=s["start"],
                             end=s["end"], text=s["text"]))
+                    db.merge(models.SystemSetting(key=f"words:{asset.id}", value=__import__("json").dumps(result.get("words", []))))
                     asset.has_transcript = 1
                     joined = " ".join(
                         (s.get("text") or "") for s in result["segments"]
@@ -208,7 +212,7 @@ def process_asset(db: Session, asset_id: int,
         db.commit()
         stages_run.append("transcript")
         prog(0.6, f"asset {asset_id}: transcript done")
-        _unload_if_tight(whisper.unload)
+        whisper.unload()
 
     # ---- 4. faces ----------------------------------------------------------
     if cur < 4:
@@ -222,7 +226,7 @@ def process_asset(db: Session, asset_id: int,
         db.commit()
         stages_run.append("faces")
         prog(0.75, f"asset {asset_id}: faces done")
-        _unload_if_tight(faces.unload)
+        faces.unload()
 
     # ---- 5. caption ---------------------------------------------------------
     if cur < 5:

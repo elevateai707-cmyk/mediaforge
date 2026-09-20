@@ -1,0 +1,473 @@
+{
+  "$defs": {
+    "Audio": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "volume": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Volume",
+          "type": "number"
+        },
+        "start": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "fade_in": {
+          "default": 0,
+          "maximum": 30,
+          "minimum": 0,
+          "title": "Fade In",
+          "type": "number"
+        },
+        "fade_out": {
+          "default": 0,
+          "maximum": 30,
+          "minimum": 0,
+          "title": "Fade Out",
+          "type": "number"
+        }
+      },
+      "title": "Audio",
+      "type": "object"
+    },
+    "Clip": {
+      "additionalProperties": false,
+      "properties": {
+        "uid": {
+          "title": "Uid",
+          "type": "string"
+        },
+        "asset_id": {
+          "exclusiveMinimum": 0,
+          "title": "Asset Id",
+          "type": "integer"
+        },
+        "start": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "speed": {
+          "default": 1,
+          "maximum": 4,
+          "minimum": 0.25,
+          "title": "Speed",
+          "type": "number"
+        },
+        "transition": {
+          "default": "crossfade",
+          "enum": [
+            "cut",
+            "crossfade"
+          ],
+          "title": "Transition",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "end"
+      ],
+      "title": "Clip",
+      "type": "object"
+    },
+    "Cue": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 10000,
+          "title": "Text",
+          "type": "string"
+        },
+        "words": {
+          "items": {
+            "$ref": "#/$defs/Word"
+          },
+          "maxItems": 500,
+          "title": "Words",
+          "type": "array"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text"
+      ],
+      "title": "Cue",
+      "type": "object"
+    },
+    "Export": {
+      "additionalProperties": false,
+      "properties": {
+        "ratio": {
+          "default": "9:16",
+          "enum": [
+            "9:16",
+            "1:1",
+            "16:9"
+          ],
+          "title": "Ratio",
+          "type": "string"
+        },
+        "width": {
+          "default": 1080,
+          "maximum": 3840,
+          "minimum": 160,
+          "multipleOf": 2,
+          "title": "Width",
+          "type": "integer"
+        },
+        "fps": {
+          "default": 0,
+          "maximum": 120,
+          "minimum": 0,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "codec": {
+          "default": "libx264",
+          "enum": [
+            "libx264",
+            "h264_nvenc"
+          ],
+          "title": "Codec",
+          "type": "string"
+        },
+        "clean_master": {
+          "default": false,
+          "title": "Clean Master",
+          "type": "boolean"
+        },
+        "sidecars": {
+          "items": {
+            "enum": [
+              "srt",
+              "vtt",
+              "ass"
+            ],
+            "type": "string"
+          },
+          "title": "Sidecars",
+          "type": "array"
+        },
+        "hdr": {
+          "default": "tonemap",
+          "enum": [
+            "tonemap",
+            "reject"
+          ],
+          "title": "Hdr",
+          "type": "string"
+        }
+      },
+      "title": "Export",
+      "type": "object"
+    },
+    "Overlay": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 10000,
+          "title": "Text",
+          "type": "string"
+        },
+        "words": {
+          "items": {
+            "$ref": "#/$defs/Word"
+          },
+          "maxItems": 500,
+          "title": "Words",
+          "type": "array"
+        },
+        "style": {
+          "$ref": "#/$defs/Style"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text"
+      ],
+      "title": "Overlay",
+      "type": "object"
+    },
+    "Style": {
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "default": "clean",
+          "enum": [
+            "clean",
+            "bold",
+            "active"
+          ],
+          "title": "Preset",
+          "type": "string"
+        },
+        "font": {
+          "default": "DejaVu Sans",
+          "enum": [
+            "DejaVu Sans",
+            "Liberation Sans"
+          ],
+          "title": "Font",
+          "type": "string"
+        },
+        "size": {
+          "default": 52,
+          "maximum": 160,
+          "minimum": 12,
+          "title": "Size",
+          "type": "integer"
+        },
+        "color": {
+          "default": "#FFFFFF",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Color",
+          "type": "string"
+        },
+        "outline": {
+          "default": 2,
+          "maximum": 12,
+          "minimum": 0,
+          "title": "Outline",
+          "type": "integer"
+        },
+        "background": {
+          "default": false,
+          "title": "Background",
+          "type": "boolean"
+        },
+        "position": {
+          "default": "bottom",
+          "enum": [
+            "bottom",
+            "center",
+            "top"
+          ],
+          "title": "Position",
+          "type": "string"
+        },
+        "max_lines": {
+          "default": 2,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Max Lines",
+          "type": "integer"
+        },
+        "margin": {
+          "default": 0.08,
+          "maximum": 0.3,
+          "minimum": 0.02,
+          "title": "Margin",
+          "type": "number"
+        }
+      },
+      "title": "Style",
+      "type": "object"
+    },
+    "Word": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 10000,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text"
+      ],
+      "title": "Word",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "default": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "revision": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "clips": {
+      "items": {
+        "$ref": "#/$defs/Clip"
+      },
+      "maxItems": 500,
+      "title": "Clips",
+      "type": "array"
+    },
+    "speech_captions": {
+      "default": false,
+      "title": "Speech Captions",
+      "type": "boolean"
+    },
+    "on_video_text": {
+      "default": false,
+      "title": "On Video Text",
+      "type": "boolean"
+    },
+    "captions": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/Cue"
+        },
+        "type": "array"
+      },
+      "title": "Captions",
+      "type": "object"
+    },
+    "narration_captions": {
+      "items": {
+        "$ref": "#/$defs/Cue"
+      },
+      "title": "Narration Captions",
+      "type": "array"
+    },
+    "caption_source": {
+      "default": "original",
+      "enum": [
+        "original",
+        "narration"
+      ],
+      "title": "Caption Source",
+      "type": "string"
+    },
+    "overlays": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/Overlay"
+        },
+        "type": "array"
+      },
+      "title": "Overlays",
+      "type": "object"
+    },
+    "caption_style": {
+      "$ref": "#/$defs/Style"
+    },
+    "original_audio": {
+      "$ref": "#/$defs/Audio"
+    },
+    "voice_over": {
+      "$ref": "#/$defs/Audio"
+    },
+    "music": {
+      "$ref": "#/$defs/Audio"
+    },
+    "ducking": {
+      "default": true,
+      "title": "Ducking",
+      "type": "boolean"
+    },
+    "ducking_ratio": {
+      "default": 8,
+      "maximum": 20,
+      "minimum": 1,
+      "title": "Ducking Ratio",
+      "type": "number"
+    },
+    "post_title": {
+      "default": "",
+      "maxLength": 1000,
+      "title": "Post Title",
+      "type": "string"
+    },
+    "post_description": {
+      "default": "",
+      "maxLength": 20000,
+      "title": "Post Description",
+      "type": "string"
+    },
+    "hashtags": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Hashtags",
+      "type": "string"
+    },
+    "narration_script": {
+      "default": "",
+      "maxLength": 20000,
+      "title": "Narration Script",
+      "type": "string"
+    },
+    "generated_assets": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Generated Assets",
+      "type": "array"
+    },
+    "export": {
+      "$ref": "#/$defs/Export"
+    }
+  },
+  "title": "Project",
+  "type": "object"
+}
