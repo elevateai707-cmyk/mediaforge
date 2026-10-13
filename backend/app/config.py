@@ -13,9 +13,12 @@ from pathlib import Path
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 # ---------------------------------------------------------------------------
-# Monorepo root: /home/bfam/mediaforge  (repo root, NOT /mediaforge)
+# Monorepo root: the repo root (<root>/backend/app/config.py), NOT /mediaforge.
+# Override with MF_ROOT.
 # ---------------------------------------------------------------------------
-MF_ROOT = Path(os.environ.get("MF_ROOT", "/home/bfam/mediaforge")).resolve()
+MF_ROOT = Path(
+    os.environ.get("MF_ROOT") or Path(__file__).resolve().parents[2]
+).resolve()
 
 # ---------------------------------------------------------------------------
 # Data directories (override for tests via env)

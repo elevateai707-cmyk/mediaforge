@@ -23,6 +23,8 @@ _EXPORTS = _TMP / "exports"
 for _d in (_MEDIA, _DATA, _EXPORTS):
     _d.mkdir(parents=True, exist_ok=True)
 
+os.environ["MF_ROOT"] = str(_TMP)
+os.environ["MF_MODELS_DIR"] = str(_TMP / "models")
 os.environ["MF_DATA_DIR"] = str(_DATA)
 os.environ["MF_DB_PATH"] = str(_DATA / "test.db")
 os.environ["MF_THUMBS_DIR"] = str(_DATA / "thumbs")
