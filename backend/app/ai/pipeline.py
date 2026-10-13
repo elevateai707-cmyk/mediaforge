@@ -7,6 +7,11 @@ status='indexed' are skipped entirely). A model that fails to load marks its
 phase unavailable (gpu.py registry) and the worker skips that stage — it
 never crashes and always advances the status so the queue makes progress.
 
+A stage whose *model* is unavailable (CUDA OOM, Ollama down) is NOT skipped:
+the asset stays at its current stage with ``status_error`` set and is retried
+after a backoff (see ``_defer``), so a transient VRAM shortage never
+permanently strips an asset of its embedding/caption.
+
 Stage order:  pending -> embedding_done -> scenes_done -> transcript_done
               -> faces_done -> captioned -> indexed
 """
@@ -15,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
 
@@ -28,7 +35,8 @@ from ..ingest import thumbs
 from ..ingest.place import upgrade_place_from_text
 from ..jobs import JobManager
 from ..ws import broadcast_batch, broadcast_job
-from . import aesthetic, captions, clip, faces, gpu, scenes, whisper
+from ..images import open_rgb
+from . import aesthetic, captions, clip, faces, gpu, ollama_llm, scenes, whisper
 
 log = logging.getLogger("mediaforge.pipeline")
 
@@ -56,6 +64,22 @@ _failures: dict[int, int] = {}
 _quarantined: set[int] = set()
 
 
+# Deferral (transient model unavailability) is separate from failure: the
+# asset is not quarantined, it just waits DEFER_BASE_SECONDS * 2^(n-1), capped
+# at DEFER_MAX_SECONDS, before next_pending_ids offers it again. Captions give
+# up on the model after MAX_CAPTION_DEFERRALS and take the filename/colour
+# fallback so a permanently absent Ollama cannot stall indexing forever.
+DEFER_BASE_SECONDS = 30.0
+DEFER_MAX_SECONDS = 300.0
+MAX_CAPTION_DEFERRALS = 8
+_deferrals: dict[int, int] = {}
+_retry_after: dict[int, float] = {}
+
+# Serialises the two VRAM-heavy stages (CLIP load/embed, Ollama caption) across
+# the worker pool so they never fight each other for the 4 GB card.
+_gpu_lock = threading.Lock()
+
+
 def quarantined_ids() -> set[int]:
     """Asset ids skipped this process after repeated pipeline failures."""
     return set(_quarantined)
@@ -65,6 +89,8 @@ def clear_quarantine() -> None:
     """Forget failure history (used by tests and a manual re-queue)."""
     _failures.clear()
     _quarantined.clear()
+    _deferrals.clear()
+    _retry_after.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +140,55 @@ def _rebuild_fts(db: Session, asset: models.Asset) -> None:
     )
 
 
+def _defer(db: Session, asset: models.Asset, stages_run: list[str],
+           reason: str) -> dict:
+    """Leave the asset at its current stage, record why, schedule a retry."""
+    n = _deferrals.get(asset.id, 0) + 1
+    _deferrals[asset.id] = n
+    delay = min(DEFER_MAX_SECONDS, DEFER_BASE_SECONDS * (2 ** (n - 1)))
+    _retry_after[asset.id] = time.monotonic() + delay
+    asset.status_error = f"deferred (attempt {n}, retry in {delay:.0f}s): {reason}"[:500]
+    db.commit()
+    log.warning("asset %s: %s", asset.id, asset.status_error)
+    return {"stages_run": stages_run, "status": asset.status,
+            "deferred": reason}
+
+
+def _image_readable(path: str) -> bool:
+    try:
+        open_rgb(path)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _prepare_clip() -> None:
+    """Make room for CLIP: evict Ollama's VL model if VRAM is tight."""
+    if clip.available_loaded() or not gpu.cuda_available():
+        return
+    if gpu.vram_free_mb() < 1500:
+        ollama_llm.unload_model()
+        # Eviction is asynchronous (the runner process must exit); wait briefly
+        # for the VRAM to actually come back before CLIP tries to load.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and gpu.vram_free_mb() < 1500:
+            time.sleep(0.25)
+        gpu.clear_gpu_cache()
+
+
+def _prepare_caption() -> None:
+    """Make room for Ollama: release torch models if VRAM is tight."""
+    if config.CAPTION_NUM_GPU == 0 or not gpu.cuda_available():
+        return
+    if gpu.vram_free_mb() < config.CAPTION_MIN_FREE_MB:
+        for fn in (clip.unload, whisper.unload, faces.unload):
+            try:
+                fn()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("pre-caption unload failed: %s", exc)
+        gpu.clear_gpu_cache()
+
+
 # ---------------------------------------------------------------------------
 # Per-asset processing (single stage guard, resumable)
 # ---------------------------------------------------------------------------
@@ -135,15 +210,22 @@ def process_asset(db: Session, asset_id: int,
     if cur < 1:
         img = _representative_image(db, asset)
         if img:
-            vec = clip.embed_image(img)
-            if vec is not None:
-                store_embedding(db, asset.id,
-                                np.asarray(vec, dtype=np.float32))
-                score = aesthetic.score_image(img)
-                if score is not None:
-                    asset.aesthetic_score = round(float(score), 2)
-            else:
-                log.info("asset %s: clip unavailable; skipping embedding",
+            with _gpu_lock:
+                _prepare_clip()
+                vec = clip.embed_image(img)
+                if vec is not None:
+                    store_embedding(db, asset.id,
+                                    np.asarray(vec, dtype=np.float32))
+                    score = aesthetic.score_image(img)
+                    if score is not None:
+                        asset.aesthetic_score = round(float(score), 2)
+            if vec is None and _image_readable(img):
+                # Readable image but no embedding: the model is unavailable
+                # (OOM / load failure). Do NOT advance to embedding_done.
+                err = clip.model_error() or "clip embedding failed"
+                return _defer(db, asset, stages_run, f"clip unavailable: {err}")
+            if vec is None:
+                log.info("asset %s: image unreadable; skipping embedding",
                          asset.id)
         asset.status = "embedding_done"
         asset.status_error = None
@@ -229,7 +311,18 @@ def process_asset(db: Session, asset_id: int,
         if not config.SKIP_CAPTIONS:
             img = _representative_image(db, asset)
             if img:
-                cap = captions.caption_image(img)
+                try:
+                    with _gpu_lock:
+                        _prepare_caption()
+                        cap = captions.try_caption(img)
+                except captions.CaptionUnavailable as exc:
+                    if _deferrals.get(asset.id, 0) < MAX_CAPTION_DEFERRALS:
+                        return _defer(db, asset, stages_run,
+                                      f"caption model unavailable: {exc}")
+                    log.warning("asset %s: caption model still unavailable "
+                                "after %s deferrals; using fallback caption",
+                                asset.id, MAX_CAPTION_DEFERRALS)
+                    cap = captions.caption_image(img)
                 if cap:
                     asset.caption = cap[:300]
                     upgrade_place_from_text(asset, asset.caption, "caption")
@@ -245,6 +338,8 @@ def process_asset(db: Session, asset_id: int,
         # Drop any error left over from an earlier failed attempt so the UI
         # does not keep showing a crash that has since been fixed.
         asset.status_error = None
+        _deferrals.pop(asset.id, None)
+        _retry_after.pop(asset.id, None)
         db.commit()
         stages_run.append("indexed")
         prog(1.0, f"asset {asset_id}: indexed")
@@ -267,6 +362,10 @@ def next_pending_ids(limit: int = 1) -> list[int]:
         )
         if _quarantined:
             q = q.filter(~models.Asset.id.in_(_quarantined))
+        now = time.monotonic()
+        waiting = [i for i, t in _retry_after.items() if t > now]
+        if waiting:
+            q = q.filter(~models.Asset.id.in_(waiting))
         rows = q.order_by(models.Asset.id.asc()).limit(max(1, limit)).all()
         return [int(r[0]) for r in rows]
 

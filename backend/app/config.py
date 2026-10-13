@@ -8,6 +8,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Must be set before torch is first imported (config is imported first). The
+# 4 GB card is shared with Ollama, so fragmentation matters.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 # ---------------------------------------------------------------------------
 # Monorepo root: /home/bfam/mediaforge  (repo root, NOT /mediaforge)
 # ---------------------------------------------------------------------------
@@ -45,6 +49,17 @@ ALLOW_OLLAMA_PULL = os.environ.get("MF_ALLOW_OLLAMA_PULL", "1") == "1"
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("MF_OLLAMA_MODEL", "qwen2.5vl:7b")
 OLLAMA_TIMEOUT = float(os.environ.get("MF_OLLAMA_TIMEOUT", "300"))
+# Ollama is shared with other apps and the in-process torch models compete
+# for the same 4 GB card, so unload the VL model right after each request.
+# "0" = unload immediately; any Ollama duration ("30s", "5m") or -1 also works.
+OLLAMA_KEEP_ALIVE = os.environ.get("MF_OLLAMA_KEEP_ALIVE", "0")
+# Ollama options.num_gpu for caption calls: unset = Ollama decides; "0" = run
+# captions on CPU (slow but never contends for VRAM).
+CAPTION_NUM_GPU = (int(os.environ["MF_CAPTION_NUM_GPU"])
+                   if os.environ.get("MF_CAPTION_NUM_GPU", "").strip() else None)
+# Free VRAM (MB) wanted before a caption call; below it the torch models
+# (CLIP/whisper/faces) are released first.
+CAPTION_MIN_FREE_MB = int(os.environ.get("MF_CAPTION_MIN_FREE_MB", "2800"))
 # Alias used by app/ai/captions.py (kept in sync with OLLAMA_HOST).
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", OLLAMA_HOST)
 

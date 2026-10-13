@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from typing import Optional
 
 from app import config
 from app.ai import gpu
@@ -85,32 +86,58 @@ def _color_name(rgb: tuple[int, int, int]) -> str:
     return best
 
 
+class CaptionUnavailable(RuntimeError):
+    """The Ollama caption call itself failed (OOM, outage, timeout)."""
+
+
+def _generate_caption(b64: str) -> str:
+    """One Ollama caption call. num_gpu comes from MF_CAPTION_NUM_GPU; if the
+    GPU attempt fails and it was unset, retry once on CPU (num_gpu=0)."""
+    kwargs = dict(model=config.OLLAMA_MODEL, prompt=_CAPTION_PROMPT,
+                  images=[b64])
+    try:
+        return generate(num_gpu=config.CAPTION_NUM_GPU, **kwargs)
+    except Exception as exc:
+        if config.CAPTION_NUM_GPU is not None:
+            raise
+        log.warning("ollama caption on GPU failed (%s); retrying on CPU", exc)
+        return generate(num_gpu=0, retries=1, **kwargs)
+
+
+def try_caption(image_path: str) -> Optional[str]:
+    """Model caption, or None when the model could not produce one.
+
+    Raises CaptionUnavailable when Ollama is down / the call failed, so the
+    pipeline can retry later instead of storing a fallback caption.
+    """
+    if not image_path or not os.path.isfile(image_path):
+        return None
+    if not _ensure_model_ready():
+        raise CaptionUnavailable("ollama unreachable or model missing")
+    try:
+        b64 = image_to_b64(image_path, max_side=1024)
+    except Exception as exc:  # noqa: BLE001 - one bad file, not a model fault
+        log.debug("caption encode failed for %s: %s", image_path, exc)
+        return None
+    if not b64:
+        return None
+    try:
+        text = (_generate_caption(b64) or "").strip()
+        text = re.sub(r"\s+", " ", text).strip(" '\".,")
+    except Exception as exc:
+        log.debug("ollama caption failed: %s", exc)
+        gpu.set_model_status("ollama", "unavailable", str(exc))
+        raise CaptionUnavailable(str(exc)) from exc
+    gpu.set_model_status("ollama", "loaded")
+    return text[:200] if text else None
+
+
 def caption_image(image_path: str) -> str:
     """Short caption for an image. Always returns a non-empty string."""
     if not image_path or not os.path.isfile(image_path):
         return "image"
-    if _ensure_model_ready():
-        # Encoding is a per-file concern: an unreadable still must not be
-        # reported as an Ollama outage. Only failures from generate() say
-        # anything about the model.
-        try:
-            b64 = image_to_b64(image_path, max_side=1024)
-        except Exception as exc:  # noqa: BLE001 - one bad file, not a model fault
-            log.debug("caption encode failed for %s: %s", image_path, exc)
-            return _fallback_caption(image_path)
-        if not b64:
-            return _fallback_caption(image_path)
-        try:
-            response = generate(
-                model=config.OLLAMA_MODEL,
-                prompt=_CAPTION_PROMPT,
-                images=[b64],
-            )
-            text = (response or "").strip()
-            text = re.sub(r"\s+", " ", text).strip(" '\".,")
-            if text:
-                return text[:200]
-        except Exception as exc:  # pragma: no cover
-            log.debug("ollama caption failed: %s", exc)
-            gpu.set_model_status("ollama", "unavailable", str(exc))
-    return _fallback_caption(image_path)
+    try:
+        text = try_caption(image_path)
+    except CaptionUnavailable:
+        text = None
+    return text or _fallback_caption(image_path)

@@ -11,13 +11,15 @@ Embeddings are L2-normalized float32 lists (cosine = dot product).
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional, Union
 
 import numpy as np
 
 from .. import config
 from ..images import open_rgb
-from .gpu import device as gpu_device, set_model_status, clear_gpu_cache
+from .gpu import (device as gpu_device, set_model_status, clear_gpu_cache,
+                  model_status)
 
 log = logging.getLogger("mediaforge.clip")
 
@@ -27,15 +29,20 @@ _preprocess: Any = None
 _tokenizer: Any = None
 _device: str = "cpu"
 _LOAD_TRIED = False
+_LOAD_FAILED_AT = 0.0
+# A failed load (typically CUDA OOM while Ollama holds VRAM) is retried after
+# this many seconds instead of latching unavailable for the whole process.
+LOAD_RETRY_SECONDS = 30.0
 
 
 def _load() -> bool:
     """Load the CLIP model once. Returns True when ready."""
-    global _model, _preprocess, _tokenizer, _device, _LOAD_TRIED
+    global _model, _preprocess, _tokenizer, _device, _LOAD_TRIED, _LOAD_FAILED_AT
     if _model is not None:
         return True
     if _LOAD_TRIED:
-        return False
+        if time.monotonic() - _LOAD_FAILED_AT < LOAD_RETRY_SECONDS:
+            return False
     _LOAD_TRIED = True
     try:
         import open_clip  # type: ignore
@@ -56,6 +63,8 @@ def _load() -> bool:
         return True
     except Exception as exc:  # noqa: BLE001 - registry + degrade, never crash
         _model = None
+        _LOAD_FAILED_AT = time.monotonic()
+        clear_gpu_cache()
         set_model_status("clip", "unavailable", f"{type(exc).__name__}: {exc}")
         log.warning("clip model unavailable: %s", exc)
         return False
@@ -64,6 +73,16 @@ def _load() -> bool:
 def available() -> bool:
     """True when the CLIP model is loaded and usable."""
     return _model is not None or _load()
+
+
+def available_loaded() -> bool:
+    """True when the model is already resident (never triggers a load)."""
+    return _model is not None
+
+
+def model_error() -> Optional[str]:
+    """Last load error recorded in the gpu registry, if any."""
+    return model_status("clip").get("error")
 
 
 def embed_image(image: Union[str, Any]) -> Optional[list]:

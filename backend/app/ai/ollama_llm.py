@@ -36,8 +36,10 @@ def _client(timeout: Optional[float] = None) -> httpx.Client:
 
 def ollama_reachable() -> bool:
     """True when the Ollama server answers /api/tags."""
-    if OLLAMA_STATE["reachable"] is not None:
-        return OLLAMA_STATE["reachable"]
+    # Only a positive answer is cached: a transient outage must not make
+    # Ollama look permanently down for the life of the process.
+    if OLLAMA_STATE["reachable"]:
+        return True
     try:
         with _client() as client:
             resp = client.get("/api/tags")
@@ -135,9 +137,53 @@ class OllamaClient:
                         temperature=temperature, retries=retries)
 
 
+def _keep_alive_value() -> Any:
+    raw = str(config.OLLAMA_KEEP_ALIVE).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
+
+
+def build_payload(model: str, prompt: str, images: Optional[list[str]] = None,
+                  format: Optional[str] = None, temperature: float = 0.2,
+                  num_gpu: Optional[int] = None) -> dict[str, Any]:
+    """/api/generate body. keep_alive (default 0) unloads the model after the
+    request so it does not hold VRAM the torch models need."""
+    options: dict[str, Any] = {"temperature": temperature}
+    if num_gpu is not None:
+        options["num_gpu"] = num_gpu
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": _keep_alive_value(),
+        "options": options,
+    }
+    if images:
+        payload["images"] = images
+    if format:
+        payload["format"] = format
+    return payload
+
+
+def unload_model(model: Optional[str] = None) -> bool:
+    """Ask Ollama to evict a model now (empty generate with keep_alive 0)."""
+    model = model or config.OLLAMA_MODEL
+    try:
+        with _client(timeout=15) as client:
+            resp = client.post("/api/generate",
+                               json={"model": model, "keep_alive": 0})
+            return resp.status_code == 200
+    except Exception as exc:  # noqa: BLE001 - best effort
+        log.debug("ollama unload failed: %s", exc)
+        return False
+
+
 def generate(model: str, prompt: str, images: Optional[list[str]] = None,
              format: Optional[str] = None, temperature: float = 0.2,
-             retries: int = 5, timeout: Optional[float] = None) -> str:
+             retries: int = 5, timeout: Optional[float] = None,
+             num_gpu: Optional[int] = None) -> str:
     """Call /api/generate with retries on transient connection errors.
 
     images: list of base64-encoded JPEGs. Returns the model's text response.
@@ -145,16 +191,8 @@ def generate(model: str, prompt: str, images: Optional[list[str]] = None,
     model is missing.
     """
     last_exc: Optional[Exception] = None
-    payload: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": temperature},
-    }
-    if images:
-        payload["images"] = images
-    if format:
-        payload["format"] = format
+    payload = build_payload(model, prompt, images, format, temperature,
+                            num_gpu)
     for attempt in range(1, retries + 1):
         try:
             with _client(timeout=timeout) as client:

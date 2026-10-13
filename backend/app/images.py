@@ -30,8 +30,8 @@ def ensure_heif() -> None:
 def open_rgb(path: str) -> Any:
     """Open an image path as RGB (HEIC-aware). Caller owns close/lifetime."""
     ensure_heif()
-    img = Image.open(path)
-    img.load()
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    return img
+    # Close the file handle as soon as pixels are decoded; the returned image
+    # is a detached in-memory copy.
+    with Image.open(path) as src:
+        src.load()
+        return src.convert("RGB") if src.mode != "RGB" else src.copy()

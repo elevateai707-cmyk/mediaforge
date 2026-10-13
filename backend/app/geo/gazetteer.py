@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -186,11 +187,31 @@ def reverse_geocode(lat: float, lon: float) -> Optional[GeocodeHit]:
     return _reverse_geocoder_fallback(lat, lon)
 
 
+_geocoder = None
+_geocoder_lock = threading.Lock()
+
+
+def _get_geocoder():
+    """One shared single-process geocoder.
+
+    ``reverse_geocoder.search()`` builds a fresh multiprocessing K-D tree
+    (mode=2) on every call and never shuts its worker pool down, leaking a
+    pair of pipes, shared memory and a zombie worker per lookup until the
+    process hits ``Errno 24: Too many open files``. Mode 1 needs no pool and
+    the tree is built once.
+    """
+    global _geocoder
+    with _geocoder_lock:
+        if _geocoder is None:
+            _geocoder = _rg.RGeocoder(mode=1, verbose=False)
+        return _geocoder
+
+
 def _reverse_geocoder_fallback(lat: float, lon: float) -> Optional[GeocodeHit]:
     if _rg is None:
         return None
     try:
-        rows = _rg.search((lat, lon))
+        rows = _get_geocoder().query([(lat, lon)])
     except Exception:
         return None
     if not rows:

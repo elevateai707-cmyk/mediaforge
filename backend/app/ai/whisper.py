@@ -86,6 +86,25 @@ def has_audio(path: str) -> bool:
         return True
 
 
+def _decode_audio(path: str) -> Any:
+    """Decode to 16 kHz mono float32 with the system ffmpeg.
+
+    faster-whisper's own ``decode_audio`` calls ``av.open(...,
+    metadata_errors="ignore")``, which PyAV 19 rejects with ``open() got an
+    unexpected keyword argument 'metadata_errors'`` — every transcript failed.
+    Decoding here keeps us independent of the PyAV/faster-whisper pairing.
+    """
+    import numpy as np
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-vn", "-sn",
+         "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
+        capture_output=True, timeout=600, env=tool_env())
+    if proc.returncode != 0:
+        raise RuntimeError("ffmpeg audio decode failed: "
+                           + proc.stderr.decode("utf-8", "replace")[-200:])
+    return np.frombuffer(proc.stdout, dtype=np.float32)
+
+
 def _load() -> bool:
     """Load the Whisper model once (downloads weights on first use)."""
     global _model, _device, _LOAD_TRIED
@@ -144,7 +163,10 @@ def device() -> str:
 
 def _run(path: str) -> Optional[dict]:
     """One transcribe pass against the loaded model."""
-    segments_iter, _info = _model.transcribe(path, word_timestamps=True)
+    audio = _decode_audio(path)
+    if audio.size == 0:
+        return None
+    segments_iter, _info = _model.transcribe(audio, word_timestamps=True)
     segments: list[dict] = []
     words: list[dict] = []
     for seg in segments_iter:

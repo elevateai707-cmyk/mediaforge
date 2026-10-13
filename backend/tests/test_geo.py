@@ -53,3 +53,13 @@ def test_reverse_geocode_vancouver():
     hit = reverse_geocode(49.28, -123.12)
     assert hit is not None
     assert hit.name == "Vancouver"
+
+
+def test_reverse_geocoder_is_single_process_and_shared():
+    """reverse_geocoder.search() spawns a leaked process pool per call."""
+    from app.geo import gazetteer
+    if gazetteer._rg is None:
+        return
+    first = gazetteer._get_geocoder()
+    assert first.mode == 1
+    assert gazetteer._get_geocoder() is first

@@ -44,6 +44,9 @@ def test_cuda_failure_falls_back_to_cpu_and_retries(tmp_path, monkeypatch):
     media.write_bytes(b"stub")
     monkeypatch.setattr(whisper, "has_audio", lambda _p: True)
     monkeypatch.setattr(whisper, "gpu_device", lambda: "cuda")
+    import numpy as np
+    monkeypatch.setattr(whisper, "_decode_audio",
+                        lambda _p: np.ones(16000, dtype=np.float32))
 
     built: list[str] = []
 
