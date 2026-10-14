@@ -82,7 +82,7 @@ see `assets/OFL-Inter.txt`).
 | Processes | `open`/`explorer`/`xdg-open` for "Reveal / Edit Original" (argument list, no shell). The `ffmpeg`/`ffprobe` calls are test-only. |
 | Code hygiene | No bidi/zero-width characters, no encoded blobs, no committed binaries. `unsafe_code = "forbid"` everywhere except the platform crate. |
 | CI | No `pull_request_target`; signing secrets live only in the release workflow. |
-| Automation | Control channel is loopback-only. MCP has **no folder sandbox**, so MediaForge doesn't expose it by default (see Agents). |
+| Automation | The control channel (`evstudio --control PORT`) is loopback-only but **unauthenticated**: while it's on, any local program can drive the app. Nothing here enables it. MCP has **no folder sandbox**, so MediaForge doesn't expose it by default (see Agents). |
 
 **Verdict: safe to build and use.** It's alpha software: upstream rates it ~56% "ready
 for real work" against Premiere. Keep originals backed up and treat AI-built cuts as

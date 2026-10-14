@@ -176,8 +176,19 @@ def rebrand(tree: Path, b: dict, allow_other_commit: bool) -> dict:
     for f in (ui / "panels" / "dialogs.rs",):
         edit(f, [(CREDIT_TOKEN, f"{up['name']} by {up['authors']}")])
 
-    # 5. CLI name in its help/usage text.
+    # 5. CLI name in its help/usage text, including the multi-line HELP/USAGE
+    #    consts that the single-line literal pass above can't see.
     stats["cli_strings"] = sum(rename_in_strings(f, "filmcraft-cli", b["cli"]) for f in (cli / "src").rglob("*.rs"))
+    for f, const in ((cli / "src" / "main.rs", "HELP"), (app / "src" / "args.rs", "USAGE")):
+        text = f.read_text(encoding="utf-8")
+        m = re.search(rf'(const {const}: &str = "\\\n)(.*?)(";)', text, flags=re.S)
+        if not m:
+            fail(f"{f}: multi-line {const} text not found (upstream changed?)")
+        body = (m.group(2).replace("filmcraft-cli", b["cli"]).replace("FilmCraft", product)
+                .replace("Usage: filmcraft ", f"Usage: {b['binary']} "))
+        f.write_text(text[:m.start(2)] + body + text[m.end(2):], encoding="utf-8")
+    edit(app / "src" / "main.rs", [('format!("filmcraft {}\\n", env!("CARGO_PKG_VERSION"))',
+                                    f'format!("{b["binary"]} {{}}\\n", env!("CARGO_PKG_VERSION"))')])
 
     # 6. App id and binary names.
     edit(app / "src" / "main.rs", [('const APP_ID: &str = "ai.storyteller.filmcraft";',
