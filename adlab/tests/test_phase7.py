@@ -201,3 +201,53 @@ def test_supabase_mirrors_pipeline_in_fk_order(made):
     assert body["reviews"][0]["notes"] == "go" and out["creatives"] == 3
     posts.clear()
     assert sync(store, mirror) == {"configured": True, "pushed": 0} and posts == []
+
+
+def test_edit_notes_become_a_revised_brief(made):
+    from adlab import llm
+    from tests.fakes import FakeAnthropic
+    from tests.test_strategist import brief_draft
+
+    store, ids = made["store"], made["ids"]
+    review.decide(store, ids[0], "edit", "lead with the credential")
+    review.decide(store, ids[1], "edit", "lead with the credential")
+    review.decide(store, ids[2], "approve")
+    reqs = strategist.edit_requests(store)
+    assert set(reqs) == {made["brief"].id}
+    assert set(reqs[made["brief"].id]) == {(ids[0], "lead with the credential"), (ids[1], "lead with the credential")}
+    fake = FakeAnthropic({"BriefSet": [{"briefs": [brief_draft(script="Red Seal first. Charger acting up?")]}]})
+    llm.set_client(fake)
+    try:
+        dry = strategist.revise_briefs(dry_run=True, store=store)
+        assert fake.requests == [] and dry[0].result.status == "planned"
+        revs = strategist.revise_briefs(store=store)
+    finally:
+        llm.set_client(None)
+    prompt = fake.requests[0]["messages"][0]["content"][0]["text"]
+    assert "lead with the credential" in prompt and made["brief"].script in prompt
+    new = revs[0].result.brief
+    assert revs[0].result.status == "drafted" and new.pattern_id == made["pattern"].id
+    assert store.rows("brief", status="revised")[0]["id"] == made["brief"].id
+    assert {r["id"] for r in store.rows("creative", status="revised")} == {ids[0], ids[1]}
+    assert review.counts(store) == {"approved": 1, "revised": 2}
+    assert strategist.revise_briefs(store=store) == []                  # nothing left to revise
+
+
+def test_usage_ledger_mirrors_once(made):
+    from adlab import usage
+    from adlab.store import SupabaseMirror, sync
+
+    usage.record("brief", "anthropic", "claude-opus-5-5", 1000, 100)
+    usage.record_service("produce", "elevenlabs", "eleven_multilingual_v2", 0.02, None)
+    got = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/llm_usage"):
+            got.extend(json.loads(req.content))
+            assert req.url.params["on_conflict"] == "entry_key"
+        return httpx.Response(201)
+
+    mirror = SupabaseMirror("https://p.supabase.co", "k", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert sync(made["store"], mirror)["llm_usage"] == 2
+    assert got[0]["cost_usd"] == 0.006 and got[1]["cost_usd"] is None and got[1]["units"] == 0.02
+    assert "llm_usage" not in sync(made["store"], mirror) and len(got) == 2

@@ -20,6 +20,7 @@
     adlab check [BRIEF]                      Compliance Officer: PASS / FIX / REJECT
     adlab produce [--dry-run]                render briefs -> 9:16 / 4:5 / 1:1 ads + manifest
     adlab review [approve|edit|kill ID]      the human gate
+    adlab revise [--dry-run]                 rewrite briefs from your Edit notes
     adlab export                             approved ads -> upload-ready files + sheets
     adlab report [--import CSV|--pull-meta]  your results; re-ranks patterns
     adlab digest [--send] | serve            weekly email / local API for the dashboard
@@ -392,6 +393,32 @@ def brief(site: str = typer.Option(..., help="site slug, e.g. ev1charger"),
 
 
 @app.command()
+def revise(site: Optional[str] = typer.Option(None),
+           dry_run: bool = typer.Option(False, "--dry-run", help="show the request; no API call")) -> None:
+    """Rewrite briefs from your Edit notes (still fact-locked), ready for `adlab produce`."""
+    from . import compliance, strategist
+
+    with usage.track("revise"):
+        revs = strategist.revise_briefs(site, dry_run=dry_run)
+    done = [r for r in revs if r.result.status == "drafted"]
+    missing = sorted({m for r in done if r.result.brief for m in r.result.brief.missing_facts})
+    tldr(f"{len(revs)} briefs with Edit notes · {len(done)} revised" if revs else "no ads marked Edit",
+         "dry run: nothing sent" if dry_run else ("old ads marked 'revised' (out of the queue)" if done
+                                                   else "nothing changed"),
+         f"facts your notes need (add to facts.yaml): {', '.join(missing)}" if missing
+         else "next: `adlab produce`")
+    for r in revs:
+        typer.echo(f"  {r.old_brief_id}: {r.result.status}  notes: {' / '.join(r.notes)}")
+        if r.result.brief:
+            c = compliance.check_brief(r.result.brief)
+            typer.echo(f"    → [{c.verdict}] {r.result.brief.id}  {r.result.brief.script}")
+        for p in r.result.problems:
+            typer.secho(f"    ✗ {p}", fg="red")
+        if r.result.request:
+            typer.echo(json.dumps(r.result.request, indent=1)[:4000])
+
+
+@app.command()
 def check(brief_id: Optional[str] = typer.Argument(None), site: Optional[str] = typer.Option(None)) -> None:
     """Re-run the Compliance Officer on one brief or every draft brief."""
     from . import compliance
@@ -464,7 +491,7 @@ app.add_typer(review_app, name="review")
 
 @review_app.callback()
 def review_list(ctx: typer.Context, site: Optional[str] = typer.Option(None),
-                status: str = typer.Option("pending", help="pending | edit | approved | killed | rejected")) -> None:
+                status: str = typer.Option("pending", help="pending | edit | approved | killed | rejected | revised")) -> None:
     """Show the queue (default) or decide: `adlab review approve <id>`."""
     if ctx.invoked_subcommand:
         return

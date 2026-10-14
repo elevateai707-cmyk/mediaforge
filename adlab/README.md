@@ -152,6 +152,7 @@ adlab brief --site ev1charger        # 3 fact-locked briefs from the best patter
 adlab produce --dry-run              # shot list, VO script, facts, exact ComfyUI/ElevenLabs payloads
 adlab produce                        # 9:16 / 4:5 / 1:1 ads → review queue
 adlab review                         # or the dashboard: approve / edit / kill
+adlab revise                         # Edit notes → rewritten briefs (still fact-locked) → produce again
 adlab export                         # upload-ready files + sheet per platform (you upload)
 adlab report --import meta.csv       # your results → patterns re-ranked
 adlab digest --send                  # Monday email (also automatic via `adlab schedule`)
@@ -252,11 +253,12 @@ adlab produce --brief br_1234abcd5678 --ratios 9:16
 | | |
 |---|---|
 | **Review** | `adlab review` (queue, best bet first) · `adlab review approve <id>` · `edit <id> "notes"` · `kill <id>`. A compliance REJECT can't be approved. |
+| **Revise** | `adlab revise [--dry-run]`: each brief with Edit notes is rewritten by Claude under the same rules (fact-key schema, re-validation, compliance). Notes can't override the rules: a note asking for an unsupported claim comes back as a missing fact. The old brief and its edited ads become `revised`; then `adlab produce`. |
 | **Export** | `data/exports/<date>/<platform>/adlab-<id>-<ratio>.mp4` + `upload_sheet.csv` (ad name with `[adlab:<id>]` tag, placements, primary text, headline, CTA, URL, AI label ON). Checked against `config/platform_specs.yaml` (starter values: confirm them). |
 | **Reporter** | `adlab report --import meta.csv` (or `--platform tiktok`), or `--pull-meta` (Insights API, `ads_read`). Matched by the `[adlab:…]` tag. CTR, CPC, CPL, conversions by pattern, hook type and ad. A pattern with ≥ 1,000 of your impressions gets `own_performance_score` (50 = your average; CTR and CPL vs your account), which ranks first for the Strategist. |
 | **Digest** | `adlab digest` previews; `--send` emails via Resend. `adlab schedule` sends it Mondays 07:13 Alberta time. |
 | **Dashboard** | `adlab serve` (FastAPI, 127.0.0.1:8430) + `dashboard/` (Next.js, Tailwind, shadcn-style UI). Home: 3 cards. Review: video, compliance reasons, the ad, the teardowns it learned from, the pre-upload checklist, and Approve / Edit / Kill (keys **A / E / K**, **J** next). Results: tables + Export. Set `ADLAB_API_TOKEN` before exposing it beyond localhost. |
-| **Supabase** | `adlab sync` now mirrors teardowns, patterns, briefs, creatives, compliance reports, review decisions and results (`supabase/migrations/20261014010000_adlab_pipeline.sql`). |
+| **Supabase** | `adlab sync` now mirrors teardowns, patterns, briefs, creatives, compliance reports, review decisions, results and the cost ledger (`supabase/migrations/20261014010000_adlab_pipeline.sql`). |
 
 ```bash
 cp deploy/adlab-api.service ~/.config/systemd/user/ && systemctl --user enable --now adlab-api
@@ -264,7 +266,7 @@ cd dashboard && npm install && npm run build && npm start      # http://localhos
 ```
 
 ### Tests
-`.venv/bin/pytest -q` runs 83 tests (2 more with the Studio CLI installed): fake Claude, fake
+`.venv/bin/pytest -q` runs 85 tests (87 with the Studio CLI installed): fake Claude, fake
 ComfyUI/ElevenLabs/Meta/Resend over `httpx.MockTransport`, and real FFmpeg renders.
 `cd dashboard && npm run build` typechecks the dashboard.
 

@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loading, TLDR } from "@/components/tldr";
 import { cn } from "@/lib/utils";
 
-const STATUSES = ["pending", "edit", "approved", "killed", "rejected"] as const;
+const STATUSES = ["pending", "edit", "approved", "killed", "rejected", "revised"] as const;
 const ASPECT: Record<string, string> = { "9:16": "aspect-[9/16]", "4:5": "aspect-[4/5]", "1:1": "aspect-square" };
 
 function Queue() {
@@ -128,7 +128,7 @@ function Queue() {
               <p className="text-xs text-muted-foreground">{d.creative.ai_disclosure}</p>
               {d.status === "pending" || d.status === "edit" ? (
                 <div className="space-y-2">
-                  <Textarea ref={notesRef} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (required for Edit)" />
+                  <Textarea ref={notesRef} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (required for Edit; `adlab revise` rewrites the brief from them)" />
                   <div className="grid grid-cols-3 gap-2">
                     <Button variant="pass" onClick={() => decide("approve")} disabled={busy || d.compliance?.verdict === "REJECT"}>
                       <Check className="h-4 w-4" /> Approve

@@ -198,19 +198,97 @@ def write_briefs(site_slug: str, pattern_ref: Optional[str] = None, count: int =
         return [BriefResult(status="planned", request=shown)]
 
     drafts = llm.parse(COMMAND, SYSTEM, content, brief_set, effort="high")
-    results = []
-    for d in drafts.briefs:  # type: ignore[attr-defined]
-        data = d.model_dump()
-        bid = "br_" + hashlib.sha1(f"{site_slug}|{pattern.id}|{data['script']}".encode()).hexdigest()[:12]
-        data.update(id=bid, site=site_slug, pattern_id=pattern.id, source_ad_ids=pattern.source_teardown_ids)
-        data["shots"] = [dict(s, index=i) for i, s in enumerate(data["shots"], 1)]  # renumber 1..n
-        check = check_brief(data, site.facts, today)
-        if not check.ok:
-            results.append(BriefResult(status="rejected", problems=[
-                *(f"claim {p.index + 1} \"{p.text}\": {p.problem}" for p in check.claim_problems),
-                *check.other_errors]))
+    return [_store_draft(d.model_dump(), site, pattern, store, today) for d in drafts.briefs]  # type: ignore[attr-defined]
+
+
+def _store_draft(data: dict, site: Site, pattern: Pattern, store: LocalStore,
+                 today: Optional[date]) -> BriefResult:
+    """Validate a model-written draft against the facts as they are NOW, then store it."""
+    bid = "br_" + hashlib.sha1(f"{site.slug}|{pattern.id}|{data['script']}".encode()).hexdigest()[:12]
+    data.update(id=bid, site=site.slug, pattern_id=pattern.id, source_ad_ids=pattern.source_teardown_ids)
+    data["shots"] = [dict(s, index=i) for i, s in enumerate(data["shots"], 1)]  # renumber 1..n
+    check = check_brief(data, site.facts, today)
+    if not check.ok:
+        return BriefResult(status="rejected", problems=[
+            *(f"claim {p.index + 1} \"{p.text}\": {p.problem}" for p in check.claim_problems),
+            *check.other_errors])
+    brief = Brief.model_validate(check.brief.model_dump())  # type: ignore[union-attr]
+    store.put("brief", brief, id=bid, site=site.slug, ref=pattern.id, status="draft")
+    return BriefResult(status="drafted", brief=brief)
+
+
+# --- revisions from your Edit notes ----------------------------------------------------
+REVISE_SYSTEM = SYSTEM + """
+
+You are revising ONE existing brief because the advertiser reviewed the rendered ad and asked
+for changes. Apply their notes. The hard rules above still win over the notes: if a note asks
+for a claim, number, testimonial or guarantee that no provided fact supports, don't write it;
+add what's needed to `missing_facts` instead. Keep everything the notes don't ask to change."""
+
+
+class Revision(BaseModel):
+    old_brief_id: str
+    notes: list[str]
+    result: BriefResult
+
+
+def edit_requests(store: LocalStore, site: Optional[str] = None) -> dict[str, list[tuple[str, str]]]:
+    """brief id -> [(creative id, your notes)] for every creative you marked Edit."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for r in store.rows("creative", site=site, status="edit"):
+        rv = store.rows("review", ref=r["ref"])
+        note = next((json.loads(x["payload"])["notes"] for x in rv if x["id"] == r["id"]), "")
+        out.setdefault(r["ref"], []).append((r["id"], note))
+    return out
+
+
+def revise_prompt(site: Site, brief: Brief, notes: list[str]) -> str:
+    facts = {k: site.facts.facts[k].statement for k in site.facts.usable_keys()}
+    current = brief.model_dump(include={"hook", "angle", "script", "shots", "cta", "claims", "aspect_ratios",
+                                        "missing_facts"})
+    return "\n\n".join([
+        f"Revise this brief for {site.info.name or site.slug} ({site.info.domain}).",
+        "Current brief:\n" + json.dumps(current, indent=1),
+        "The advertiser's notes (apply them):\n" + "\n".join(f"- {n}" for n in notes),
+        "Verified facts you may cite (fact_key: exact statement):\n" + json.dumps(facts, indent=1),
+        f"Brand tone: {', '.join(site.brand.tone) or 'plain, confident, local'}. "
+        f"Banned words: {', '.join(site.brand.banned_words) or 'none'}.",
+    ])
+
+
+def revise_briefs(site_slug: Optional[str] = None, dry_run: bool = False, store: Optional[LocalStore] = None,
+                  today: Optional[date] = None) -> list[Revision]:
+    """One revised brief per brief with Edit notes. Old brief + its edited ads -> 'revised'."""
+    store = store or LocalStore()
+    out = []
+    for brief_id, items in edit_requests(store, site_slug).items():
+        old = store.fetch("brief", brief_id, Brief)
+        if old is None:
             continue
-        brief = Brief.model_validate(check.brief.model_dump())  # type: ignore[union-attr]
-        store.put("brief", brief, id=bid, site=site_slug, ref=pattern.id, status="draft")
-        results.append(BriefResult(status="drafted", brief=brief))
-    return results
+        notes = sorted({n for _, n in items if n})
+        site = load_site(old.site)
+        pattern = store.fetch("pattern", old.pattern_id, Pattern)
+        if pattern is None:
+            out.append(Revision(old_brief_id=brief_id, notes=notes, result=BriefResult(
+                status="blocked", problems=[f"pattern {old.pattern_id} is gone: write a new brief instead"])))
+            continue
+        try:
+            _, brief_set = draft_models(site.facts, 1, today)
+        except NoUsableFacts as exc:
+            out.append(Revision(old_brief_id=brief_id, notes=notes,
+                                result=BriefResult(status="blocked", problems=[str(exc)])))
+            continue
+        content = [{"type": "text", "text": revise_prompt(site, old, notes)}]
+        if dry_run:
+            shown = llm.redacted(llm.request_kwargs(REVISE_SYSTEM, content, brief_set, effort="high"))
+            out.append(Revision(old_brief_id=brief_id, notes=notes,
+                                result=BriefResult(status="planned", request=shown)))
+            continue
+        drafts = llm.parse("revise", REVISE_SYSTEM, content, brief_set, effort="high")
+        res = _store_draft(drafts.briefs[0].model_dump(), site, pattern, store, today)  # type: ignore[attr-defined]
+        if res.status == "drafted":
+            store.set_status("brief", brief_id, "revised")
+            for cid, _ in items:
+                store.set_status("creative", cid, "revised")
+        out.append(Revision(old_brief_id=brief_id, notes=notes, result=res))
+    return out

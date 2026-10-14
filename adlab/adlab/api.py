@@ -6,7 +6,7 @@ default; set ADLAB_API_TOKEN to require `Authorization: Bearer <token>` (do that
 before binding it to your LAN).
 
     GET  /api/home                      the 3 home cards
-    GET  /api/queue?site=&status=       review queue (status: pending | edit | approved | killed | rejected)
+    GET  /api/queue?site=&status=       review queue (status: pending | edit | approved | killed | rejected | revised)
     GET  /api/creatives/{id}            one creative + brief + compliance + teardowns it learned from
     GET  /api/creatives/{id}/video      the file (only files inside data/batches/)
     POST /api/creatives/{id}/decision   {"decision": "approve"|"edit"|"kill", "notes": ""}

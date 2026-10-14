@@ -314,4 +314,32 @@ def sync(store: LocalStore, mirror: Optional[SupabaseMirror] = None) -> dict:
             mirror.upsert(table, mapped, conflict)
             store.mark_rows_synced(kind, [r["id"] for r in batch])
             out[table] = out.get(table, 0) + len(mapped)
+    n = _sync_usage(mirror)
+    if n:
+        out["llm_usage"] = n
     return out
+
+
+def _sync_usage(mirror: SupabaseMirror) -> int:
+    """Mirror new data/logs/usage.jsonl lines; the line count already pushed lives next to it."""
+    import hashlib
+
+    log = settings().logs_dir / "usage.jsonl"
+    mark = settings().logs_dir / "usage.synced"
+    if not log.is_file():
+        return 0
+    lines = [l for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    done = int(mark.read_text() or 0) if mark.is_file() else 0
+    new = lines[done:]
+    for i in range(0, len(new), 500):
+        rows = []
+        for raw in new[i:i + 500]:
+            u = json.loads(raw)
+            rows.append({"entry_key": hashlib.sha1(raw.encode()).hexdigest(), "command": u["command"],
+                         "provider": u["provider"], "model": u["model"], "input_tokens": u["input_tokens"],
+                         "output_tokens": u["output_tokens"], "cache_read_tokens": u["cache_read_tokens"],
+                         "cache_write_tokens": u["cache_write_tokens"], "cost_usd": u["cost_usd"],
+                         "units": u.get("units"), "created_at": u["at"]})
+        mirror.upsert("llm_usage", rows, "entry_key")
+        mark.write_text(str(done + i + len(rows)))
+    return len(new)
