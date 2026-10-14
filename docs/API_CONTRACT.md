@@ -111,6 +111,27 @@ Asset JSON shape:
   Non-destructive: writes to `/mediaforge/exports/touchup/<asset_id>_<preset>.jpg|png|webp`.
 - `GET /api/touchup/preview?asset_id=1&preset=auto_levels` → side-by-side or overlay preview image
 
+### PhotoCraft (pro photo edits; see docs/AGENTS_INTEGRATION.md)
+- `GET /api/photocraft/status` → `{"available":true,"path":"...","version":"photocraft-cli 0.8.2 ...","recipes":["auto","bw",...]}`
+- `GET /api/photocraft/recipes` → `[{"name":"punchy","description":"...","steps":[{"id":"image.autoContrast","params":{}},...]}]`
+- `GET /api/photocraft/commands?filter=curves` → allow-listed engine commands `[{"id","label","params"}]` (503 if not installed)
+- `POST /api/photocraft/apply` body `{"asset_id":1,"recipe":"film","steps":[{"id":"image.imageRotation.90cw","params":{}}],"format":"jpg|png|webp|tif|psd","quality":92}`
+  (recipe, steps, or both; steps run after the recipe)
+  → `{"job_id":"...","kind":"photocraft","output_path":".../exports/photocraft/<asset>_<recipe>_<digest>.jpg","output_url":"/exports/photocraft/...","steps":[...]}`
+  Non-destructive and cached by content. 422 for a refused command or path-like params, 404 for an unknown asset, 503 if photocraft-cli is missing.
+
+### Elevate Vision Studio / FilmCraft (editable NLE project; see studio/README.md)
+- `GET /api/filmcraft/status` → `{"available":true,"path":".../evstudio-cli","version":"..."}`
+- `POST /api/export/filmcraft` body `{"plan_id":"...","ratio":"9:16|16:9|1:1"?,"captions":true,"render":false}`
+  → `{"job_id":"...","kind":"filmcraft","plan_id":"...","ratio":"9:16","project_path":".../exports/filmcraft/<plan>/<plan>.fcproj","output_path":null|".../<plan>_9x16.mp4"}`
+  `ratio` defaults to the plan's. `render:true` needs an approved plan (409 otherwise) and exports H.264 MP4.
+  When the job finishes, `/exports/filmcraft/<plan>/build.json` has `{clips, captions, seconds, warnings, project_path, output_path}`.
+  404 for an unknown plan, 422 for a bad ratio, 503 if no FilmCraft CLI is installed.
+
+### GPU
+- `POST /api/gpu/release` → `{"released":["clip","whisper","faces"],"ollama_unloaded":true,"gpu":"cuda","vram_total_mb":10240,"vram_free_mb_before":3100,"vram_free_mb_after":9400,"running_jobs":[]}`
+  Unloads MediaForge's torch models and evicts the Ollama caption model so another app can use the GPU. Models reload lazily on next use. VRAM fields are null without CUDA.
+
 ### Jobs
 - `GET /api/jobs?limit=20` → recent jobs
 - `GET /api/jobs/{job_id}` → `{"id":"...","kind":"...","status":"...","progress":0.0,"message":"...","created_at":"...","finished_at":"..."}`

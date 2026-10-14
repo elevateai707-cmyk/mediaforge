@@ -1,0 +1,12 @@
+# SCOUT: what to look for in this niche. Keywords are search terms (not ad claims).
+# Competitors: add the ones you know; meta_page_id is the numeric Page ID from their
+# Ad Library page (used by the Meta API collector).
+keywords: []               # TODO: 3-6 search terms for this niche
+competitors: []
+meta_ad_library:          # official API: only returns commercial ads that reached the EU
+  enabled: false           # (docs/data_sources.md). Useful for pattern research in IE/EU.
+  countries: [IE]
+  languages: [en]
+  search_terms: []         # blank = use keywords above
+  active_status: ACTIVE
+  max_pages: 3

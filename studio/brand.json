@@ -1,0 +1,18 @@
+{
+  "product": "Elevate Vision Studio",
+  "company": "Elevate Vision Digital",
+  "app_id": "digital.elevatevision.studio",
+  "binary": "evstudio",
+  "cli": "evstudio-cli",
+  "website": "https://github.com/elevateai707-cmyk/mediaforge",
+  "community": "https://github.com/elevateai707-cmyk/mediaforge",
+  "repo": "https://github.com/elevateai707-cmyk/mediaforge",
+  "issues": "https://github.com/elevateai707-cmyk/mediaforge/issues",
+  "upstream": {
+    "name": "FilmCraft",
+    "authors": "the ArtCraft team",
+    "repo": "https://github.com/storytold/filmcraft",
+    "commit": "cee1feb185e675a108f78067f71ad86a640ace3d",
+    "version": "0.7.2"
+  }
+}

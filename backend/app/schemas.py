@@ -255,6 +255,81 @@ class TouchupOut(BaseModel):
     output_path: Optional[str] = None
 
 
+# --- GPU ---------------------------------------------------------------------
+class GpuReleaseOut(BaseModel):
+    released: list[str] = []
+    ollama_unloaded: bool = False
+    gpu: str = "cpu"
+    vram_total_mb: int = 0
+    vram_free_mb_before: Optional[int] = None
+    vram_free_mb_after: Optional[int] = None
+    running_jobs: list[str] = []
+
+
+# --- PhotoCraft --------------------------------------------------------------
+class PhotoCraftStep(BaseModel):
+    id: str
+    params: dict[str, Any] = {}
+
+
+class PhotoCraftRecipeOut(BaseModel):
+    name: str
+    description: str
+    steps: list[PhotoCraftStep]
+
+
+class PhotoCraftStatusOut(BaseModel):
+    available: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+    recipes: list[str] = []
+
+
+class PhotoCraftCommandOut(BaseModel):
+    id: str
+    label: Optional[str] = None
+    params: Any = None
+
+
+class PhotoCraftApplyRequest(BaseModel):
+    asset_id: int
+    recipe: Optional[str] = None
+    steps: list[PhotoCraftStep] = []
+    format: str = "jpg"
+    quality: Optional[int] = Field(92, ge=1, le=100)
+
+
+class PhotoCraftApplyOut(BaseModel):
+    job_id: str
+    kind: str = "photocraft"
+    output_path: str
+    output_url: str
+    steps: list[PhotoCraftStep]
+
+
+# --- FilmCraft / Elevate Vision Studio ----------------------------------------
+class FilmCraftStatusOut(BaseModel):
+    available: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+
+
+class FilmCraftExportRequest(BaseModel):
+    plan_id: str
+    ratio: Optional[str] = None  # default: the plan's target ratio
+    captions: bool = True
+    render: bool = False  # also export H.264 MP4 (plan must be approved)
+
+
+class FilmCraftExportOut(BaseModel):
+    job_id: str
+    kind: str = "filmcraft"
+    plan_id: str
+    ratio: str
+    project_path: str
+    output_path: Optional[str] = None
+
+
 # --- Jobs --------------------------------------------------------------------
 class JobOut(BaseModel):
     id: str

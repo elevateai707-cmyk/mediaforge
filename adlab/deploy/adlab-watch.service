@@ -1,0 +1,15 @@
+# systemd user unit: process data/incoming/ continuously.
+#   cp deploy/adlab-watch.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now adlab-watch
+# Adjust the path if AdLab isn't at ~/mediaforge/adlab.
+[Unit]
+Description=AdLab: watch data/incoming for dropped ads
+
+[Service]
+WorkingDirectory=%h/mediaforge/adlab
+ExecStart=%h/mediaforge/adlab/.venv/bin/adlab ingest --watch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

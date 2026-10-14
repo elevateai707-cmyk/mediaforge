@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e8a317"/><stop offset="1" stop-color="#4ebdb8"/></linearGradient>
+    <linearGradient id="play" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#96e2dd"/><stop offset="1" stop-color="#4ebdb8"/></linearGradient>
+  </defs>
+  <title>Elevate Vision Studio</title>
+  <rect x="41" y="41" width="942" height="942" rx="225" fill="url(#rim)"/>
+  <rect x="63.5" y="63.5" width="897" height="897" rx="202.5" fill="#14110e"/>
+  <polygon points="368,410 368,820 758,614" fill="url(#play)"/>
+  <polyline points="307,338 512,205 717,338" fill="none" stroke="#e8a317" stroke-width="56"
+            stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

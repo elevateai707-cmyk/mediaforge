@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, fsutil, models, persist, schemas, touchup
+from . import config, filmcraft, fsutil, models, persist, photocraft, schemas, touchup
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
@@ -314,6 +314,37 @@ def health():
     return schemas.HealthOut(
         status="ok", gpu=mode, gpu_name=name, vram_mb=vram,
         version=config.VERSION, models=models_status, warnings=warnings,
+    )
+
+
+@app.post("/api/gpu/release", response_model=schemas.GpuReleaseOut)
+def gpu_release():
+    """Free MediaForge's VRAM now so another app (AdLab, ComfyUI) can use the GPU.
+
+    Unloads the in-process torch models (CLIP, whisper, faces) and asks Ollama
+    to evict the caption model. Each reloads lazily on its next use, the same
+    path the pipeline takes between phases. `running_jobs` lists MediaForge jobs
+    still in flight: a running AI pass may reload a model straight away.
+    """
+    from .ai import faces, ollama_llm, whisper
+
+    cuda = gpu.cuda_available()
+    before = gpu.vram_free_mb() if cuda else None
+    released = []
+    for name, mod in (("clip", clip), ("whisper", whisper), ("faces", faces)):
+        try:
+            mod.unload()
+            released.append(name)
+        except Exception as exc:  # noqa: BLE001 - best effort per model
+            log.warning("gpu release: %s unload failed: %s", name, exc)
+    ollama_ok = ollama_llm.unload_model()
+    gpu.clear_gpu_cache()
+    running = [f"{j['kind']}:{j['id']}" for j in jobs.list_jobs(limit=200) if j["status"] == "running"]
+    return schemas.GpuReleaseOut(
+        released=released, ollama_unloaded=ollama_ok, gpu=gpu.device(),
+        vram_total_mb=gpu.vram_total_mb() if cuda else 0,
+        vram_free_mb_before=before, vram_free_mb_after=gpu.vram_free_mb() if cuda else None,
+        running_jobs=running,
     )
 
 
@@ -938,6 +969,36 @@ def export_resolve(req: schemas.ExportRequest):
         raise HTTPException(status_code=503, detail=str(exc))
 
 
+@app.get("/api/filmcraft/status", response_model=schemas.FilmCraftStatusOut)
+def filmcraft_status():
+    return filmcraft.status()
+
+
+@app.post("/api/export/filmcraft", response_model=schemas.FilmCraftExportOut)
+async def export_filmcraft(req: schemas.FilmCraftExportRequest):
+    """Editable FilmCraft / Elevate Vision Studio project (+ MP4 when render)."""
+    if filmcraft.find_cli() is None:
+        raise HTTPException(status_code=503, detail="FilmCraft not installed; run scripts/studio-setup.sh")
+    try:
+        plan = filmcraft.load_plan(req.plan_id, require_approved=req.render)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except filmcraft.FilmCraftError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    ratio = req.ratio or plan["ratio"]
+    if ratio not in filmcraft.RATIO_SIZES:
+        raise HTTPException(status_code=422, detail="ratio must be one of 9:16, 16:9, 1:1")
+
+    def factory(progress, _flag):
+        return _background(filmcraft.build, req.plan_id, ratio, req.captions, req.render, job=progress)()
+
+    job_id = jobs.run("filmcraft", factory)
+    paths = filmcraft.planned_paths(req.plan_id, ratio, req.render)
+    return schemas.FilmCraftExportOut(job_id=job_id, plan_id=req.plan_id, ratio=ratio, **paths)
+
+
 # ---------------------------------------------------------------------------
 # touchup
 # ---------------------------------------------------------------------------
@@ -974,6 +1035,59 @@ def touchup_preview(asset_id: int = Query(...), preset: str = Query(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return Response(content=data, media_type="image/jpeg")
+
+
+# ---------------------------------------------------------------------------
+# photocraft (pro photo edits via photocraft-cli; see app/photocraft.py)
+# ---------------------------------------------------------------------------
+@app.get("/api/photocraft/status", response_model=schemas.PhotoCraftStatusOut)
+def photocraft_status():
+    return photocraft.status()
+
+
+@app.get("/api/photocraft/recipes", response_model=list[schemas.PhotoCraftRecipeOut])
+def photocraft_recipes():
+    return [
+        {"name": name, "description": r["description"], "steps": r["steps"]}
+        for name, r in sorted(photocraft.RECIPES.items())
+    ]
+
+
+@app.get("/api/photocraft/commands", response_model=list[schemas.PhotoCraftCommandOut])
+def photocraft_commands(filter: str = Query("", max_length=64)):
+    try:
+        return photocraft.list_commands(filter)
+    except photocraft.PhotoCraftUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/api/photocraft/apply", response_model=schemas.PhotoCraftApplyOut)
+async def photocraft_apply(req: schemas.PhotoCraftApplyRequest):
+    if photocraft.find_cli() is None:
+        raise HTTPException(status_code=503, detail="photocraft-cli not installed; run scripts/agents-setup.sh")
+    try:
+        prepared = photocraft.prepare(
+            req.asset_id, req.recipe, [s.model_dump() for s in req.steps],
+            req.format, req.quality,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except photocraft.PhotoCraftError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    def factory(progress, _flag):
+        return _background(photocraft.apply, prepared, job=progress)()
+
+    job_id = jobs.run("photocraft", factory)
+    out = Path(prepared["output_path"])
+    try:
+        rel = out.relative_to(config.EXPORTS_DIR).as_posix()
+    except ValueError:  # MF_PHOTOCRAFT_DIR pointed outside exports/
+        rel = out.name
+    return schemas.PhotoCraftApplyOut(
+        job_id=job_id, output_path=str(out), output_url=f"/exports/{rel}",
+        steps=[{"id": i, "params": p} for i, p in prepared["steps"]],
+    )
 
 
 # ---------------------------------------------------------------------------

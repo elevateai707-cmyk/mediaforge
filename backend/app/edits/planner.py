@@ -467,7 +467,8 @@ def _normalize_clips(clips: Any, db, allowed_ids: Optional[set[int]] = None) -> 
             score = round(float(c.get("score", 0.0)), 2)
         except (TypeError, ValueError):
             score = 0.0
-        caption = str(c.get("caption", "")).strip() or None
+        # `or ""`: a null caption (UI/agent PUT) must not become the text "None".
+        caption = str(c.get("caption") or "").strip() or None
         out.append({
             "asset_id": asset_id, "scene_id": scene_id,
             "start": round(start, 3), "end": round(end, 3),

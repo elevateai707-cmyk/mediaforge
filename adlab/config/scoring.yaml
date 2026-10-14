@@ -1,0 +1,18 @@
+# Winning score: proxies for "this ad works", since competitors' conversions aren't public.
+# Max 100. Edit freely; `adlab scout` recomputes every ad on each run.
+longevity_days:           # days running -> points (highest threshold reached)
+  30: 15
+  60: 25
+  90: 35
+still_running_bonus: 5
+variants:                 # same concept in several versions = being scaled
+  per_extra_variant: 5
+  max: 25
+platform_rank:            # e.g. TikTok Creative Center Top Ads position you noted
+  10: 20
+  50: 12
+  100: 6
+repeat_pattern:           # same angle across advertisers: needs teardowns (Phase 3)
+  per_other_advertiser: 5
+  max: 15
+winner_threshold: 50      # score at or above this = "winner" on the dashboard

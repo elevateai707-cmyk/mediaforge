@@ -1,0 +1,15 @@
+# systemd user unit: the dashboard's local API on 127.0.0.1:8430.
+#   cp deploy/adlab-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now adlab-api
+# To reach it from your Windows desktop, set ADLAB_API_TOKEN in .env and change --host.
+[Unit]
+Description=AdLab: local API for the review dashboard
+
+[Service]
+WorkingDirectory=%h/mediaforge/adlab
+ExecStart=%h/mediaforge/adlab/.venv/bin/adlab serve --host 127.0.0.1 --port 8430
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
