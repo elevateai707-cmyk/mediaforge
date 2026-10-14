@@ -255,6 +255,17 @@ class TouchupOut(BaseModel):
     output_path: Optional[str] = None
 
 
+# --- GPU ---------------------------------------------------------------------
+class GpuReleaseOut(BaseModel):
+    released: list[str] = []
+    ollama_unloaded: bool = False
+    gpu: str = "cpu"
+    vram_total_mb: int = 0
+    vram_free_mb_before: Optional[int] = None
+    vram_free_mb_after: Optional[int] = None
+    running_jobs: list[str] = []
+
+
 # --- PhotoCraft --------------------------------------------------------------
 class PhotoCraftStep(BaseModel):
     id: str

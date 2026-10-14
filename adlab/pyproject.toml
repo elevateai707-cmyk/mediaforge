@@ -1,0 +1,29 @@
+[project]
+name = "adlab"
+version = "0.1.0"
+description = "Agentic ad research -> teardown -> remake, local-first, built on Media Forge."
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7",
+  "pyyaml>=6",
+  "typer>=0.12",
+  "httpx>=0.27",
+  "python-dotenv>=1",
+  "chromadb>=0.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pglast>=6"]
+
+[project.scripts]
+adlab = "adlab.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["adlab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

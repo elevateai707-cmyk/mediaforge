@@ -128,6 +128,10 @@ Asset JSON shape:
   When the job finishes, `/exports/filmcraft/<plan>/build.json` has `{clips, captions, seconds, warnings, project_path, output_path}`.
   404 for an unknown plan, 422 for a bad ratio, 503 if no FilmCraft CLI is installed.
 
+### GPU
+- `POST /api/gpu/release` → `{"released":["clip","whisper","faces"],"ollama_unloaded":true,"gpu":"cuda","vram_total_mb":10240,"vram_free_mb_before":3100,"vram_free_mb_after":9400,"running_jobs":[]}`
+  Unloads MediaForge's torch models and evicts the Ollama caption model so another app can use the GPU. Models reload lazily on next use. VRAM fields are null without CUDA.
+
 ### Jobs
 - `GET /api/jobs?limit=20` → recent jobs
 - `GET /api/jobs/{job_id}` → `{"id":"...","kind":"...","status":"...","progress":0.0,"message":"...","created_at":"...","finished_at":"..."}`

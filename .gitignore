@@ -9,3 +9,7 @@ models/
 __pycache__/
 *.pyc
 .env
+# AdLab: private ad media, vectors, logs, keys
+adlab/data/
+adlab/.env
+adlab/*.egg-info/

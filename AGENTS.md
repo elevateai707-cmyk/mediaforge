@@ -63,6 +63,7 @@ agents/             mediaforge_mcp.py (MCP server), configs for Codex/Hermes
 studio/             Elevate Vision Studio: brand.json, rebrand.py, assets/, README
 scripts/            setup.sh, run.sh, agents-setup.sh/.ps1, studio-setup.sh/.ps1
 docs/               API_CONTRACT.md, RESOLVE.md, AGENTS_INTEGRATION.md
+adlab/              AdLab: ad research -> teardown -> remake (own README, venv, tests)
 ignitemerch/        separate Next.js storefront (its own README); don't mix changes
 ```
 

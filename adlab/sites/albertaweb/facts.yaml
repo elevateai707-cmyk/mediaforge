@@ -1,0 +1,40 @@
+# FACTS: the ONLY claims an ad for this site may make (zero fabrication, enforced in code).
+# A fact counts only when it has an exact `statement` AND `verified: true`.
+# `source` = where the proof lives (licence #, price page, invoice). `expires` = date for
+# prices/promos/rebates (expired facts stop being usable). Add keys freely: snake_case.
+# Need a fact that isn't here? AdLab flags it in the brief's `missing_facts` instead of
+# inventing it. No testimonials, review counts, star ratings, stats or "as seen on"
+# unless you can prove them and add them here.
+facts:
+  serves_alberta_small_business:
+    statement: "Websites for Alberta small businesses"
+    verified: false
+    source: ""
+  fixed_price_tiers:
+    statement: ""            # e.g. "Fixed-price packages: no hourly billing"
+    verified: false
+  tier_1_name_price:
+    statement: ""            # e.g. "Starter site: $X CAD"
+    verified: false
+    expires: null
+  tier_2_name_price:
+    statement: ""
+    verified: false
+    expires: null
+  tier_3_name_price:
+    statement: ""
+    verified: false
+    expires: null
+  care_plan_price:
+    statement: ""            # e.g. "Care plan from $X/month"
+    verified: false
+    expires: null
+  care_plan_includes:
+    statement: ""            # what's actually included
+    verified: false
+  typical_turnaround:
+    statement: ""            # only if you can deliver it every time
+    verified: false
+  based_in:
+    statement: ""            # city
+    verified: false

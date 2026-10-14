@@ -317,6 +317,37 @@ def health():
     )
 
 
+@app.post("/api/gpu/release", response_model=schemas.GpuReleaseOut)
+def gpu_release():
+    """Free MediaForge's VRAM now so another app (AdLab, ComfyUI) can use the GPU.
+
+    Unloads the in-process torch models (CLIP, whisper, faces) and asks Ollama
+    to evict the caption model. Each reloads lazily on its next use, the same
+    path the pipeline takes between phases. `running_jobs` lists MediaForge jobs
+    still in flight: a running AI pass may reload a model straight away.
+    """
+    from .ai import faces, ollama_llm, whisper
+
+    cuda = gpu.cuda_available()
+    before = gpu.vram_free_mb() if cuda else None
+    released = []
+    for name, mod in (("clip", clip), ("whisper", whisper), ("faces", faces)):
+        try:
+            mod.unload()
+            released.append(name)
+        except Exception as exc:  # noqa: BLE001 - best effort per model
+            log.warning("gpu release: %s unload failed: %s", name, exc)
+    ollama_ok = ollama_llm.unload_model()
+    gpu.clear_gpu_cache()
+    running = [f"{j['kind']}:{j['id']}" for j in jobs.list_jobs(limit=200) if j["status"] == "running"]
+    return schemas.GpuReleaseOut(
+        released=released, ollama_unloaded=ollama_ok, gpu=gpu.device(),
+        vram_total_mb=gpu.vram_total_mb() if cuda else 0,
+        vram_free_mb_before=before, vram_free_mb_after=gpu.vram_free_mb() if cuda else None,
+        running_jobs=running,
+    )
+
+
 @app.get("/api/config", response_model=schemas.ConfigOut)
 def get_config():
     try:

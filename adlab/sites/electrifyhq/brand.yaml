@@ -1,0 +1,24 @@
+# BRAND: used by the Producer for colours, type, logo and end card, and by Compliance
+# for banned words. Colours are #RRGGBB.
+colors:
+  primary: ""
+  secondary: ""
+  background: ""
+  text: ""
+fonts: []                    # e.g. ["Inter Bold", "Inter Regular"]
+logo_path: ""                # relative to this folder, e.g. assets/logo.svg
+tone: []                     # e.g. ["plain-spoken", "local", "no hype"]
+end_card_text: ""            # e.g. "Book a free quote at <domain>"
+# Words that imply claims you can't prove. Compliance flags them in every script/caption.
+banned_words:
+  - guarantee
+  - guaranteed
+  - "#1"
+  - number one
+  - best in
+  - cheapest
+  - lowest price
+  - risk-free
+  - as seen on
+  - 5-star
+  - award-winning
