@@ -127,6 +127,11 @@ or explicit engine steps.
 scripts\agents-setup.ps1 -MediaForgeUrl http://<ubuntu-ip>:8420   # Windows desktop
 ```
 
+**Elevate Vision Studio**, our rebranded build of the FilmCraft video editor
+(pure Rust, Premiere-style), turns any plan into an editable project
+(`./scripts/studio-setup.sh`, then `studio_build` or `POST /api/export/filmcraft`).
+See [studio/README.md](studio/README.md).
+
 Rendering still needs your approval by default, and originals are never modified.
 Setup, tool list, safety model, and the PhotoCraft security review are in
 [docs/AGENTS_INTEGRATION.md](docs/AGENTS_INTEGRATION.md). Contributor rules for

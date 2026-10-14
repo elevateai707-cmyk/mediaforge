@@ -296,6 +296,29 @@ class PhotoCraftApplyOut(BaseModel):
     steps: list[PhotoCraftStep]
 
 
+# --- FilmCraft / Elevate Vision Studio ----------------------------------------
+class FilmCraftStatusOut(BaseModel):
+    available: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+
+
+class FilmCraftExportRequest(BaseModel):
+    plan_id: str
+    ratio: Optional[str] = None  # default: the plan's target ratio
+    captions: bool = True
+    render: bool = False  # also export H.264 MP4 (plan must be approved)
+
+
+class FilmCraftExportOut(BaseModel):
+    job_id: str
+    kind: str = "filmcraft"
+    plan_id: str
+    ratio: str
+    project_path: str
+    output_path: Optional[str] = None
+
+
 # --- Jobs --------------------------------------------------------------------
 class JobOut(BaseModel):
     id: str

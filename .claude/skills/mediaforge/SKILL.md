@@ -40,6 +40,11 @@ Judge the plan before asking for approval:
 
 Platforms: TikTok/Reels/Shorts use `9:16`. YouTube and TV use `16:9`. Feed posts use `1:1`.
 
+Finishing: if the user wants to tweak the cut themselves, or asks for Premiere-style
+editing, call `studio_build(plan_id)`. It returns an `.fcproj` they open in Elevate Vision
+Studio, with clips trimmed, frame-filled, dissolved and captioned. Check its `warnings`
+(e.g. a proxy was used). `render=true` also exports MP4 and needs approval, like `mf_render`.
+
 Approval: call `mf_approve_plan`. If it returns `review_url`, **stop**. Give the user a
 5-line summary (length, clip count, opening shot, ending, anything you couldn't find)
 plus the link, and wait. Render only after they approve. For editors, offer

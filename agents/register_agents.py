@@ -36,8 +36,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MCP_SCRIPT = ROOT / "agents" / "mediaforge_mcp.py"
 SKILL = ROOT / ".claude" / "skills" / "mediaforge" / "SKILL.md"
-BEGIN = "# >>> mediaforge (managed by agents/register_agents.py; edits here are overwritten) >>>"
-END = "# <<< mediaforge <<<"
+# Managed-block name: "mediaforge" normally, "evstudio" for --studio-only, so
+# registering the opt-in Studio server never drops the others (and vice versa).
+BLOCK = "mediaforge"
+
+
+def begin() -> str:
+    return f"# >>> {BLOCK} (managed by agents/register_agents.py; edits here are overwritten) >>>"
+
+
+def end() -> str:
+    return f"# <<< {BLOCK} <<<"
 IS_WINDOWS = os.name == "nt"
 
 
@@ -61,6 +70,12 @@ def servers(a: argparse.Namespace) -> dict[str, dict]:
             Path(a.pc_write_root).mkdir(parents=True, exist_ok=True)
             args += ["--automation-write-root", a.pc_write_root]
         out["photocraft"] = {"command": a.photocraft_cli, "args": args, "env": {}}
+    if a.studio_cli:
+        # Opt-in only: FilmCraft's MCP server has no folder sandbox. Agents get
+        # sandboxed Studio builds through mediaforge's studio_build tool anyway.
+        out["evstudio"] = {"command": a.studio_cli, "args": ["mcp"], "env": {}}
+    if a.studio_only:
+        out = {k: v for k, v in out.items() if k == "evstudio"}
     return out
 
 
@@ -75,7 +90,7 @@ def install_skill(dest_root: Path, dry: bool) -> None:
 
 
 def strip_managed(text: str) -> str:
-    return re.sub(rf"[ \t]*{re.escape(BEGIN)}.*?{re.escape(END)}[ \t]*\n?", "", text, flags=re.S)
+    return re.sub(rf"[ \t]*{re.escape(begin())}.*?{re.escape(end())}[ \t]*\n?", "", text, flags=re.S)
 
 
 def write(path: Path, text: str, dry: bool) -> None:
@@ -126,7 +141,7 @@ def codex(a: argparse.Namespace, defs: dict[str, dict]) -> None:
         return
     cfg = home / "config.toml"
     text = strip_managed(cfg.read_text(encoding="utf-8")) if cfg.exists() else ""
-    lines = [BEGIN]
+    lines = [begin()]
     for name, d in defs.items():
         if re.search(rf"^\[mcp_servers\.{name}\]", text, flags=re.M):
             say("!", f"Codex: [mcp_servers.{name}] already defined by you in {cfg}; left as is")
@@ -139,7 +154,7 @@ def codex(a: argparse.Namespace, defs: dict[str, dict]) -> None:
             lines.append("env = { " + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}"
                                                 for k, v in d["env"].items()) + " }")
         lines += ["startup_timeout_sec = 20", "tool_timeout_sec = 900", ""]
-    lines.append(END)
+    lines.append(end())
     write(cfg, text.rstrip() + "\n\n" + "\n".join(lines) + "\n", a.dry_run)
     if not a.dry_run:
         say("✓", f"Codex: {', '.join(defs)} → {cfg}")
@@ -157,7 +172,7 @@ def hermes(a: argparse.Namespace, defs: dict[str, dict]) -> None:
         return
     cfg = home / "config.yaml"
     text = strip_managed(cfg.read_text(encoding="utf-8")) if cfg.exists() else ""
-    block = ["  " + BEGIN]
+    block = ["  " + begin()]
     for name, d in defs.items():
         if re.search(rf"^  {name}:\s*$", text, flags=re.M):
             say("!", f"Hermes: mcp_servers.{name} already defined by you in {cfg}; left as is")
@@ -167,7 +182,7 @@ def hermes(a: argparse.Namespace, defs: dict[str, dict]) -> None:
                   f"    args: [{', '.join(json.dumps(x) for x in d['args'])}]",
                   "    env: {" + ", ".join(f"{json.dumps(k)}: {json.dumps(v)}" for k, v in d["env"].items()) + "}",
                   "    timeout: 900"]
-    block.append("  " + END)
+    block.append("  " + end())
     body = "\n".join(block)
     if re.search(r"^mcp_servers:[ \t]*\{[ \t]*\}[ \t]*$", text, flags=re.M):
         text = re.sub(r"^mcp_servers:[ \t]*\{[ \t]*\}[ \t]*$", "mcp_servers:", text, flags=re.M)
@@ -190,15 +205,20 @@ def main() -> int:
     p.add_argument("--photocraft-cli", help="path to photocraft-cli; registers the photocraft MCP server")
     p.add_argument("--pc-read-root", help="folder the photocraft MCP server may read")
     p.add_argument("--pc-write-root", help="folder the photocraft MCP server may write")
+    p.add_argument("--studio-cli", help="evstudio-cli path: ALSO register its raw MCP server (not sandboxed)")
+    p.add_argument("--studio-only", action="store_true", help="register only the evstudio server")
     p.add_argument("--agents", default="claude,codex,hermes")
     p.add_argument("--can-approve", action="store_true",
                    help="let agents approve edit plans themselves (default: human approves)")
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
-    for attr in ("pc_read_root", "pc_write_root", "photocraft_cli"):
+    for attr in ("pc_read_root", "pc_write_root", "photocraft_cli", "studio_cli"):
         v = getattr(a, attr)
         if v:
             setattr(a, attr, str(Path(v).expanduser().resolve()))
+    global BLOCK
+    if a.studio_only:
+        BLOCK = "evstudio"
     defs = servers(a)
     wanted = {x.strip() for x in a.agents.split(",") if x.strip()}
     for name, fn in (("claude", claude), ("codex", codex), ("hermes", hermes)):

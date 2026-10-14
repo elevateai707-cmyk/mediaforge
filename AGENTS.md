@@ -21,6 +21,8 @@ Golden workflow:
    filters), `mf_trips`, `mf_places`, `mf_faces`. Use `mf_look` to actually see a shot.
 3. Video: `mf_plan_edit` with a precise intent (place, people, mood, seconds, ratio), then
    refine with `mf_update_plan`, then `mf_approve_plan`, then `mf_render` or `mf_export`.
+   When the user wants to keep editing, `studio_build` turns the plan into an editable
+   Elevate Vision Studio project (`.fcproj`), and `render=true` also exports the MP4.
 4. Photos: `pc_apply` with a recipe (`auto`, `punchy`, `clean`, `film`, `warm`, `bw`) or
    explicit PhotoCraft steps (`pc_commands` lists them). Then compare `mf_look` (before)
    with `mf_view_export` (after), and redo anything that got worse.
@@ -39,6 +41,9 @@ MCP prompts `highlight_reel`, `photo_glowup` and `library_report` encode these f
   adjustments and filters. Don't try to pass file paths, LUT files or `file.*` commands.
   For layered, interactive work on local files, use the separate `photocraft` MCP server,
   which is confined to the folders it was started with.
+- **Studio's raw MCP server is not sandboxed.** Use `studio_build`. Only use the
+  `evstudio` MCP server if the owner registered it, and keep it to project files under
+  `exports/filmcraft/`.
 - **Everything runs locally.** Don't upload media or transcripts to third-party
   services unless the user explicitly asks you to.
 
@@ -50,11 +55,13 @@ backend/app/        FastAPI app (main.py = every route), config.py (env knobs)
   ingest/           scanner, metadata/exiftool, thumbs, dedupe, trips, watcher
   edits/            intent parser, planner, FFmpeg render, Resolve/FCPXML/EDL/CapCut export
   photocraft.py     photocraft-cli bridge: allow-list, recipes, apply job
+  filmcraft.py      plan -> FilmCraft / Elevate Vision Studio project (+ MP4)
 backend/tests/      pytest (conftest isolates data/exports into a temp MF_ROOT)
 frontend/           React + Vite UI (pages/, components/, lib/api.ts)
 agents/             mediaforge_mcp.py (MCP server), configs for Codex/Hermes
 .claude/skills/     mediaforge skill (also installed for Codex/Hermes by setup scripts)
-scripts/            setup.sh, run.sh, agents-setup.sh/.ps1
+studio/             Elevate Vision Studio: brand.json, rebrand.py, assets/, README
+scripts/            setup.sh, run.sh, agents-setup.sh/.ps1, studio-setup.sh/.ps1
 docs/               API_CONTRACT.md, RESOLVE.md, AGENTS_INTEGRATION.md
 ignitemerch/        separate Next.js storefront (its own README); don't mix changes
 ```

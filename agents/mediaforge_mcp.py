@@ -144,9 +144,13 @@ def mf_status() -> Any:
         pc = http("GET", "/api/photocraft/status")
     except ToolError as exc:
         pc = {"available": False, "error": str(exc)}
+    try:
+        studio = http("GET", "/api/filmcraft/status")
+    except ToolError as exc:
+        studio = {"available": False, "error": str(exc)}
     total = http("GET", "/api/assets", query={"limit": 1})["total"]
     return {"url": BASE_URL, "health": health, "config": cfg, "photocraft": pc,
-            "assets_indexed": total, "agent_can_approve": CAN_APPROVE}
+            "studio": studio, "assets_indexed": total, "agent_can_approve": CAN_APPROVE}
 
 
 @tool("mf_search", "Semantic + transcript + caption search over the indexed library "
@@ -304,6 +308,32 @@ def mf_render(plan_id: str, ratio: str = "9:16", captions: bool = True,
       ("plan_id", "target"), read_only=False, title="Export to NLE")
 def mf_export(plan_id: str, target: str) -> Any:
     return http("POST", f"/api/export/{target}", {"plan_id": plan_id})
+
+
+@tool("studio_build", "Turn an edit plan into an editable Elevate Vision Studio / FilmCraft project "
+      "(.fcproj: clips trimmed and placed, frame-filled to the ratio, cross dissolves, styled "
+      "captions) so the user can finish it in a real editor. render=true also exports H.264 MP4 "
+      "and needs an APPROVED plan. Prefer this over mf_export when the user wants to keep editing.",
+      {"plan_id": {"type": "string"},
+       "ratio": {"type": "string", "enum": list(RATIO_SIZES), "description": "default: the plan's ratio"},
+       "captions": {"type": "boolean", "default": True},
+       "render": {"type": "boolean", "default": False},
+       "wait_s": {"type": "integer", "minimum": 0, "maximum": 3600, "default": 900}},
+      ("plan_id",), read_only=False, title="Build Studio project")
+def studio_build(plan_id: str, ratio: str | None = None, captions: bool = True,
+                 render: bool = False, wait_s: int = 900) -> Any:
+    res = http("POST", "/api/export/filmcraft", {"plan_id": plan_id, "ratio": ratio,
+                                                 "captions": captions, "render": render})
+    if wait_s <= 0:
+        return res
+    job = _wait_job(res["job_id"], wait_s)
+    if job["status"] != "done":
+        raise ToolError(f"Studio build {job['status']}: {job.get('message')}")
+    summary = http("GET", f"/exports/filmcraft/{plan_id}/build.json")
+    summary["open_with"] = "Open project_path in Elevate Vision Studio (or FilmCraft) to keep editing."
+    if summary.get("output_path"):
+        summary["output_url"] = _ui(f"exports/filmcraft/{plan_id}/{summary['output_path'].replace(chr(92), '/').rsplit('/', 1)[-1]}")
+    return summary
 
 
 @tool("mf_touchup", "Quick built-in photo fix (auto_levels, white_balance, denoise, sharpen, all). "

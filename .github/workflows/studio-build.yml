@@ -1,0 +1,84 @@
+# Elevate Vision Studio: prebuilt binaries for the Windows desktop and Ubuntu.
+# Manual only (Actions ▸ Studio build ▸ Run workflow), so it never burns minutes
+# on ordinary pushes. Download the artifact, then:
+#   Windows: scripts\studio-setup.ps1 -ZipPath evstudio-windows-x64.zip
+#   Ubuntu:  tar -xzf evstudio-linux-x86_64.tar.gz -C ~/.local/opt/evstudio  (or scripts/studio-setup.sh)
+name: Studio build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: evstudio-linux-x86_64
+          - os: windows-latest
+            artifact: evstudio-windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pinned upstream commit
+        id: brand
+        shell: bash
+        run: |
+          python3 -c "import json; b=json.load(open('studio/brand.json')); print('repo='+b['upstream']['repo']); print('commit='+b['upstream']['commit']); print('cli='+b['cli']); print('exe='+b['binary'])" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch FilmCraft at the pinned commit
+        shell: bash
+        run: |
+          git init -q upstream
+          git -C upstream remote add origin "${{ steps.brand.outputs.repo }}"
+          GIT_LFS_SKIP_SMUDGE=1 git -C upstream fetch -q --depth 1 origin "${{ steps.brand.outputs.commit }}"
+          git -C upstream -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = "${{ steps.brand.outputs.commit }}"
+
+      - name: Rebrand
+        shell: bash
+        run: python3 studio/rebrand.py upstream
+
+      - name: Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libasound2-dev libgtk-3-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        working-directory: upstream
+        run: cargo build --release --locked -p filmcraft -p filmcraft-cli
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="${{ matrix.artifact }}"; mkdir -p "dist/$out"
+          ext=""; [ "${{ runner.os }}" = Windows ] && ext=".exe"
+          cp "upstream/target/release/${{ steps.brand.outputs.exe }}$ext" "upstream/target/release/${{ steps.brand.outputs.cli }}$ext" "dist/$out/"
+          cp upstream/NOTICE upstream/LICENSE-MIT upstream/LICENSE-APACHE upstream/ATTRIBUTION.md upstream/STUDIO_BRAND.json "dist/$out/"
+          "dist/$out/${{ steps.brand.outputs.cli }}$ext" --version
+          cd dist
+          if [ "${{ runner.os }}" = Windows ]; then
+            7z a -tzip "$out.zip" "$out" >/dev/null; sha256sum "$out.zip" > "$out.zip.sha256"
+          else
+            tar -czf "$out.tar.gz" "$out"; sha256sum "$out.tar.gz" > "$out.tar.gz.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.sha256
+          retention-days: 30

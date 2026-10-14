@@ -166,3 +166,22 @@ def test_stdio_smoke():
     assert replies[2]["result"]["tools"]
     status = replies[3]["result"]
     assert status["isError"] and "cannot reach MediaForge" in status["content"][0]["text"]
+
+
+def test_studio_build(mcp, client, wait_job, media_dir, tmp_path, monkeypatch):
+    from tests.test_filmcraft import _library, _make_fake, _plan
+
+    _make_fake(tmp_path, monkeypatch)
+    ids = _library(client, wait_job, media_dir, heic=False)
+    pid = _plan(client, ids, approve=False)
+
+    res, out = call(mcp, "studio_build", plan_id=pid, ratio="16:9")
+    assert not res.get("isError"), res
+    assert out["project_path"].endswith(f"{pid}.fcproj") and out["ratio"] == "16:9"
+    assert out["output_path"] is None and "open_with" in out
+
+    res, _ = call(mcp, "studio_build", plan_id=pid, render=True)
+    assert res["isError"] and "409" in res["content"][0]["text"]
+
+    res, status = call(mcp, "mf_status")
+    assert status["studio"]["available"] is True

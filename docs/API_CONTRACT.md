@@ -120,6 +120,14 @@ Asset JSON shape:
   → `{"job_id":"...","kind":"photocraft","output_path":".../exports/photocraft/<asset>_<recipe>_<digest>.jpg","output_url":"/exports/photocraft/...","steps":[...]}`
   Non-destructive and cached by content. 422 for a refused command or path-like params, 404 for an unknown asset, 503 if photocraft-cli is missing.
 
+### Elevate Vision Studio / FilmCraft (editable NLE project; see studio/README.md)
+- `GET /api/filmcraft/status` → `{"available":true,"path":".../evstudio-cli","version":"..."}`
+- `POST /api/export/filmcraft` body `{"plan_id":"...","ratio":"9:16|16:9|1:1"?,"captions":true,"render":false}`
+  → `{"job_id":"...","kind":"filmcraft","plan_id":"...","ratio":"9:16","project_path":".../exports/filmcraft/<plan>/<plan>.fcproj","output_path":null|".../<plan>_9x16.mp4"}`
+  `ratio` defaults to the plan's. `render:true` needs an approved plan (409 otherwise) and exports H.264 MP4.
+  When the job finishes, `/exports/filmcraft/<plan>/build.json` has `{clips, captions, seconds, warnings, project_path, output_path}`.
+  404 for an unknown plan, 422 for a bad ratio, 503 if no FilmCraft CLI is installed.
+
 ### Jobs
 - `GET /api/jobs?limit=20` → recent jobs
 - `GET /api/jobs/{job_id}` → `{"id":"...","kind":"...","status":"...","progress":0.0,"message":"...","created_at":"...","finished_at":"..."}`

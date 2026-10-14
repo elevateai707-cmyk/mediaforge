@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, fsutil, models, persist, photocraft, schemas, touchup
+from . import config, filmcraft, fsutil, models, persist, photocraft, schemas, touchup
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
@@ -936,6 +936,36 @@ def export_resolve(req: schemas.ExportRequest):
         return resolve_export.export_to_resolve(req.plan_id)
     except resolve_export.ResolveUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.get("/api/filmcraft/status", response_model=schemas.FilmCraftStatusOut)
+def filmcraft_status():
+    return filmcraft.status()
+
+
+@app.post("/api/export/filmcraft", response_model=schemas.FilmCraftExportOut)
+async def export_filmcraft(req: schemas.FilmCraftExportRequest):
+    """Editable FilmCraft / Elevate Vision Studio project (+ MP4 when render)."""
+    if filmcraft.find_cli() is None:
+        raise HTTPException(status_code=503, detail="FilmCraft not installed; run scripts/studio-setup.sh")
+    try:
+        plan = filmcraft.load_plan(req.plan_id, require_approved=req.render)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except filmcraft.FilmCraftError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    ratio = req.ratio or plan["ratio"]
+    if ratio not in filmcraft.RATIO_SIZES:
+        raise HTTPException(status_code=422, detail="ratio must be one of 9:16, 16:9, 1:1")
+
+    def factory(progress, _flag):
+        return _background(filmcraft.build, req.plan_id, ratio, req.captions, req.render, job=progress)()
+
+    job_id = jobs.run("filmcraft", factory)
+    paths = filmcraft.planned_paths(req.plan_id, ratio, req.render)
+    return schemas.FilmCraftExportOut(job_id=job_id, plan_id=req.plan_id, ratio=ratio, **paths)
 
 
 # ---------------------------------------------------------------------------

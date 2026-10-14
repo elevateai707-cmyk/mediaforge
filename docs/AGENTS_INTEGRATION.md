@@ -73,6 +73,7 @@ Windows desktop, run `agents-setup.sh` inside WSL2.
 | `mf_plan_edit`, `mf_trip_reel`, `mf_get_plan`, `mf_list_plans`, `mf_update_plan` | draft and refine reels |
 | `mf_approve_plan` | the human gate (see below) |
 | `mf_render`, `mf_export` | MP4 render; Resolve / FCPXML / EDL / CapCut |
+| `studio_build` | editable Elevate Vision Studio / FilmCraft project (+ MP4 when approved); see `studio/README.md` |
 | `mf_touchup` | built-in quick fixes |
 | `pc_recipes`, `pc_commands`, `pc_apply` | PhotoCraft looks and explicit engine steps |
 | `mf_scan`, `mf_jobs`, `mf_wait_job` | indexing and background jobs |
