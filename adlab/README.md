@@ -70,4 +70,72 @@ adlab mf smoke              # 9:16 test image, VRAM logged before/after
 5. **Keys (when we get there):** Anthropic (Phase 3), Supabase (Phase 2),
    ElevenLabs (Phase 5), Resend (Phase 7).
 
-Phase 2 (Scout: local ingestion first) starts when you say go.
+## Phase 2: Scout ✅
+
+**TL;DR**
+- Drop ads you saved into `data/incoming/<site>/` (or paste a link with `adlab ingest`).
+  AdLab stores, dedupes, groups variants and scores them. **Nothing is downloaded.**
+- `adlab scout` → new winners + the top 5. `adlab ads` → everything, with each score explained.
+- Official APIs give **no Canadian commercial ads** (`docs/data_sources.md`), so manual drops are the main source.
+
+### Feed it
+```bash
+# 1. Drop files (video or screenshot) into the site's folder, with an optional sidecar:
+data/incoming/ev1charger/rival-reel.mp4
+data/incoming/ev1charger/rival-reel.mp4.yaml      # all fields optional:
+#   advertiser: Rival Electric
+#   platform: meta            # meta | tiktok | other
+#   url: https://www.facebook.com/ads/library/?id=...
+#   running_since: 2026-06-20
+#   still_running: yes
+#   last_seen: 2026-09-30     # for stopped ads, if you know when
+#   variants: 3               # versions you saw
+#   platform_rank: 8          # e.g. Creative Center Top Ads position
+#   ad_text: "..."            # the copy, if you have it
+#   notes: seen in Calgary feed
+
+# 2. Or paste a link (+ the file you saved). The link is a reference only, never fetched:
+adlab ingest "https://www.facebook.com/ads/library/?id=123" ~/Videos/ad.mp4 \
+    --site ev1charger --advertiser "Rival Electric" --running-since 2026-06-20 --running
+
+# 3. CSV/JSON you exported from a platform's own tool: drop it in the site's folder too.
+#    Columns like advertiser, ad_text, url, first_seen, last_seen, still_running, variants, rank
+#    (Meta API JSON {"data": [...]} works as-is).
+
+adlab ingest --scan      # process the folder once  (or --watch to keep going)
+adlab scout              # drops + enabled APIs → variants → scores → new winners
+adlab ads --site ev1charger
+```
+Processed drops move to `incoming/_done/<date>/`. Problems go to `incoming/_failed/<date>/`
+with a `.error.txt` saying why (for example, "which site?").
+
+### How it decides
+| | |
+|---|---|
+| **Dedupe** | Same file bytes (SHA-256) = same ad, even renamed. A known link attaches new files to its ad. Re-seeing an ad extends its dates instead of duplicating it. |
+| **Variants** | Same advertiser + near-identical visual (dHash of image / video frame, ≤ 10 bits apart) or copy (≥ 80% similar) = same concept. Re-encodes and resizes are caught. |
+| **Score** (`config/scoring.yaml`) | Longevity 30/60/90 days → 15/25/35, still running +5, +5 per extra variant (max 25), platform rank top 10/50/100 → 20/12/6, repeat pattern (Phase 3, max 15). Winner ≥ 50. A stopped ad only counts the days it was *known* to run. |
+| **Privacy** | Media copies live in `data/media/` with owner-only permissions, for analysis only. Tokens and click-trackers are stripped from every stored link. |
+| **Storage** | Local SQLite (`data/adlab.db`) is the source of truth. `adlab sync` mirrors it to Supabase when keys are set (scout runs sync automatically). |
+
+### Official API (optional): Meta Ad Library
+Only returns commercial ads that **reached the EU**, so it's good for pattern research on
+Irish/EU installers and agencies, not Alberta competitors. To use it: set `META_AD_LIBRARY_TOKEN`
+in `.env`, then `enabled: true` in `sites/<site>/scout.yaml`. It runs on each `adlab scout`
+and weekly via `adlab schedule`. It never downloads media and stops on rate limits.
+
+### Run it in the background (systemd user services)
+```bash
+cp deploy/adlab-watch.service deploy/adlab-schedule.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now adlab-watch adlab-schedule
+```
+
+### What I need from you (Phase 2)
+1. **Real drops:** 5–10 ads per primary site you think are working (screen recordings or
+   screenshots + a sidecar with `running_since` if you can see it). That's the fuel for Phase 3.
+2. **Competitors:** names (and Meta Page IDs if you have them) in each `scout.yaml`.
+3. **Optional:** a Meta Ad Library API token, if you want EU pattern research.
+4. **Optional:** Supabase URL + service-role key to start mirroring.
+
+Phase 3 (Analyst: teardowns with Claude vision + Whisper) starts when you say go.

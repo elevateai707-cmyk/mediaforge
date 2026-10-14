@@ -66,6 +66,14 @@ class WinningScore(Strict):
     breakdown: dict[str, float] = {}                         # component -> points
 
 
+class Signals(Strict):
+    """What was observed about an ad (by you or an official API), before scoring."""
+    still_running: Optional[bool] = None
+    reported_variants: Optional[int] = Field(default=None, ge=1)  # "I saw 4 versions"
+    platform_rank: Optional[int] = Field(default=None, ge=1)      # e.g. Creative Center Top Ads #
+    times_seen: int = Field(default=1, ge=1)                      # ingests that matched this ad
+
+
 class Ad(Strict):
     id: str = Field(min_length=8)                 # sha256 of media, else of the source URL
     site: str                                     # the site whose niche this ad was scouted for
@@ -75,6 +83,7 @@ class Ad(Strict):
     media_sha256: list[Sha256] = []
     first_seen: date
     last_seen: date
+    signals: Signals = Signals()
     variant_group: Optional[str] = None
     score: Optional[WinningScore] = None
 

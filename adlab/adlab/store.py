@@ -1,0 +1,194 @@
+"""Where scouted ads live.
+
+* `LocalStore` (SQLite, data/adlab.db) is the working store and the source of truth.
+  It works offline, and holds the media index: file hashes, local paths and visual
+  fingerprints, which only make sense on this machine.
+* `SupabaseMirror` pushes validated rows to the Supabase `ads` table (migration in
+  supabase/migrations/) for the Phase 7 dashboard, when SUPABASE_URL and
+  SUPABASE_SERVICE_ROLE_KEY are set. A failed push is logged and retried by
+  `adlab sync`; it never blocks scouting.
+
+Rows are written only from validated `Ad` models; the full model is kept as JSON.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+from typing import Iterable, Optional
+
+import httpx
+
+from .config import settings
+from .schemas import Ad
+
+log = logging.getLogger("adlab.store")
+
+SCHEMA = """
+create table if not exists ads (
+  id            text primary key,
+  site          text not null,
+  advertiser    text not null,
+  platform      text not null,
+  source_url    text,
+  first_seen    text not null,
+  last_seen     text not null,
+  variant_group text,
+  score_total   real,
+  payload       text not null,
+  synced        integer not null default 0,
+  updated_at    text not null default (datetime('now'))
+);
+create index if not exists ads_site_score on ads (site, score_total desc);
+create index if not exists ads_url on ads (source_url);
+create table if not exists media (
+  sha256   text primary key,
+  ad_id    text not null references ads (id) on delete cascade,
+  path     text not null,
+  kind     text not null check (kind in ('video', 'image')),
+  dhash    text                                   -- 64-bit visual fingerprint, hex
+);
+create index if not exists media_ad on media (ad_id);
+"""
+
+
+class LocalStore:
+    def __init__(self, path: Optional[Path] = None):
+        self.path = path or settings().data_dir / "adlab.db"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(self._db()) as db:
+            db.executescript(SCHEMA)
+
+    def _db(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.path)
+        db.row_factory = sqlite3.Row
+        db.execute("pragma foreign_keys = on")
+        return db
+
+    # --- ads ---------------------------------------------------------------------
+    def upsert(self, ad: Ad) -> None:
+        ad = Ad.model_validate(ad.model_dump())  # never store an unvalidated object
+        with closing(self._db()) as db, db:
+            db.execute(
+                """insert into ads (id, site, advertiser, platform, source_url, first_seen, last_seen,
+                                    variant_group, score_total, payload, synced, updated_at)
+                   values (?,?,?,?,?,?,?,?,?,?,0,datetime('now'))
+                   on conflict(id) do update set site=excluded.site, advertiser=excluded.advertiser,
+                     platform=excluded.platform, source_url=excluded.source_url,
+                     first_seen=excluded.first_seen, last_seen=excluded.last_seen,
+                     variant_group=excluded.variant_group, score_total=excluded.score_total,
+                     payload=excluded.payload, synced=0, updated_at=datetime('now')""",
+                (ad.id, ad.site, ad.source.advertiser, ad.source.platform,
+                 str(ad.source.url) if ad.source.url else None, ad.first_seen.isoformat(),
+                 ad.last_seen.isoformat(), ad.variant_group,
+                 ad.score.total if ad.score else None, ad.model_dump_json()),
+            )
+
+    def get(self, ad_id: str) -> Optional[Ad]:
+        with closing(self._db()) as db:
+            row = db.execute("select payload from ads where id = ?", (ad_id,)).fetchone()
+        return Ad.model_validate_json(row["payload"]) if row else None
+
+    def by_url(self, url: str) -> Optional[Ad]:
+        with closing(self._db()) as db:
+            row = db.execute("select payload from ads where source_url = ?", (url,)).fetchone()
+        return Ad.model_validate_json(row["payload"]) if row else None
+
+    def ads(self, site: Optional[str] = None) -> list[Ad]:
+        q, args = "select payload from ads", ()
+        if site:
+            q, args = q + " where site = ?", (site,)
+        with closing(self._db()) as db:
+            rows = db.execute(q + " order by coalesce(score_total, -1) desc, id", args).fetchall()
+        return [Ad.model_validate_json(r["payload"]) for r in rows]
+
+    # --- media index -------------------------------------------------------------
+    def add_media(self, sha256: str, ad_id: str, path: str, kind: str, dhash: Optional[str]) -> None:
+        with closing(self._db()) as db, db:
+            db.execute("insert or ignore into media (sha256, ad_id, path, kind, dhash) values (?,?,?,?,?)",
+                       (sha256, ad_id, path, kind, dhash))
+
+    def ad_for_media(self, sha256: str) -> Optional[str]:
+        with closing(self._db()) as db:
+            row = db.execute("select ad_id from media where sha256 = ?", (sha256,)).fetchone()
+        return row["ad_id"] if row else None
+
+    def media_for(self, ad_ids: Iterable[str]) -> dict[str, list[dict]]:
+        ids = list(ad_ids)
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        with closing(self._db()) as db:
+            rows = db.execute(f"select * from media where ad_id in ({marks})", ids).fetchall()
+        out: dict[str, list[dict]] = {}
+        for r in rows:
+            out.setdefault(r["ad_id"], []).append(dict(r))
+        return out
+
+    # --- sync bookkeeping ----------------------------------------------------------
+    def unsynced(self) -> list[Ad]:
+        with closing(self._db()) as db:
+            rows = db.execute("select payload from ads where synced = 0").fetchall()
+        return [Ad.model_validate_json(r["payload"]) for r in rows]
+
+    def mark_synced(self, ad_ids: Iterable[str]) -> None:
+        with closing(self._db()) as db, db:
+            db.executemany("update ads set synced = 1 where id = ?", [(i,) for i in ad_ids])
+
+
+class SupabaseMirror:
+    """Upserts ads into Supabase over PostgREST with the service-role key."""
+
+    def __init__(self, url: Optional[str] = None, key: Optional[str] = None,
+                 http: Optional[httpx.Client] = None):
+        self.url = (url or os.environ.get("SUPABASE_URL", "")).rstrip("/")
+        self.key = key or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        self._http = http or httpx.Client(timeout=30)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url and self.key)
+
+    @staticmethod
+    def row(ad: Ad) -> dict:
+        return {
+            "id": ad.id, "site": ad.site, "platform": ad.source.platform,
+            "captured_via": ad.source.captured_via, "advertiser": ad.source.advertiser,
+            "source_url": str(ad.source.url) if ad.source.url else None,
+            "first_seen": ad.first_seen.isoformat(), "last_seen": ad.last_seen.isoformat(),
+            "variant_group": ad.variant_group,
+            "score_total": ad.score.total if ad.score else None,
+            "payload": json.loads(ad.model_dump_json()),
+        }
+
+    def push(self, ads: list[Ad]) -> int:
+        if not ads:
+            return 0
+        if not self.configured:
+            raise RuntimeError("Supabase not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)")
+        r = self._http.post(
+            f"{self.url}/rest/v1/ads", params={"on_conflict": "id"},
+            headers={"apikey": self.key, "Authorization": f"Bearer {self.key}",
+                     "Content-Type": "application/json",
+                     "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json=[self.row(a) for a in ads],
+        )
+        if r.status_code >= 300:
+            raise RuntimeError(f"Supabase upsert failed: {r.status_code} {r.text[:300]}")
+        return len(ads)
+
+
+def sync(store: LocalStore, mirror: Optional[SupabaseMirror] = None) -> dict:
+    """Push every changed ad to Supabase (no-op when not configured)."""
+    mirror = mirror or SupabaseMirror()
+    if not mirror.configured:
+        return {"configured": False, "pushed": 0}
+    pending = store.unsynced()
+    for i in range(0, len(pending), 200):
+        batch = pending[i:i + 200]
+        mirror.push(batch)
+        store.mark_synced(a.id for a in batch)
+    return {"configured": True, "pushed": len(pending)}

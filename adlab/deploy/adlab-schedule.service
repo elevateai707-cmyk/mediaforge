@@ -1,0 +1,15 @@
+# systemd user unit: weekly scout of official API sources (Mondays 06:47 Alberta time).
+#   cp deploy/adlab-schedule.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now adlab-schedule
+#   loginctl enable-linger $USER    # keep user services running when logged out
+[Unit]
+Description=AdLab: weekly API scout (APScheduler)
+
+[Service]
+WorkingDirectory=%h/mediaforge/adlab
+ExecStart=%h/mediaforge/adlab/.venv/bin/adlab schedule
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

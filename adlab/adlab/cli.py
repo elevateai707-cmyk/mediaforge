@@ -8,12 +8,19 @@
     adlab mf smoke                  Phase 1 smoke test (9:16 image, VRAM before/after)
     adlab usage                     token + cost ledger
 
-    adlab ingest | scout | analyze | brief | produce | review | report   (Phases 2-7)
+    adlab ingest <url> [file] --site S  record a pasted Ad Library link (+ the file you saved)
+    adlab ingest --scan | --watch       process data/incoming/<site>/ once / continuously
+    adlab scout [--site S]              drops + API sources -> variants -> scores -> winners
+    adlab ads [--site S]                scouted ads, best first, with the score explained
+    adlab sync | schedule               Supabase mirror / weekly API refresh (APScheduler)
+
+    adlab analyze | brief | produce | review | report   (Phases 3-7)
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -147,6 +154,125 @@ def usage_cmd(days: int = typer.Option(7, help="look back this many days")) -> N
         typer.echo(f"  {cmd:<20} {s['calls']:>4} calls  ${s['cost_usd']:.4f}")
 
 
+@app.command()
+def ingest(
+    url: Optional[str] = typer.Argument(None, help="Ad Library / Creative Center link (never fetched), or a file"),
+    file: Optional[Path] = typer.Argument(None, help="the ad file you saved (video or screenshot)"),
+    site: Optional[str] = typer.Option(None, help="site slug this ad was scouted for"),
+    platform: Optional[str] = typer.Option(None, help="meta | tiktok | other"),
+    advertiser: Optional[str] = typer.Option(None),
+    running_since: Optional[str] = typer.Option(None, help="YYYY-MM-DD it started running"),
+    last_seen: Optional[str] = typer.Option(None, help="YYYY-MM-DD it was last seen running (stopped ads)"),
+    still_running: Optional[bool] = typer.Option(None, "--running/--stopped"),
+    variants: Optional[int] = typer.Option(None, help="how many versions you saw"),
+    rank: Optional[int] = typer.Option(None, help="platform rank (e.g. Creative Center Top Ads #)"),
+    text: Optional[str] = typer.Option(None, help="the ad copy, if you have it"),
+    notes: Optional[str] = typer.Option(None),
+    scan: bool = typer.Option(False, "--scan", help="process data/incoming/ once"),
+    watch_: bool = typer.Option(False, "--watch", help="keep processing data/incoming/ (Ctrl+C stops)"),
+) -> None:
+    """Add ads: a pasted link (+ file), or everything dropped in data/incoming/<site>/."""
+    from . import ingest as ing
+
+    if watch_:
+        settings().ensure_dirs()
+        typer.echo(f"watching {settings().incoming_dir} (drop files into <site>/ folders; Ctrl+C to stop)")
+        try:
+            ing.watch(on_result=lambda r: typer.echo(f"  {r.status:<7} {Path(r.source).name} {r.message}"))
+        except KeyboardInterrupt:
+            pass
+        return
+    if scan:
+        results = ing.process_incoming()
+    else:
+        if not url and not file:
+            raise typer.BadParameter("give a link, a file, --scan or --watch")
+        if not site:
+            raise typer.BadParameter("--site is required (which of your sites is this ad's niche?)")
+        try:
+            sc = ing.Sidecar(platform=platform, advertiser=advertiser, running_since=running_since,
+                             last_seen=last_seen,
+                             still_running=still_running, variants=variants, platform_rank=rank,
+                             ad_text=text, notes=notes)
+        except ValueError as exc:  # pydantic ValidationError is a ValueError
+            raise typer.BadParameter(str(exc).splitlines()[-1].strip())
+        if url and Path(url).is_file() and file is None:
+            url, file = None, Path(url)
+        results = [ing.ingest_link(url, site, file, sc) if url else ing.ingest_media(file, site, sc)]
+    s = ing.summarize(results)
+    tldr(f"{s['new']} new ads, {s['updated']} already known (merged), {s['failed']} failed",
+         "nothing was downloaded: links are stored as references only",
+         "next: `adlab scout` to group variants and score")
+    for r in results:
+        if r.status == "failed":
+            typer.secho(f"  ✗ {r.source}: {r.message}", fg="red")
+
+
+@app.command()
+def scout(site: Optional[str] = typer.Option(None, help="one site (default: all)"),
+          api: bool = typer.Option(True, "--api/--no-api", help="run enabled official API collectors")) -> None:
+    """Process drops, run API sources, group variants, score, and show new winners."""
+    from . import scout as sc
+
+    r = sc.run(site, collectors=api)
+    ing = {"new": 0, "updated": 0, "failed": 0}
+    for x in r.ingested:
+        ing[x.status] += 1
+    stopped = [f"{c.site}: {c.stopped}" for c in r.collectors if c.stopped]
+    tldr(f"{len(r.new_winners)} new winners · {r.ads_scored} ads scored",
+         f"drops: {ing['new']} new, {ing['updated']} merged, {ing['failed']} failed"
+         + (f" · API: {sum(len(c.results) for c in r.collectors)} ads" if r.collectors else ""),
+         f"best: {r.top[0].advertiser} ({r.top[0].score:g})" if r.top else "no ads yet: drop some in data/incoming/<site>/")
+    for w in r.new_winners:
+        typer.secho(f"  ★ NEW {w.score:>5g}  {w.site:<12} {w.advertiser}  ({w.why})", fg="green")
+    for line in stopped:
+        typer.secho(f"  ! {line}", fg="yellow")
+    if r.sync.get("error"):
+        typer.secho(f"  ! Supabase sync failed: {r.sync['error']}", fg="yellow")
+
+
+@app.command()
+def ads(site: Optional[str] = typer.Option(None), limit: int = typer.Option(20)) -> None:
+    """Scouted ads, best first, with the score explained."""
+    from . import scoring
+    from .store import LocalStore
+
+    rows = LocalStore().ads(site)
+    threshold = scoring.weights().winner_threshold
+    winners = [a for a in rows if a.score and a.score.total >= threshold]
+    tldr(f"{len(rows)} ads{' for ' + site if site else ''}, {len(winners)} winners (score >= {threshold:g})",
+         "score = longevity + still running + variants + rank (+ repeat pattern from Phase 3)",
+         "`adlab scout` refreshes scores")
+    for a in rows[:limit]:
+        sc = scoring.explain(a.score) if a.score else "not scored yet"
+        vg = f" · {a.variant_group}" if a.variant_group else ""
+        typer.echo(f"  {('★' if a in winners else ' ')} {a.site:<12} {a.source.advertiser[:28]:<28} "
+                   f"{a.source.platform:<6} {a.first_seen}→{a.last_seen}{vg}\n      {sc}  [{a.id[:12]}]")
+
+
+@app.command("sync")
+def sync_cmd() -> None:
+    """Push changed ads to Supabase (when SUPABASE_URL + key are set)."""
+    from .store import LocalStore, sync
+
+    r = sync(LocalStore())
+    typer.echo("Supabase not configured: set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY"
+               if not r["configured"] else f"pushed {r['pushed']} ads to Supabase")
+
+
+@app.command()
+def schedule() -> None:
+    """Run the weekly API refresh (Mondays 06:47 Alberta time) until Ctrl+C."""
+    from . import scout as sc
+
+    sched = sc.scheduler(blocking=True)
+    typer.echo("AdLab scheduler running: weekly scout of API sources, Mondays 06:47 America/Edmonton. Ctrl+C stops.")
+    try:
+        sched.start()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+
+
 def _phase(n: int, what: str):
     def cmd(site: Optional[str] = typer.Option(None, help="site slug")) -> None:
         typer.secho(f"Not built yet: {what} arrives in Phase {n}.", fg="yellow")
@@ -156,8 +282,6 @@ def _phase(n: int, what: str):
 
 
 for _name, _n, _what in (
-    ("ingest", 2, "ingest a dropped ad file / pasted Ad Library link"),
-    ("scout", 2, "find and score winning ads"),
     ("analyze", 3, "teardown: why high-scoring ads work"),
     ("brief", 4, "write fact-checked briefs from patterns"),
     ("produce", 5, "render briefs through Media Forge"),
