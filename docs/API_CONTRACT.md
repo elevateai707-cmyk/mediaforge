@@ -111,6 +111,15 @@ Asset JSON shape:
   Non-destructive: writes to `/mediaforge/exports/touchup/<asset_id>_<preset>.jpg|png|webp`.
 - `GET /api/touchup/preview?asset_id=1&preset=auto_levels` → side-by-side or overlay preview image
 
+### PhotoCraft (pro photo edits; see docs/AGENTS_INTEGRATION.md)
+- `GET /api/photocraft/status` → `{"available":true,"path":"...","version":"photocraft-cli 0.8.2 ...","recipes":["auto","bw",...]}`
+- `GET /api/photocraft/recipes` → `[{"name":"punchy","description":"...","steps":[{"id":"image.autoContrast","params":{}},...]}]`
+- `GET /api/photocraft/commands?filter=curves` → allow-listed engine commands `[{"id","label","params"}]` (503 if not installed)
+- `POST /api/photocraft/apply` body `{"asset_id":1,"recipe":"film","steps":[{"id":"image.imageRotation.90cw","params":{}}],"format":"jpg|png|webp|tif|psd","quality":92}`
+  (recipe, steps, or both; steps run after the recipe)
+  → `{"job_id":"...","kind":"photocraft","output_path":".../exports/photocraft/<asset>_<recipe>_<digest>.jpg","output_url":"/exports/photocraft/...","steps":[...]}`
+  Non-destructive and cached by content. 422 for a refused command or path-like params, 404 for an unknown asset, 503 if photocraft-cli is missing.
+
 ### Jobs
 - `GET /api/jobs?limit=20` → recent jobs
 - `GET /api/jobs/{job_id}` → `{"id":"...","kind":"...","status":"...","progress":0.0,"message":"...","created_at":"...","finished_at":"..."}`

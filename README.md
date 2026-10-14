@@ -113,6 +113,25 @@ Edmonton / 9:16 / 30s and return only Edmonton clips.
   breaks, export FCPXML/EDL and import that instead — that is the supported
   CapCut path.
 
+## AI agents + PhotoCraft
+
+MediaForge is drivable by **Claude Code, Codex and Hermes Agent** through an MCP
+server (`agents/mediaforge_mcp.py`). Agents can search, look at shots, plan and
+render reels, export to NLEs, and edit photos with
+[PhotoCraft](https://github.com/storytold/photocraft), an open-source Rust
+Photoshop engine. Recipes are `auto`, `punchy`, `clean`, `film`, `warm` and `bw`,
+or explicit engine steps.
+
+```bash
+./scripts/agents-setup.sh                         # Ubuntu
+scripts\agents-setup.ps1 -MediaForgeUrl http://<ubuntu-ip>:8420   # Windows desktop
+```
+
+Rendering still needs your approval by default, and originals are never modified.
+Setup, tool list, safety model, and the PhotoCraft security review are in
+[docs/AGENTS_INTEGRATION.md](docs/AGENTS_INTEGRATION.md). Contributor rules for
+coding agents are in [AGENTS.md](AGENTS.md).
+
 ## Troubleshooting
 
 - **No CUDA / CPU fallback** — `/api/health` and the WebSocket emit

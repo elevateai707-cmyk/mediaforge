@@ -255,6 +255,47 @@ class TouchupOut(BaseModel):
     output_path: Optional[str] = None
 
 
+# --- PhotoCraft --------------------------------------------------------------
+class PhotoCraftStep(BaseModel):
+    id: str
+    params: dict[str, Any] = {}
+
+
+class PhotoCraftRecipeOut(BaseModel):
+    name: str
+    description: str
+    steps: list[PhotoCraftStep]
+
+
+class PhotoCraftStatusOut(BaseModel):
+    available: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+    recipes: list[str] = []
+
+
+class PhotoCraftCommandOut(BaseModel):
+    id: str
+    label: Optional[str] = None
+    params: Any = None
+
+
+class PhotoCraftApplyRequest(BaseModel):
+    asset_id: int
+    recipe: Optional[str] = None
+    steps: list[PhotoCraftStep] = []
+    format: str = "jpg"
+    quality: Optional[int] = Field(92, ge=1, le=100)
+
+
+class PhotoCraftApplyOut(BaseModel):
+    job_id: str
+    kind: str = "photocraft"
+    output_path: str
+    output_url: str
+    steps: list[PhotoCraftStep]
+
+
 # --- Jobs --------------------------------------------------------------------
 class JobOut(BaseModel):
     id: str

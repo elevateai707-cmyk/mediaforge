@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mediaforge": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["agents/mediaforge_mcp.py"],
+      "env": {
+        "MEDIAFORGE_URL": "${MEDIAFORGE_URL:-http://127.0.0.1:8420}",
+        "MEDIAFORGE_AGENT_CAN_APPROVE": "${MEDIAFORGE_AGENT_CAN_APPROVE:-0}"
+      }
+    }
+  }
+}

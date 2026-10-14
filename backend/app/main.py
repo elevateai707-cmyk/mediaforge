@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, fsutil, models, persist, schemas, touchup
+from . import config, fsutil, models, persist, photocraft, schemas, touchup
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
@@ -974,6 +974,59 @@ def touchup_preview(asset_id: int = Query(...), preset: str = Query(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return Response(content=data, media_type="image/jpeg")
+
+
+# ---------------------------------------------------------------------------
+# photocraft (pro photo edits via photocraft-cli; see app/photocraft.py)
+# ---------------------------------------------------------------------------
+@app.get("/api/photocraft/status", response_model=schemas.PhotoCraftStatusOut)
+def photocraft_status():
+    return photocraft.status()
+
+
+@app.get("/api/photocraft/recipes", response_model=list[schemas.PhotoCraftRecipeOut])
+def photocraft_recipes():
+    return [
+        {"name": name, "description": r["description"], "steps": r["steps"]}
+        for name, r in sorted(photocraft.RECIPES.items())
+    ]
+
+
+@app.get("/api/photocraft/commands", response_model=list[schemas.PhotoCraftCommandOut])
+def photocraft_commands(filter: str = Query("", max_length=64)):
+    try:
+        return photocraft.list_commands(filter)
+    except photocraft.PhotoCraftUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/api/photocraft/apply", response_model=schemas.PhotoCraftApplyOut)
+async def photocraft_apply(req: schemas.PhotoCraftApplyRequest):
+    if photocraft.find_cli() is None:
+        raise HTTPException(status_code=503, detail="photocraft-cli not installed; run scripts/agents-setup.sh")
+    try:
+        prepared = photocraft.prepare(
+            req.asset_id, req.recipe, [s.model_dump() for s in req.steps],
+            req.format, req.quality,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except photocraft.PhotoCraftError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    def factory(progress, _flag):
+        return _background(photocraft.apply, prepared, job=progress)()
+
+    job_id = jobs.run("photocraft", factory)
+    out = Path(prepared["output_path"])
+    try:
+        rel = out.relative_to(config.EXPORTS_DIR).as_posix()
+    except ValueError:  # MF_PHOTOCRAFT_DIR pointed outside exports/
+        rel = out.name
+    return schemas.PhotoCraftApplyOut(
+        job_id=job_id, output_path=str(out), output_url=f"/exports/{rel}",
+        steps=[{"id": i, "params": p} for i, p in prepared["steps"]],
+    )
 
 
 # ---------------------------------------------------------------------------
