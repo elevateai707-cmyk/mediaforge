@@ -23,6 +23,7 @@
     adlab export                             approved ads -> upload-ready files + sheets
     adlab report [--import CSV|--pull-meta]  your results; re-ranks patterns
     adlab digest [--send] | serve            weekly email / local API for the dashboard
+    adlab demo                               the whole pipeline offline on DEMO data
 """
 from __future__ import annotations
 
@@ -580,6 +581,21 @@ def digest(send: bool = typer.Option(False, "--send", help="email it via Resend"
         return
     typer.echo(d.subject + "\n")
     typer.echo(d.text)
+
+
+@app.command()
+def demo(folder: Optional[Path] = typer.Option(None, help="default: data/demo")) -> None:
+    """Run the whole pipeline offline on made-up DEMO data ($0, no keys, no GPU)."""
+    from . import demo as dm
+
+    r = dm.run(folder)
+    root = r["root"]
+    tldr(f"demo: {r['analyzed']} teardowns, briefs {r['briefs']}, {r['creatives']} ads rendered",
+         f"all in {root} (canned Claude answers, text-card visuals, no VO)",
+         "see it: run the serve command below, then `npm run dev` in adlab/dashboard")
+    typer.echo(f"  ADLAB_DATA_DIR={root}/data ADLAB_SITES_DIR={root}/sites adlab serve")
+    for e in r["errors"]:
+        typer.secho(f"  ✗ {e}", fg="red")
 
 
 @app.command()

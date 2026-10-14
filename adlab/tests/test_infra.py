@@ -31,6 +31,15 @@ def test_migration_parses_and_locks_every_table():
     assert "check (ai_generated)" in sql
 
 
+def test_pipeline_migration_parses_and_locks_reviews():
+    pglast = pytest.importorskip("pglast")
+    sql = (ROOT / "supabase" / "migrations" / "20261014010000_adlab_pipeline.sql").read_text()
+    stmts = pglast.parse_sql(sql)
+    assert {s.stmt.relation.relname for s in stmts if type(s.stmt).__name__ == "CreateStmt"} == {"reviews"}
+    assert "alter table reviews enable row level security" in sql
+    assert "'needs_fix'" in sql and "'rejected'" in sql
+
+
 # --- ChromaDB -----------------------------------------------------------------
 class FakeEmbedding:
     """Deterministic bag-of-words embedding (no model download in tests)."""

@@ -21,7 +21,7 @@ import secrets
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -32,9 +32,11 @@ from .store import LocalStore
 from .strategist import ranked_patterns
 
 
-def _auth(authorization: Optional[str] = Header(default=None)) -> None:
-    token = os.environ.get("ADLAB_API_TOKEN", "")
-    if token and not secrets.compare_digest(authorization or "", f"Bearer {token}"):
+def _auth(authorization: Optional[str] = Header(default=None), token: Optional[str] = Query(default=None)) -> None:
+    """Bearer header, or ?token= (a <video> tag can't send headers)."""
+    want = os.environ.get("ADLAB_API_TOKEN", "")
+    if want and not (secrets.compare_digest(authorization or "", f"Bearer {want}")
+                     or secrets.compare_digest(token or "", want)):
         raise HTTPException(401, "missing or wrong ADLAB_API_TOKEN")
 
 

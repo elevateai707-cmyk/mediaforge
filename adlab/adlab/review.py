@@ -81,7 +81,8 @@ def queue(store: LocalStore, site: Optional[str] = None, statuses: tuple[str, ..
             it = item(store, r["id"])
             if it:
                 out.append(it)
-    return sorted(out, key=lambda i: (-i.rank, i.creative.brief_id, i.creative.aspect_ratio))
+    order = {"9:16": 0, "4:5": 1, "1:1": 2, "16:9": 3}
+    return sorted(out, key=lambda i: (-i.rank, i.creative.brief_id, order.get(i.creative.aspect_ratio, 9)))
 
 
 class ReviewError(ValueError):

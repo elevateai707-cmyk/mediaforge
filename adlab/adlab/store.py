@@ -196,6 +196,15 @@ class LocalStore:
             rows = db.execute("select payload from ads where synced = 0").fetchall()
         return [Ad.model_validate_json(r["payload"]) for r in rows]
 
+    def unsynced_rows(self, kind: str) -> list[sqlite3.Row]:
+        with closing(self._db()) as db:
+            return db.execute("select * from entities where kind = ? and synced = 0 order by created_at",
+                              (kind,)).fetchall()
+
+    def mark_rows_synced(self, kind: str, ids: Iterable[str]) -> None:
+        with closing(self._db()) as db, db:
+            db.executemany("update entities set synced = 1 where kind = ? and id = ?", [(kind, i) for i in ids])
+
     def mark_synced(self, ad_ids: Iterable[str]) -> None:
         with closing(self._db()) as db, db:
             db.executemany("update ads set synced = 1 where id = ?", [(i,) for i in ad_ids])
@@ -227,20 +236,63 @@ class SupabaseMirror:
         }
 
     def push(self, ads: list[Ad]) -> int:
-        if not ads:
+        return self.upsert("ads", [self.row(a) for a in ads], "id")
+
+    def upsert(self, table: str, rows: list[dict], on_conflict: str) -> int:
+        if not rows:
             return 0
         if not self.configured:
             raise RuntimeError("Supabase not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)")
         r = self._http.post(
-            f"{self.url}/rest/v1/ads", params={"on_conflict": "id"},
+            f"{self.url}/rest/v1/{table}", params={"on_conflict": on_conflict},
             headers={"apikey": self.key, "Authorization": f"Bearer {self.key}",
                      "Content-Type": "application/json",
                      "Prefer": "resolution=merge-duplicates,return=minimal"},
-            json=[self.row(a) for a in ads],
+            json=rows,
         )
         if r.status_code >= 300:
-            raise RuntimeError(f"Supabase upsert failed: {r.status_code} {r.text[:300]}")
-        return len(ads)
+            raise RuntimeError(f"Supabase upsert into {table} failed: {r.status_code} {r.text[:300]}")
+        return len(rows)
+
+
+def _entity_row(kind: str, row: sqlite3.Row, store: "LocalStore") -> Optional[dict]:
+    """Local entity -> Supabase row (None = not mirrored, e.g. brief-level pre-checks)."""
+    p = json.loads(row["payload"])
+    if kind == "teardown":
+        return {"ad_id": p["ad_id"], "hook_type": p["hook"]["type"], "format": p["format"],
+                "angles": p["angles"], "model": p["model"], "payload": p}
+    if kind == "pattern":
+        return {"id": p["id"], "name": p["name"], "steps": p["steps"],
+                "own_performance_score": p.get("own_performance_score"), "payload": p}
+    if kind == "brief":
+        return {"id": p["id"], "site": p["site"], "pattern_id": p["pattern_id"], "status": row["status"] or "draft",
+                "fact_keys": sorted({c["fact_key"] for c in p["claims"]}), "missing_facts": p["missing_facts"],
+                "payload": p}
+    if kind == "creative":
+        with closing(store._db()) as db:
+            rv = db.execute("select payload from entities where kind='review' and id=?", (p["id"],)).fetchone()
+        return {"id": p["id"], "brief_id": p["brief_id"], "aspect_ratio": p["aspect_ratio"], "kind": p["kind"],
+                "path": p["path"], "sha256": p["sha256"], "ai_generated": True,
+                "review_status": row["status"] or "pending",
+                "review_notes": json.loads(rv["payload"])["notes"] if rv else "",
+                "cost_usd": round(sum(c["usd"] for c in p.get("cost", [])), 4), "payload": p}
+    if kind == "compliance":
+        if row["id"].startswith("brief:"):
+            return None
+        return {"report_id": row["id"], "creative_id": p["creative_id"], "verdict": p["verdict"], "payload": p}
+    if kind == "review":
+        return {"creative_id": p["creative_id"], "decision": p["decision"], "notes": p["notes"],
+                "decided_at": p["at"], "payload": p}
+    if kind == "result":
+        return {k: p[k] for k in ("creative_id", "platform", "campaign_id", "day", "impressions", "clicks",
+                                  "spend_cad", "leads", "conversions")} | {"payload": p}
+    return None
+
+
+# kind -> (table, on_conflict), in foreign-key order
+MIRROR = (("teardown", "teardowns", "ad_id"), ("pattern", "patterns", "id"), ("brief", "briefs", "id"),
+          ("creative", "creatives", "id"), ("compliance", "compliance_reports", "report_id"),
+          ("review", "reviews", "creative_id"), ("result", "results", "creative_id,platform,campaign_id,day"))
 
 
 def sync(store: LocalStore, mirror: Optional[SupabaseMirror] = None) -> dict:
@@ -253,4 +305,13 @@ def sync(store: LocalStore, mirror: Optional[SupabaseMirror] = None) -> dict:
         batch = pending[i:i + 200]
         mirror.push(batch)
         store.mark_synced(a.id for a in batch)
-    return {"configured": True, "pushed": len(pending)}
+    out: dict = {"configured": True, "pushed": len(pending)}
+    for kind, table, conflict in MIRROR:
+        rows = store.unsynced_rows(kind)
+        for i in range(0, len(rows), 200):
+            batch = rows[i:i + 200]
+            mapped = [m for r in batch if (m := _entity_row(kind, r, store)) is not None]
+            mirror.upsert(table, mapped, conflict)
+            store.mark_rows_synced(kind, [r["id"] for r in batch])
+            out[table] = out.get(table, 0) + len(mapped)
+    return out

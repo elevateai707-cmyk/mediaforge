@@ -176,3 +176,28 @@ def test_api(made, monkeypatch):
     monkeypatch.setenv("ADLAB_API_TOKEN", "s3cret")
     assert cl.get("/api/home").status_code == 401
     assert cl.get("/api/home", headers={"Authorization": "Bearer s3cret"}).status_code == 200
+    assert cl.get(f"/api/creatives/{cid}/video?token=s3cret").status_code == 200
+
+
+def test_supabase_mirrors_pipeline_in_fk_order(made):
+    from adlab.store import SupabaseMirror, sync
+
+    store = made["store"]
+    review.decide(store, made["ids"][0], "approve", "go")
+    posts: list[tuple[str, str, list]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        posts.append((req.url.path.rsplit("/", 1)[-1], req.url.params["on_conflict"], json.loads(req.content)))
+        return httpx.Response(201)
+
+    mirror = SupabaseMirror("https://p.supabase.co", "k", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    out = sync(store, mirror)
+    tables = [p[0] for p in posts]
+    assert tables == ["ads", "teardowns", "patterns", "briefs", "creatives", "compliance_reports", "reviews"]
+    body = dict((p[0], p[2]) for p in posts)
+    assert {r["review_status"] for r in body["creatives"]} == {"approved", "pending"}
+    assert all(r["ai_generated"] for r in body["creatives"])
+    assert not any(r["report_id"].startswith("brief:") for r in body["compliance_reports"])
+    assert body["reviews"][0]["notes"] == "go" and out["creatives"] == 3
+    posts.clear()
+    assert sync(store, mirror) == {"configured": True, "pushed": 0} and posts == []
