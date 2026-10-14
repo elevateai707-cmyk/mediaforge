@@ -76,6 +76,30 @@ def record(command: str, provider: str, model: str, input_tokens: int = 0, outpu
     return line
 
 
+def service_price(name: str) -> Optional[float]:
+    """Per-unit price from pricing.yaml `services:` (None = you haven't set it)."""
+    data = yaml.safe_load((settings().config_dir / "pricing.yaml").read_text(encoding="utf-8")) or {}
+    v = (data.get("services") or {}).get(name)
+    return float(v) if v is not None else None
+
+
+def record_service(command: str, provider: str, item: str, units: float, unit_price: Optional[float]) -> dict:
+    """Log a non-token call (ElevenLabs characters, ...). Unknown price -> cost None."""
+    line = {
+        "at": datetime.now(timezone.utc).isoformat(), "command": command, "provider": provider,
+        "model": item, "units": units, "input_tokens": 0, "output_tokens": 0,
+        "cache_read_tokens": 0, "cache_write_tokens": 0,
+        "cost_usd": round(units * unit_price, 6) if unit_price is not None else None,
+    }
+    logs = settings().logs_dir
+    logs.mkdir(parents=True, exist_ok=True)
+    with (logs / "usage.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
+    for session in _current:
+        session["calls"].append(line)
+    return line
+
+
 def summarize(calls: list[dict]) -> dict:
     known = [c["cost_usd"] for c in calls if c["cost_usd"] is not None]
     return {

@@ -1,0 +1,20 @@
+# Upload specs `adlab export` checks approved creatives against. STARTER values: confirm
+# them in each platform's current help pages before a big launch, and edit here.
+# Meta: https://www.facebook.com/business/ads-guide   TikTok: https://ads.tiktok.com/help/
+# AdLab renders H.264 + AAC MP4 at 1080 wide, 30 fps, faststart, which both accept.
+platforms:
+  meta:
+    ratios:
+      "9:16": [reels, stories]
+      "4:5": [feed]
+      "1:1": [feed, marketplace]
+    min_seconds: 1
+    max_seconds: 60          # keep ads short; Reels allow longer
+    max_mb: 4000
+  tiktok:
+    ratios:
+      "9:16": [in_feed]
+      "1:1": [in_feed]       # accepted, but 9:16 performs best: export prefers 9:16
+    min_seconds: 5
+    max_seconds: 60
+    max_mb: 500

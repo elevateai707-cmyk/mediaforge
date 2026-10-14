@@ -14,7 +14,15 @@
     adlab ads [--site S]                scouted ads, best first, with the score explained
     adlab sync | schedule               Supabase mirror / weekly API refresh (APScheduler)
 
-    adlab analyze | brief | produce | review | report   (Phases 3-7)
+    adlab analyze [--site S] [--dry-run]     teardowns of winners (Claude), patterns rebuilt
+    adlab hooks "query" | patterns           search teardowns / ranked patterns
+    adlab brief --site S [--dry-run]         3-5 fact-locked briefs from the best pattern
+    adlab check [BRIEF]                      Compliance Officer: PASS / FIX / REJECT
+    adlab produce [--dry-run]                render briefs -> 9:16 / 4:5 / 1:1 ads + manifest
+    adlab review [approve|edit|kill ID]      the human gate
+    adlab export                             approved ads -> upload-ready files + sheets
+    adlab report [--import CSV|--pull-meta]  your results; re-ranks patterns
+    adlab digest [--send] | serve            weekly email / local API for the dashboard
 """
 from __future__ import annotations
 
@@ -273,22 +281,318 @@ def schedule() -> None:
         pass
 
 
-def _phase(n: int, what: str):
-    def cmd(site: Optional[str] = typer.Option(None, help="site slug")) -> None:
-        typer.secho(f"Not built yet: {what} arrives in Phase {n}.", fg="yellow")
+def _ids(xs: list[str]) -> str:
+    return ", ".join(x[:14] for x in xs)
+
+
+@app.command()
+def analyze(site: Optional[str] = typer.Option(None, help="one site (default: all)"),
+            min_score: Optional[float] = typer.Option(None, help="score floor (default: winner threshold)"),
+            limit: int = typer.Option(10, help="max ads this run (each one is a Claude call)"),
+            dry_run: bool = typer.Option(False, "--dry-run", help="show what would be sent; no API calls"),
+            redo: bool = typer.Option(False, "--redo", help="re-analyze ads that already have a teardown"),
+            whisper: bool = typer.Option(True, "--whisper/--no-whisper", help="local transcript (GPU subprocess)")) -> None:
+    """Teardown of top-scoring ads: hook, angle, offer, CTA, pacing, why it works (structure only)."""
+    from . import analyst, scout as sc, strategist
+    from .store import LocalStore
+
+    store = LocalStore()
+    with usage.track("analyze"):
+        items = analyst.run(site, min_score, limit, dry_run=dry_run, redo=redo, whisper=whisper, store=store)
+        if not dry_run and any(i.status == "analyzed" for i in items):
+            pats = strategist.build_patterns(store)
+            sc.rescore(store)        # repeat-pattern signal feeds back into scores
+        else:
+            pats = []
+    done = [i for i in items if i.status == "analyzed"]
+    failed = [i for i in items if i.status == "failed"]
+    tldr(f"{'planned' if dry_run else 'analyzed'} {len(items) - len(failed)} ads, {len(failed)} failed"
+         if items else "nothing to analyze: no un-analyzed winners with media (`adlab ads`)",
+         f"{len(pats)} patterns now known" if pats else ("dry run: zero API calls, zero GPU" if dry_run else "no new patterns"),
+         "next: `adlab patterns`, then `adlab brief --site <site>`")
+    for i in items:
+        if i.teardown:
+            t = i.teardown
+            typer.echo(f"  ✓ {i.advertiser[:24]:<24} {t.hook.type:<16} {'/'.join(t.angles):<18} "
+                       f"{t.format:<14} {t.pacing.cuts_per_10s:g} cuts/10s\n      why: {t.why_it_works}")
+        elif i.status == "planned":
+            typer.echo(f"  · {i.advertiser[:24]:<24} {i.message}")
+            typer.echo(json.dumps(i.request, indent=1)[:4000])
+        else:
+            typer.secho(f"  ✗ {i.advertiser[:24]:<24} {i.message}", fg="red")
+
+
+@app.command()
+def hooks(query: str, n: int = typer.Option(5), site: Optional[str] = typer.Option(None)) -> None:
+    """Search past teardowns by meaning ("price objection", "night-time problem")."""
+    from . import analyst
+
+    hits = analyst.search_hooks(query, n, site)
+    tldr(f"{len(hits)} teardowns match \"{query}\"", "closest first", "structure only: never reuse their words")
+    for h in hits:
+        m = h["metadata"]
+        typer.echo(f"  {h['distance']:.3f}  {m.get('hook_type', '?'):<16} {m.get('advertiser', '?')[:24]:<24} "
+                   f"[{h['id'][:12]}]\n         {h['document'][:160]}")
+
+
+@app.command()
+def patterns(site: Optional[str] = typer.Option(None)) -> None:
+    """Reusable patterns from teardowns, ranked: YOUR results first, then competitor evidence."""
+    from . import strategist
+    from .store import LocalStore
+
+    store = LocalStore()
+    strategist.build_patterns(store)
+    ranked = strategist.ranked_patterns(store, site)
+    mine = [p for p, _ in ranked if p.own_performance_score is not None]
+    tldr(f"{len(ranked)} patterns{' for ' + site if site else ''}",
+         f"{len(mine)} scored on YOUR results" if mine else "none scored on your results yet (`adlab report`)",
+         f"top: {ranked[0][0].name}" if ranked else "run `adlab analyze` first")
+    for p, ev in ranked:
+        own = f"you {p.own_performance_score:g}" if p.own_performance_score is not None else "you  -"
+        typer.echo(f"  {own:<9} evidence {ev:>5g}  {p.name}\n      hooks {', '.join(p.hook_types)} · "
+                   f"angles {', '.join(p.angles)} · {len(p.source_teardown_ids)} ads  [{p.id}]")
+
+
+@app.command()
+def brief(site: str = typer.Option(..., help="site slug, e.g. ev1charger"),
+          pattern: Optional[str] = typer.Option(None, help="pattern id or name (default: best ranked)"),
+          count: int = typer.Option(3, min=1, max=5),
+          ratios: str = typer.Option("9:16,4:5,1:1"),
+          dry_run: bool = typer.Option(False, "--dry-run", help="show the request + allowed fact keys; no API call")) -> None:
+    """Write 3-5 original briefs for SITE from a winning pattern, every claim tied to a fact."""
+    from . import compliance, strategist
+
+    with usage.track("brief"):
+        res = strategist.write_briefs(site, pattern, count, [r.strip() for r in ratios.split(",")], dry_run=dry_run)
+    drafted = [r for r in res if r.status == "drafted"]
+    checks = {r.brief.id: compliance.check_brief(r.brief) for r in drafted if r.brief}
+    missing = sorted({m for r in drafted if r.brief for m in r.brief.missing_facts})
+    if res and res[0].status in ("blocked", "planned"):
+        tldr(res[0].status + (": " + res[0].problems[0] if res[0].problems else ": nothing sent, nothing spent"),
+             "fact keys in the schema are your verified facts only",
+             "next: `adlab brief --site " + site + "` without --dry-run")
+        if res[0].request:
+            typer.echo(json.dumps(res[0].request, indent=1))
+        return
+    v = [c.verdict for c in checks.values()]
+    tldr(f"{len(drafted)} briefs drafted, {len(res) - len(drafted)} rejected by the fact check",
+         f"compliance: {v.count('PASS')} PASS · {v.count('FIX')} FIX · {v.count('REJECT')} REJECT",
+         f"facts wanted but missing (add to facts.yaml): {', '.join(missing)}" if missing
+         else "next: `adlab produce --dry-run`")
+    for r in res:
+        if r.brief:
+            c = checks[r.brief.id]
+            typer.echo(f"  [{c.verdict}] {r.brief.id}  {r.brief.hook.type} · {r.brief.angle}\n      {r.brief.script}")
+            for reason in (x for ch in c.checks for x in ch.reasons):
+                typer.secho(f"      {reason}", fg="yellow")
+        else:
+            typer.secho(f"  ✗ rejected: {'; '.join(r.problems)}", fg="red")
+
+
+@app.command()
+def check(brief_id: Optional[str] = typer.Argument(None), site: Optional[str] = typer.Option(None)) -> None:
+    """Re-run the Compliance Officer on one brief or every draft brief."""
+    from . import compliance
+    from .schemas import Brief
+    from .store import LocalStore
+
+    store = LocalStore()
+    briefs = [store.fetch("brief", brief_id, Brief)] if brief_id else store.list("brief", Brief, site=site)
+    reports = [(b, compliance.check_brief(b, store)) for b in briefs if b]
+    v = [r.verdict for _, r in reports]
+    tldr(f"{len(reports)} briefs checked: {v.count('PASS')} PASS · {v.count('FIX')} FIX · {v.count('REJECT')} REJECT",
+         "checks: fact trace · similarity to source ads · banned content · platform policy",
+         "edit config/policy.yaml to tune the platform rules")
+    for b, r in reports:
+        typer.echo(f"  [{r.verdict}] {b.id} {b.script[:70]}")
+        for reason in (x for ch in r.checks for x in ch.reasons):
+            typer.secho(f"      {reason}", fg="yellow" if reason.startswith("[FIX]") else "red")
+
+
+@app.command()
+def produce(site: Optional[str] = typer.Option(None),
+            brief_id: Optional[list[str]] = typer.Option(None, "--brief", help="brief id (repeatable)"),
+            ratios: Optional[str] = typer.Option(None, help="e.g. 9:16,4:5,1:1 (default: the brief's)"),
+            dry_run: bool = typer.Option(False, "--dry-run", help="shot list, VO, facts, payloads; nothing spent"),
+            allow_fix: bool = typer.Option(False, "--allow-fix", help="also render FIX briefs (flagged for review)"),
+            limit: int = typer.Option(5)) -> None:
+    """Render draft briefs into finished ads (9:16 / 4:5 / 1:1) for your review queue."""
+    from . import producer
+
+    with usage.track("produce"):
+        r = producer.produce(site, brief_id, [x.strip() for x in ratios.split(",")] if ratios else None,
+                             dry_run=dry_run, allow_fix=allow_fix, limit=limit)
+    will = [p for p in r.plans if p.will_render]
+    if dry_run:
+        tldr(f"{len(will)}/{len(r.plans)} briefs would render ({sum(len(p.ratios) for p in will)} ads)",
+             "dry run: zero API calls, zero GPU, zero renders",
+             "next: `adlab produce` (same flags, no --dry-run)")
+        for p in r.plans:
+            typer.secho(f"\n■ {p.brief_id}  [{p.verdict}]  ratios {', '.join(p.ratios)}  "
+                        f"est. ${p.estimated_cost_usd if p.estimated_cost_usd is not None else '?'}", bold=True)
+            for n in p.notes + p.reasons:
+                typer.secho(f"  ! {n}", fg="yellow")
+            typer.echo("  shots:")
+            for s in p.shots:
+                typer.echo(f"    {s.index}. {s.seconds:g}s {s.asset} -> {s.backend}: {s.visual}"
+                           + (f" | text: {s.on_screen_text}" if s.on_screen_text else "")
+                           + (f" | VO: {s.vo_line}" if s.vo_line else "") + (f"  ({s.note})" if s.note else ""))
+            typer.echo("  VO script: " + (" / ".join(p.vo_script) or "(none)"))
+            typer.echo("  facts: " + "; ".join(f"{f['fact_key']} = \"{f['statement']}\"" for f in p.tagged_facts))
+            if p.missing_facts:
+                typer.secho("  missing facts (add to facts.yaml): " + ", ".join(p.missing_facts), fg="yellow")
+            for title, items in (("Media Forge", p.mediaforge_calls), ("ComfyUI", p.comfyui_payloads),
+                                 ("ElevenLabs", p.elevenlabs_payloads)):
+                if items:
+                    typer.echo(f"  {title} payloads:")
+                    typer.echo("    " + json.dumps(items, indent=1).replace("\n", "\n    "))
+        return
+    tldr(f"{len(r.creatives)} ads rendered into the review queue" + (f", {len(r.errors)} briefs failed" if r.errors else ""),
+         f"skipped: {'; '.join(r.skipped)}" if r.skipped else "every ad is flagged AI-generated in its metadata",
+         f"manifest: {r.manifest}" if r.manifest else "next: `adlab review`")
+    for c in r.creatives:
+        typer.echo(f"  [{c['verdict']}] {c['id']} {c['ratio']:<5} {c['path']}")
+    for e in r.errors:
+        typer.secho(f"  ✗ {e}", fg="red")
+
+
+review_app = typer.Typer(invoke_without_command=True, help="Review queue: approve / edit / kill each ad.")
+app.add_typer(review_app, name="review")
+
+
+@review_app.callback()
+def review_list(ctx: typer.Context, site: Optional[str] = typer.Option(None),
+                status: str = typer.Option("pending", help="pending | edit | approved | killed | rejected")) -> None:
+    """Show the queue (default) or decide: `adlab review approve <id>`."""
+    if ctx.invoked_subcommand:
+        return
+    from . import review as rv
+    from .store import LocalStore
+
+    store = LocalStore()
+    items = rv.queue(store, site, statuses=tuple(status.split(",")))
+    n = rv.counts(store, site)
+    tldr(f"{len(items)} ads {status}" + (f" · top: {items[0].creative.id}" if items else ""),
+         " · ".join(f"{k} {v}" for k, v in sorted(n.items())) or "no ads produced yet",
+         "approve / edit / kill: `adlab review approve <id>` (or the dashboard: `adlab serve`)")
+    for i in items:
+        b = i.brief
+        verdict = i.compliance.verdict if i.compliance else "?"
+        typer.echo(f"  [{verdict}] {i.creative.id} {i.creative.aspect_ratio:<5} {b.site if b else ''} "
+                   f"{b.hook.type if b else ''}\n      \"{b.script if b else ''}\"\n      {i.creative.path}")
+
+
+def _decide(cid: str, decision: str, notes: str) -> None:
+    from . import review as rv
+    from .store import LocalStore
+
+    try:
+        d = rv.decide(LocalStore(), cid, decision, notes)  # type: ignore[arg-type]
+    except rv.ReviewError as exc:
+        typer.secho(f"✗ {exc}", fg="red")
+        raise typer.Exit(1)
+    typer.echo(f"{cid}: {rv.STATUS[d.decision]}" + (f" ({d.notes})" if d.notes else ""))
+
+
+@review_app.command("approve")
+def review_approve(creative_id: str, notes: str = typer.Option("")) -> None:
+    """Mark ready for export (nothing is uploaded)."""
+    _decide(creative_id, "approve", notes)
+
+
+@review_app.command("edit")
+def review_edit(creative_id: str, notes: str = typer.Argument(..., help="what to change")) -> None:
+    """Send back with notes."""
+    _decide(creative_id, "edit", notes)
+
+
+@review_app.command("kill")
+def review_kill(creative_id: str, notes: str = typer.Option("")) -> None:
+    """Never run this one."""
+    _decide(creative_id, "kill", notes)
+
+
+@app.command("export")
+def export_cmd(platform: Optional[list[str]] = typer.Option(None, help="meta / tiktok (repeatable)"),
+               site: Optional[str] = typer.Option(None)) -> None:
+    """Approved ads -> upload-ready files + upload sheet per platform. You upload them."""
+    from . import export as ex
+
+    r = ex.export(platforms=tuple(platform or ("meta", "tiktok")), site=site)
+    tldr(f"{sum(len(v) for v in r.files.values())} files exported" + (f" to {r.folder}" if r.folder else ""),
+         "keep the [adlab:cr_…] tag in each ad name: the Reporter uses it",
+         "turn ON the platform's AI-content label for every ad")
+    for p, sheet in r.sheets.items():
+        typer.echo(f"  {p}: {len(r.files[p])} files · sheet {sheet}")
+    for s in r.skipped:
+        typer.secho(f"  ! {s}", fg="yellow")
+
+
+@app.command()
+def report(pull_meta: bool = typer.Option(False, "--pull-meta", help="Meta Insights API (META_ADS_TOKEN)"),
+           import_csv: Optional[Path] = typer.Option(None, "--import", help="Ads Manager CSV export"),
+           platform: str = typer.Option("meta", help="meta | tiktok (for --import)"),
+           days: int = typer.Option(28), site: Optional[str] = typer.Option(None)) -> None:
+    """What converts for YOU: results by pattern, hook and ad; re-ranks patterns."""
+    from . import reporter
+    from .store import LocalStore
+
+    store = LocalStore()
+    notes = []
+    if pull_meta:
+        r = reporter.pull_meta(store, days=days)
+        notes += [f"Meta: {r.stored} rows stored, {r.unmatched} without an [adlab:] tag"] + r.warnings
+    if import_csv:
+        r = reporter.import_csv(store, import_csv, platform)  # type: ignore[arg-type]
+        notes += [f"{import_csv.name}: {r.stored} rows stored, {r.unmatched} without an [adlab:] tag"] + r.warnings
+        if r.unknown_creatives:
+            notes.append(f"unknown creative ids: {_ids(r.unknown_creatives)}")
+    scores = reporter.rerank(store)
+    rep = reporter.performance(store, site, days)
+    t = rep.total
+    best = rep.by_pattern[0] if rep.by_pattern else None
+    money = lambda v: f"${v:,.2f}" if v is not None else "n/a"  # noqa: E731
+    tldr(f"last {days} days: {money(t.spend)} spent · {t.leads} leads · CPL {money(t.cpl)} · "
+         f"CTR {t.ctr * 100:.2f}%" if t.ctr is not None else f"no results in the last {days} days",
+         f"best pattern: {best['label']} (CPL {money(best['cpl'])})" if best else "import results: --import or --pull-meta",
+         f"{sum(1 for v in scores.values() if v is not None)} patterns re-ranked on your results")
+    for n in notes:
+        typer.echo(f"  · {n}")
+    for title, rows in (("by pattern", rep.by_pattern), ("by hook", rep.by_hook), ("by ad", rep.by_creative[:10])):
+        if rows:
+            typer.secho(f"  {title}", bold=True)
+            for r in rows:
+                ctr = f"{r['ctr'] * 100:.2f}%" if r["ctr"] is not None else "n/a"
+                typer.echo(f"    {r['label'][:44]:<44} CTR {ctr:>7} · CPC {money(r['cpc']):>7} · "
+                           f"CPL {money(r['cpl']):>8} · {r['leads']} leads")
+
+
+@app.command()
+def digest(send: bool = typer.Option(False, "--send", help="email it via Resend"),
+           dashboard_url: str = typer.Option("", help="link in the email")) -> None:
+    """Weekly digest: top 5 new hooks, top 3 ads to approve, what's converting."""
+    from . import digest as dg
+
+    d = dg.build(dashboard_url=dashboard_url)
+    if send:
+        typer.echo(f"sent ({dg.send(d)}) to {', '.join(dg.resend_payload(d)['to'])}")
+        return
+    typer.echo(d.subject + "\n")
+    typer.echo(d.text)
+
+
+@app.command()
+def serve(host: str = typer.Option("127.0.0.1"), port: int = typer.Option(8430)) -> None:
+    """Local API for the dashboard (adlab/dashboard)."""
+    import os
+
+    import uvicorn
+
+    if host not in ("127.0.0.1", "localhost", "::1") and not os.environ.get("ADLAB_API_TOKEN"):
+        typer.secho("refusing to bind beyond localhost without ADLAB_API_TOKEN set", fg="red")
         raise typer.Exit(2)
-    cmd.__doc__ = f"(Phase {n}) {what}"
-    return cmd
-
-
-for _name, _n, _what in (
-    ("analyze", 3, "teardown: why high-scoring ads work"),
-    ("brief", 4, "write fact-checked briefs from patterns"),
-    ("produce", 5, "render briefs through Media Forge"),
-    ("review", 7, "review queue: approve / edit / kill"),
-    ("report", 7, "what converts for you"),
-):
-    app.command(_name)(_phase(_n, _what))
+    uvicorn.run("adlab.api:app", host=host, port=port, log_level="info")
 
 
 def main() -> None:  # console_scripts entry point

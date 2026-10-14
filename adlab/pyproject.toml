@@ -12,10 +12,14 @@ dependencies = [
   "chromadb>=0.5",
   "apscheduler>=3.10,<4",
   "pillow>=10",
+  "anthropic>=1.13",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pglast>=6"]
+whisper = ["faster-whisper>=1.0"]   # local transcription worker (GPU optional)
 
 [project.scripts]
 adlab = "adlab.cli:main"
@@ -24,8 +28,8 @@ adlab = "adlab.cli:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["adlab"]
+[tool.setuptools.packages.find]
+include = ["adlab*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

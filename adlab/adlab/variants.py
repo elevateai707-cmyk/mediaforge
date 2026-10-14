@@ -29,7 +29,7 @@ VIDEO_FRAME_AT = "1.0"
 def dhash_image(path: Path) -> str:
     """Difference hash: 9x8 greyscale, compare horizontal neighbours -> 64 bits (hex)."""
     with Image.open(path) as im:
-        px = list(im.convert("L").resize((9, 8), Image.LANCZOS).getdata())
+        px = list(im.convert("L").resize((9, 8), Image.LANCZOS).tobytes())
     bits = 0
     for row in range(8):
         for col in range(8):

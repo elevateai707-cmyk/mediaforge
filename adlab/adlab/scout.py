@@ -100,8 +100,18 @@ def run(site: Optional[str] = None, store: Optional[LocalStore] = None, today: O
     return report
 
 
+def weekly_digest() -> None:
+    """Scheduled: email the digest when Resend is configured, else log why not."""
+    from . import digest
+
+    try:
+        log.info("digest sent: %s", digest.send(digest.build()))
+    except Exception as exc:  # noqa: BLE001 - a failed email never kills the scheduler
+        log.warning("weekly digest not sent: %s", exc)
+
+
 def scheduler(blocking: bool = True):
-    """Weekly API refresh: Mondays 06:47 Alberta time (off the hour on purpose)."""
+    """Weekly API refresh Mondays 06:47 and the digest at 07:13, Alberta time (off the hour on purpose)."""
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -109,5 +119,8 @@ def scheduler(blocking: bool = True):
     sched = BlockingScheduler() if blocking else BackgroundScheduler()
     sched.add_job(run, CronTrigger(day_of_week="mon", hour=6, minute=47, timezone="America/Edmonton"),
                   id="weekly_api_refresh", name="AdLab weekly scout (API sources)",
+                  replace_existing=True, misfire_grace_time=6 * 3600, coalesce=True)
+    sched.add_job(weekly_digest, CronTrigger(day_of_week="mon", hour=7, minute=13, timezone="America/Edmonton"),
+                  id="weekly_digest", name="AdLab weekly digest email",
                   replace_existing=True, misfire_grace_time=6 * 3600, coalesce=True)
     return sched

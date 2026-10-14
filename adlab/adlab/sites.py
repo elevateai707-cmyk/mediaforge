@@ -52,6 +52,7 @@ class Brand(_M):
     tone: list[str] = []
     banned_words: list[str] = []
     end_card_text: str = ""
+    voice_id: str = ""         # ElevenLabs voice (stock or your own clone, never a real person's)
 
     def logo(self, site_dir: Path) -> Optional[Path]:
         if not self.logo_path:

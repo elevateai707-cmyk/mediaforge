@@ -71,7 +71,7 @@ create index if not exists entities_kind_ref on entities (kind, ref);
 create index if not exists entities_kind_site on entities (kind, site, score desc);
 """
 
-KINDS = ("teardown", "pattern", "brief", "creative", "compliance", "result")
+KINDS = ("teardown", "pattern", "brief", "creative", "compliance", "result", "review")
 
 
 class LocalStore:

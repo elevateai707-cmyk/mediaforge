@@ -1,0 +1,20 @@
+# Reporter settings: how YOUR results are read and turned into pattern scores.
+meta:
+  graph_version: v25.0             # Marketing API version used for /act_<id>/insights
+  # Which Meta `actions` count as a lead / conversion: the FIRST type present wins
+  # (Meta reports overlapping types, so they're never summed).
+  lead_actions: [lead, onsite_conversion.lead_grouped, offsite_conversion.fb_pixel_lead]
+  conversion_actions: [offsite_conversion.fb_pixel_purchase, purchase, offsite_conversion.fb_pixel_complete_registration]
+# CSV exports from Ads Manager (Meta) / TikTok Ads Manager: column names AdLab looks for,
+# first match wins, case-insensitive. Add yours if your export names them differently.
+csv_columns:
+  ad_name: ["ad name"]
+  day: ["day", "date", "reporting starts", "by day", "stat time day"]
+  campaign_id: ["campaign id", "campaign name", "campaign"]
+  impressions: ["impressions"]
+  clicks: ["link clicks", "clicks (destination)", "clicks (all)", "clicks"]
+  spend: ["amount spent (cad)", "amount spent", "cost", "spend", "total cost"]
+  leads: ["leads", "on-facebook leads", "form submissions", "total form submissions"]
+  conversions: ["conversions", "purchases", "results", "complete payment"]
+# Pattern scoring: a pattern needs this many impressions of YOUR ads before it gets a score.
+min_impressions: 1000
