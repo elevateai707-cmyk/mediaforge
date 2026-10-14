@@ -1,0 +1,35 @@
+# Platform ad-policy checklist used by the Compliance Officer. STARTER rules: edit them to
+# match the platforms' current policies (links below). Each automated rule is a
+# case-insensitive regex run over every line of copy (script, on-screen text, VO, CTA).
+#   severity: FIX (needs a rewrite) or REJECT (don't run this ad)
+# Meta Advertising Standards: https://transparency.meta.com/policies/ad-standards/
+# TikTok Advertising Policies: https://ads.tiktok.com/help/article/tiktok-advertising-policies-ad-creatives-landing-page
+rules:
+  - id: personal_attributes
+    platforms: [meta]
+    severity: FIX
+    pattern: "\\b(are you|do you have|you're|you are)\\b.{0,40}\\b(in debt|broke|bankrupt|overweight|depressed|divorced|sick|struggling with)\\b"
+    message: "Asserts or implies the viewer's personal attributes (Meta 'Personal attributes')."
+  - id: sensational
+    platforms: [meta, tiktok]
+    severity: FIX
+    pattern: "\\b(shocking|you won't believe|miracle|secret trick|doctors hate)\\b"
+    message: "Sensational / clickbait phrasing."
+  - id: absolute_claims
+    platforms: [meta, tiktok]
+    severity: FIX
+    pattern: "\\b(100%|never fails|always works|instant results|zero risk)\\b"
+    message: "Absolute claim: only OK if it is word-for-word a verified fact."
+  - id: misleading_urgency
+    platforms: [meta, tiktok]
+    severity: FIX
+    pattern: "\\b(last chance|only \\d+ left|ends tonight|today only)\\b"
+    message: "Urgency/scarcity must be true and in facts.yaml (with an expiry)."
+# Shown to you in the review queue for every ad (not automated).
+manual_checks:
+  - "Upload with the platform's AI-content label on (Meta 'AI info', TikTok 'AI-generated content'): AdLab flags every creative as AI-made."
+  - "Landing page states the same offer, price and credentials as the ad."
+  - "Not a special ad category (housing, employment, credit/financial) for these sites. If it is, set it in Ads Manager."
+  - "Logo, fonts and colours are yours. No other brand's marks in frame."
+# Brand names that must never appear (in addition to every advertiser you've scouted).
+other_brands: []

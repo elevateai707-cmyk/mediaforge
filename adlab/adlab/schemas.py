@@ -133,6 +133,7 @@ class Teardown(Strict):
     format: AdFormat
     pacing: Pacing
     why_it_works: str = Field(min_length=1, max_length=400)
+    beats: list["PatternStep"] = []              # the ad's structure, in order (pattern clustering)
     model: str                                   # e.g. "claude-opus-5-5" or a local model
     created_at: datetime = Field(default_factory=utcnow)
 

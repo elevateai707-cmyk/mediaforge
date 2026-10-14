@@ -94,8 +94,8 @@ def load_facts(site: str, sites_dir: Optional[Path] = None) -> FactSheet:
     return FactSheet(site=site, facts=raw.get("facts") or {})
 
 
-def brief_model_for(sheet: FactSheet, today: Optional[date] = None) -> type[Brief]:
-    """A Brief model for this site whose claims may only cite usable facts."""
+def claim_model_for(sheet: FactSheet, today: Optional[date] = None) -> type[Claim]:
+    """Claim whose fact_key is Literal[<this site's usable keys>]."""
     keys = sheet.usable_keys(today)
     if not keys:
         raise NoUsableFacts(
@@ -103,7 +103,12 @@ def brief_model_for(sheet: FactSheet, today: Optional[date] = None) -> type[Brie
             "(statement + verified: true) before writing briefs."
         )
     key_type = Literal[tuple(keys)]  # type: ignore[valid-type]
-    site_claim = create_model(f"{_camel(sheet.site)}Claim", __base__=Claim, fact_key=(key_type, ...))
+    return create_model(f"{_camel(sheet.site)}Claim", __base__=Claim, fact_key=(key_type, ...))
+
+
+def brief_model_for(sheet: FactSheet, today: Optional[date] = None) -> type[Brief]:
+    """A Brief model for this site whose claims may only cite usable facts."""
+    site_claim = claim_model_for(sheet, today)
     return create_model(
         f"{_camel(sheet.site)}Brief", __base__=Brief,
         site=(Literal[sheet.site], ...),  # type: ignore[valid-type]

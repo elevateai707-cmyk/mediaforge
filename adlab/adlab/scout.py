@@ -65,11 +65,15 @@ def rescore(store: LocalStore, site: Optional[str] = None, today: Optional[date]
     sizes: dict[str, int] = {}
     for g in groups.values():
         sizes[g] = sizes.get(g, 0) + 1
+    from .strategist import repeat_counts  # teardowns (Phase 3) feed the repeat-pattern signal
+
+    repeats = repeat_counts(store)
     new_winners, updated = [], []
     for ad in ads:
         before = ad.score.total if ad.score else None
         ad.variant_group = groups[ad.id] if sizes[groups[ad.id]] > 1 else None
-        ad.score = scoring.score(ad, group_size=sizes[groups[ad.id]], today=today)
+        ad.score = scoring.score(ad, group_size=sizes[groups[ad.id]],
+                                 repeat_pattern_count=repeats.get(ad.id, 0), today=today)
         store.upsert(ad)
         updated.append(ad)
         if ad.score.total >= threshold and (before is None or before < threshold):

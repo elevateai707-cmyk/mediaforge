@@ -18,14 +18,16 @@ import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional, TypeVar
 
 import httpx
+from pydantic import BaseModel
 
 from .config import settings
 from .schemas import Ad
 
 log = logging.getLogger("adlab.store")
+M = TypeVar("M", bound=BaseModel)
 
 SCHEMA = """
 create table if not exists ads (
@@ -52,7 +54,24 @@ create table if not exists media (
   dhash    text                                   -- 64-bit visual fingerprint, hex
 );
 create index if not exists media_ad on media (ad_id);
+create table if not exists entities (       -- teardowns, patterns, briefs, creatives, compliance, results
+  kind       text not null,
+  id         text not null,
+  site       text,
+  ref        text,                          -- parent id (ad for a teardown, brief for a creative, ...)
+  status     text,
+  score      real,
+  payload    text not null,
+  synced     integer not null default 0,
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  primary key (kind, id)
+);
+create index if not exists entities_kind_ref on entities (kind, ref);
+create index if not exists entities_kind_site on entities (kind, site, score desc);
 """
+
+KINDS = ("teardown", "pattern", "brief", "creative", "compliance", "result")
 
 
 class LocalStore:
@@ -127,6 +146,49 @@ class LocalStore:
         for r in rows:
             out.setdefault(r["ad_id"], []).append(dict(r))
         return out
+
+    # --- other pipeline objects ----------------------------------------------------
+    def put(self, kind: str, obj: BaseModel, id: str, site: Optional[str] = None, ref: Optional[str] = None,
+            status: Optional[str] = None, score: Optional[float] = None) -> None:
+        if kind not in KINDS:
+            raise ValueError(f"unknown kind {kind!r}")
+        obj = type(obj).model_validate(obj.model_dump())  # validated objects only
+        with closing(self._db()) as db, db:
+            db.execute(
+                """insert into entities (kind, id, site, ref, status, score, payload, synced)
+                   values (?,?,?,?,?,?,?,0)
+                   on conflict(kind, id) do update set site=excluded.site, ref=excluded.ref,
+                     status=excluded.status, score=excluded.score, payload=excluded.payload,
+                     synced=0, updated_at=datetime('now')""",
+                (kind, id, site, ref, status, score, obj.model_dump_json()))
+
+    def fetch(self, kind: str, id: str, model: type[M]) -> Optional[M]:
+        with closing(self._db()) as db:
+            row = db.execute("select payload from entities where kind=? and id=?", (kind, id)).fetchone()
+        return model.model_validate_json(row["payload"]) if row else None
+
+    def rows(self, kind: str, site: Optional[str] = None, ref: Optional[str] = None,
+             status: Optional[str] = None, since: Optional[str] = None) -> list[sqlite3.Row]:
+        q, args = "select * from entities where kind = ?", [kind]
+        for col, val in (("site", site), ("ref", ref), ("status", status)):
+            if val is not None:
+                q += f" and {col} = ?"
+                args.append(val)
+        if since:
+            q += " and created_at >= ?"
+            args.append(since)
+        with closing(self._db()) as db:
+            return db.execute(q + " order by coalesce(score, -1e9) desc, created_at desc", args).fetchall()
+
+    def list(self, kind: str, model: type[M], **filters: Any) -> list[M]:
+        return [model.model_validate_json(r["payload"]) for r in self.rows(kind, **filters)]
+
+    def set_status(self, kind: str, id: str, status: str) -> None:
+        with closing(self._db()) as db, db:
+            n = db.execute("update entities set status=?, synced=0, updated_at=datetime('now') "
+                           "where kind=? and id=?", (status, kind, id)).rowcount
+        if not n:
+            raise KeyError(f"{kind} {id} not found")
 
     # --- sync bookkeeping ----------------------------------------------------------
     def unsynced(self) -> list[Ad]:
