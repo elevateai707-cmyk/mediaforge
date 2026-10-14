@@ -158,7 +158,7 @@ def test_render_still_without_cli(monkeypatch, tmp_path):
 
 
 # --- CLI ---------------------------------------------------------------------------
-def test_cli_sites_facts_and_stubs(sites_dir):
+def test_cli_sites_facts_and_pipeline_commands(sites_dir):
     from typer.testing import CliRunner
 
     from adlab.cli import app
@@ -169,4 +169,7 @@ def test_cli_sites_facts_and_stubs(sites_dir):
     r = CliRunner().invoke(app, ["facts", "testco"])
     assert "✓ red_seal" in r.output and "✗ price_from: not verified" in r.output
     r = CliRunner().invoke(app, ["brief", "--site", "testco"])
-    assert r.exit_code == 2 and "Phase 4" in r.output
+    assert r.exit_code == 0 and "blocked: no patterns yet" in r.output
+    for cmd in (["review"], ["produce", "--dry-run"], ["export"], ["report"], ["check"], ["digest"]):
+        r = CliRunner().invoke(app, cmd)
+        assert r.exit_code == 0 and (r.output.startswith("TL;DR") or r.output.startswith("AdLab weekly")), (cmd, r.output)
