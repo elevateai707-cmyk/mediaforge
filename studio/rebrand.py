@@ -137,6 +137,11 @@ def rebrand(tree: Path, b: dict, allow_other_commit: bool) -> dict:
          rust_str(f"{product} by {company}. Based on {CREDIT_TOKEN} (MIT OR Apache-2.0).")),
     ])
 
+    edit(ui / "header.rs", [('let label = "Discord";', 'let label = "Community";')])
+    # The built-in demo project's name (engine crate; nothing else there is user-facing).
+    edit(tree / "crates" / "engine" / "src" / "demo.rs",
+         [('Project::new("FilmCraft Demo")', f'Project::new({rust_str(product + " Demo")})')], count=2)
+
     # 3. Wordmark: ours instead of the ArtCraft marks; then remove the marks.
     brand_dir = tree / "studio-brand"
     brand_dir.mkdir(exist_ok=True)

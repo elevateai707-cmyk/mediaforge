@@ -53,7 +53,9 @@ if [ -x "$DEST/$CLI" ] && [ "${FORCE:-0}" != 1 ]; then
 else
   # --- 1. dependencies ----------------------------------------------------------
   PKGS=(build-essential pkg-config git curl python3 libasound2-dev libgtk-3-dev libxkbcommon-dev
-        libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libudev-dev)
+        libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libudev-dev
+        # runtime libraries the app dlopen()s (upstream's .deb depends/recommends)
+        libxkbcommon-x11-0 libx11-xcb1 libvulkan1 libegl1 mesa-vulkan-drivers)
   missing=()
   for p in "${PKGS[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
   if [ ${#missing[@]} -gt 0 ]; then
