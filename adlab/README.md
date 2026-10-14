@@ -55,7 +55,7 @@ adlab mf smoke              # 9:16 test image, VRAM logged before/after
 | GPU | `adlab/gpu.py` | One GPU job at a time (file lock), `nvidia-smi` VRAM logged before/after, refuses to start when VRAM is too low, ephemeral subprocesses for local models. |
 | Cost | `adlab/usage.py`, `config/pricing.yaml` | Tokens and $ per command; unknown prices are flagged, never guessed. |
 | Media Forge | `adlab/mediaforge.py`, `docs/mediaforge_interface.md` | Status, VRAM release (`POST /api/gpu/release`, added to Media Forge for this), stills at 9:16/1:1/4:5/16:9 via Elevate Vision Studio. |
-| CLI | `adlab/cli.py` | `adlab init / sites / facts / mf status / mf release / mf smoke / usage`; later phases are stubs. |
+| CLI | `adlab/cli.py` | `adlab init / sites / facts / mf status / mf release / mf smoke / usage` (every later phase is wired in too). |
 
 ### What I need from you
 1. **Where does ComfyUI live?** Media Forge has no image/video generator. Give me its URL
@@ -138,4 +138,140 @@ systemctl --user enable --now adlab-watch adlab-schedule
 3. **Optional:** a Meta Ad Library API token, if you want EU pattern research.
 4. **Optional:** Supabase URL + service-role key to start mirroring.
 
-Phase 3 (Analyst: teardowns with Claude vision + Whisper) starts when you say go.
+## The weekly loop (all phases) ⚡
+
+**TL;DR**
+- One command per step. Every step prints a 3-line TL;DR first.
+- `--dry-run` on `analyze`, `brief` and `produce` shows exactly what would be sent. Nothing is spent.
+- Try it with no keys: `adlab demo` runs the whole pipeline on made-up DEMO data.
+
+```bash
+adlab scout                          # Mon: new winners (drops + APIs)
+adlab analyze --site ev1charger      # teardowns of the winners (Claude), patterns rebuilt
+adlab brief --site ev1charger        # 3 fact-locked briefs from the best pattern (+ compliance)
+adlab produce --dry-run              # shot list, VO script, facts, exact ComfyUI/ElevenLabs payloads
+adlab produce                        # 9:16 / 4:5 / 1:1 ads → review queue
+adlab review                         # or the dashboard: approve / edit / kill
+adlab export                         # upload-ready files + sheet per platform (you upload)
+adlab report --import meta.csv       # your results → patterns re-ranked
+adlab digest --send                  # Monday email (also automatic via `adlab schedule`)
+```
+
+```bash
+adlab demo                                           # offline, $0, writes data/demo/
+ADLAB_DATA_DIR=data/demo/data ADLAB_SITES_DIR=data/demo/sites adlab serve
+cd dashboard && npm install && npm run dev           # http://localhost:3000
+```
+
+## Phase 3: Analyst ✅
+
+**TL;DR**
+- `adlab analyze` tears down your top-scoring ads: hook (first 3 s), angle, offer, CTA, cuts, captions, music energy, beats, and *why it works*.
+- Claude does the vision; pacing is **measured** with FFmpeg, and transcripts come from local Whisper in a throwaway GPU process.
+- Structure only: a teardown that quotes the ad is rejected and redone.
+
+| | |
+|---|---|
+| **Frames** | Dense in the hook (0.2 / 1 / 2 / 3 s), then evenly to the end, max 10, sent at ≤ 1024 px. |
+| **Pacing** | FFmpeg scene detection counts cuts; the measured cuts/10 s and length overwrite the model's guess. |
+| **Transcript** | `faster-whisper` (`small.en`) in `python -m adlab.workers.whisper_worker`, under the GPU lock, after Media Forge and ComfyUI are told to unload, and only if ≥ 2 GB VRAM is free. Cached in `data/transcripts/`. Install: `pip install -e '.[whisper]'`, or use `--no-whisper`. |
+| **Model** | `claude-opus-5-5` (`ADLAB_MODEL`), structured output validated against `TeardownDraft`. **Server-side fallbacks are on** (a capacity error retries on another model, logged); set `ADLAB_LLM_FALLBACKS=0` to pin the model. Refusals and truncations are reported, never half-parsed. |
+| **Copy guard** | Any 8-word run copied from the ad's copy or transcript → one retry with a warning, then the ad is marked failed. |
+| **After** | Teardowns are stored and embedded in ChromaDB, patterns are rebuilt, and scores get the repeat-pattern signal. |
+| **Cost** | Every call goes to `data/logs/usage.jsonl`; `adlab usage` sums it. Estimate: 10 frames ≈ 15k input + ~1.5k output tokens ≈ **$0.09 per ad** at list price; `adlab usage` shows the real number. |
+
+```bash
+adlab analyze --site ev1charger --dry-run   # frames, cuts, the exact request; no API call
+adlab analyze --site ev1charger --limit 5
+adlab hooks "night-time charger problem"    # semantic search over teardowns
+adlab patterns                              # beats-based patterns, ranked
+```
+
+## Phase 4: Strategist ✅
+
+**TL;DR**
+- Patterns = teardowns grouped by their beat sequence (e.g. problem call-out → credential → CTA). Ranked by **your** results first, then by competitor evidence.
+- `adlab brief --site S` writes 3–5 original briefs. The output schema only allows your verified fact keys, and each brief is re-validated before it's saved.
+- Facts a brief wanted but didn't have come back as **"missing facts"** for you to add. Never filled in.
+
+What Claude sees: the pattern, each source ad's *why it works*, your site summary, brand tone, banned
+words and **only your usable facts**. It never sees the source ads' words. Each brief has a hook,
+angle, script, numbered shot list (visual, on-screen text, VO line), CTA, claims `{text, fact_key}`
+and aspect ratios.
+
+```bash
+adlab brief --site ev1charger --dry-run      # request + the fact-key enum; nothing sent
+adlab brief --site ev1charger --count 3 --pattern pat_ab12cd34ef
+adlab check                                  # re-run compliance on every draft
+```
+
+## Phase 5: Producer ✅
+
+**TL;DR**
+- `adlab produce` turns PASS briefs into finished MP4s at **9:16, 4:5 and 1:1**: visuals, ElevenLabs VO, burned-in captions, branded end card.
+- Visuals come from **your ComfyUI workflows**. Until you set them up, shots become brand text cards and the manifest says so, so the pipeline already runs end to end.
+- `--dry-run` prints the shot list, VO script, tagged facts and the exact Media Forge / ComfyUI / ElevenLabs payloads. Zero calls, zero GPU.
+
+| | |
+|---|---|
+| **Gate** | Compliance runs first. REJECT never renders. FIX renders only with `--allow-fix`. |
+| **Visuals** | `generated_image` / `generated_video` → `config/comfyui/image.json` / `video.json` (your API-format exports with `{{placeholders}}`, see `config/comfyui/README.md`). Negative prompt bans faces, people, text, logos and brand names. `text_card` / `brand_asset` → PIL cards in your colours and logo. `own_footage` → files in `sites/<site>/footage/`. |
+| **GPU** | Media Forge unloads first; one ComfyUI job at a time under the file lock; VRAM logged per job in `data/logs/gpu.jsonl`; ComfyUI `/free` after the batch. 3 retries with backoff, every retry logged. |
+| **VO** | One ElevenLabs call per VO line, shared across ratios; a shot stretches to fit its line. No key → silent ad, noted. No music (nothing reused). |
+| **Assembly** | FFmpeg: cover-crop, slow push-in on stills, captions in the safe zone (above the Reels/TikTok UI), H.264/AAC 30 fps, faststart, MP4 metadata `comment` = AI-generated. |
+| **Output** | `data/batches/<batch>/<brief>/<brief>_9x16.mp4` … + `manifest.json`: brief, pattern, the source ads it learned from, facts used, AI flag + disclosure, fallbacks, cost. |
+| **After** | Each file is re-checked (adds visual similarity vs the source ads) and lands in the review queue as `pending`. |
+
+```bash
+adlab produce --dry-run
+adlab produce --site ev1charger --limit 3
+adlab produce --brief br_1234abcd5678 --ratios 9:16
+```
+
+## Phase 6: Compliance Officer ✅
+
+**TL;DR**
+- Every brief and every rendered file gets **PASS / FIX / REJECT**, with the exact reason for each problem.
+- Catches inflated claims even when they cite a real fact key, copied phrasing, fake social proof, and other brands.
+- Platform rules live in `config/policy.yaml` (editable starter rules + the manual checklist shown in review).
+
+| Check | REJECT when | FIX when |
+|---|---|---|
+| **Fact trace** | claim cites an unusable key · claim adds a number or superlative its fact doesn't have · any number/$/% anywhere in the copy that no cited fact contains | claim wording drifts from its fact |
+| **Similarity** | a 6-word run from a scouted ad (copy, transcript, on-screen text) · ≥ 25% shared 4-word phrases · a frame within dHash distance 8 of a source ad's media | |
+| **Banned content** | testimonials, reviews, ratings, "customers love", "as seen on" · guarantees/warranty not in a cited fact · a visual showing customers/homeowners/real people · a competitor's or listed brand's name | a brand banned word |
+| **Platform policy** | rules marked REJECT | personal attributes (Meta), sensational, absolute claims, fake urgency |
+
+## Phase 7: Review, export, Reporter, digest, dashboard ✅
+
+**TL;DR**
+- Nothing uploads or spends. You approve, edit (with notes) or kill each ad; `adlab export` writes upload-ready files and a sheet per platform; you upload.
+- Your results (Meta API or Meta/TikTok CSV exports) re-rank patterns, so new briefs lean on what converts **for you**.
+- Monday digest by email: top 5 new hooks, top 3 ads to approve, what's converting. Dashboard home = those 3 things.
+
+| | |
+|---|---|
+| **Review** | `adlab review` (queue, best bet first) · `adlab review approve <id>` · `edit <id> "notes"` · `kill <id>`. A compliance REJECT can't be approved. |
+| **Export** | `data/exports/<date>/<platform>/adlab-<id>-<ratio>.mp4` + `upload_sheet.csv` (ad name with `[adlab:<id>]` tag, placements, primary text, headline, CTA, URL, AI label ON). Checked against `config/platform_specs.yaml` (starter values: confirm them). |
+| **Reporter** | `adlab report --import meta.csv` (or `--platform tiktok`), or `--pull-meta` (Insights API, `ads_read`). Matched by the `[adlab:…]` tag. CTR, CPC, CPL, conversions by pattern, hook type and ad. A pattern with ≥ 1,000 of your impressions gets `own_performance_score` (50 = your average; CTR and CPL vs your account), which ranks first for the Strategist. |
+| **Digest** | `adlab digest` previews; `--send` emails via Resend. `adlab schedule` sends it Mondays 07:13 Alberta time. |
+| **Dashboard** | `adlab serve` (FastAPI, 127.0.0.1:8430) + `dashboard/` (Next.js, Tailwind, shadcn-style UI). Home: 3 cards. Review: video, compliance reasons, the ad, the teardowns it learned from, the pre-upload checklist, and Approve / Edit / Kill (keys **A / E / K**, **J** next). Results: tables + Export. Set `ADLAB_API_TOKEN` before exposing it beyond localhost. |
+| **Supabase** | `adlab sync` now mirrors teardowns, patterns, briefs, creatives, compliance reports, review decisions and results (`supabase/migrations/20261014010000_adlab_pipeline.sql`). |
+
+```bash
+cp deploy/adlab-api.service ~/.config/systemd/user/ && systemctl --user enable --now adlab-api
+cd dashboard && npm install && npm run build && npm start      # http://localhost:3000
+```
+
+### Tests
+`.venv/bin/pytest -q` runs 83 tests (2 more with the Studio CLI installed): fake Claude, fake
+ComfyUI/ElevenLabs/Meta/Resend over `httpx.MockTransport`, and real FFmpeg renders.
+`cd dashboard && npm run build` typechecks the dashboard.
+
+## What I need from you (Phases 3–7)
+1. **ComfyUI:** URL + `image.json` / `video.json` API-format workflows (see `config/comfyui/README.md`). Until then: text-card placeholders.
+2. **Facts:** verified facts per site. No facts → no briefs (by design). Watch for "missing facts" in `adlab brief`.
+3. **Keys:** `ANTHROPIC_API_KEY` (analyze/brief), `ELEVENLABS_API_KEY` + a voice ID (your own or stock, never a real person's voice), `RESEND_API_KEY` + a verified sender domain + `DIGEST_TO`. Optional: `META_ADS_TOKEN` + `META_AD_ACCOUNT_ID` (`ads_read`).
+4. **Prices:** ElevenLabs $/1k characters for your plan in `config/pricing.yaml → services` (left blank, not guessed).
+5. **Check the starter rules:** `config/policy.yaml` and `config/platform_specs.yaml` against Meta's and TikTok's current pages.
+6. **Brand:** logo file + colours in each `brand.yaml` (used on cards and end cards); optional `voice_id`.

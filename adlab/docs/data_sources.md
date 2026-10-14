@@ -72,8 +72,33 @@ while running and for one year after.
   could help EU pattern research. Not built; apply only if you want EU TikTok patterns.
 
 ## 5. Your own ad accounts (Phase 7) ✅ ground truth
-Meta Marketing API and TikTok Business API for **your** campaigns: CTR, CPC, CPL,
-conversions. This is the only real conversion data AdLab learns from. Built in Phase 7.
+The only real conversion data AdLab learns from. Read-only; AdLab never creates, edits or
+pays for anything in your ad accounts.
+
+- **Meta Marketing API, Insights** (`adlab report --pull-meta`):
+  `GET https://graph.facebook.com/v25.0/act_<AD_ACCOUNT_ID>/insights` with `level=ad`,
+  `time_increment=1`, `time_range={"since","until"}`, `fields=ad_id,ad_name,campaign_id,
+  impressions,clicks,spend,actions,date_start,date_stop,account_currency`, paging via
+  `paging.next`. Needs a token with **`ads_read`** on your ad account (`META_ADS_TOKEN`,
+  `META_AD_ACCOUNT_ID`). Version is set in `config/report.yaml`. Leads = the first of
+  `lead`, `onsite_conversion.lead_grouped`, `offsite_conversion.fb_pixel_lead` that's
+  present (Meta reports overlapping types, so they're never summed).
+- **Meta Ads Manager CSV export** (`adlab report --import file.csv --platform meta`): no
+  token needed. Export *by day* and *by ad* with Ad name, Day, Impressions, Link clicks,
+  Amount spent, Leads.
+- **TikTok Ads Manager CSV export** (`adlab report --import file.csv --platform tiktok`).
+  I couldn't verify TikTok's reporting API field names against official docs, so it's not
+  wired; the CSV export from your own Ads Manager is the official route here. Column names
+  are matched loosely (`config/report.yaml → csv_columns`): add yours if they differ.
+- **Matching:** `adlab export` names every ad `[adlab:<creative_id>] …`. Keep that tag in
+  the ad name when you upload; rows without it are counted as "unmatched" and ignored.
+
+## 6. Services the Producer and digest call (Phases 5, 7)
+| Service | Call | Notes |
+|---|---|---|
+| **ComfyUI** (yours, local) | `POST /prompt {prompt, client_id}` → `GET /history/<id>` → `GET /view` · `POST /free` | Your API-format workflows in `config/comfyui/`. Unloaded after each batch. |
+| **ElevenLabs** | `POST https://api.elevenlabs.io/v1/text-to-speech/<voice_id>?output_format=mp3_44100_128`, header `xi-api-key`, body `{text, model_id}` | Stock voice or your own clone only, never a real person's voice. One call per VO line. Price per 1k chars in `config/pricing.yaml → services`. |
+| **Resend** | `POST https://api.resend.com/emails`, `Authorization: Bearer re_…`, body `{from, to, subject, html, text}` | Weekly digest. `DIGEST_FROM` must be on a domain you verified in Resend. |
 
 ## "Winning" signals we can legitimately compute
 Competitors' conversions aren't public, so the score uses proxies

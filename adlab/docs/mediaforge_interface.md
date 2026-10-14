@@ -71,13 +71,21 @@ a **9:16 test card rendered by Elevate Vision Studio** → VRAM again → JSON r
 `data/logs/smoke-*.json`. It's a text still, not an AI image, because Media Forge has no
 generator. The ComfyUI image joins the smoke test once you answer the question below.
 
-## Open question (blocks Phase 5's image/video backend)
-The AdLab brief describes Media Forge as a generation system with ComfyUI workflows,
-but this Media Forge has none. I didn't guess, so please tell me:
+## Producer decision (Phase 5, built)
+AdLab renders with its **own FFmpeg step** from generated assets (the option recommended
+above), so no Media Forge plan approval is involved. Per batch the Producer:
+1. `POST /api/gpu/release` once (Media Forge unloads CLIP/whisper/faces/Ollama), logged;
+2. runs each ComfyUI job under AdLab's GPU file lock with `nvidia-smi` logged before/after
+   (`data/logs/gpu.jsonl`), `ADLAB_COMFY_MIN_FREE_MB` as the floor;
+3. calls ComfyUI `POST /free` when the batch is done.
+Elevate Vision Studio's `render_still` is still used by `adlab mf smoke`; ads use PIL cards.
+
+## Still open: your ComfyUI
+Until you answer these, generated shots fall back to brand text cards (labelled in the
+manifest), so the whole pipeline already runs end to end:
 1. Is ComfyUI installed separately on the Ubuntu box? Its URL (default
-   `http://127.0.0.1:8188`) and folder?
-2. Which workflows do you use for (a) a still image and (b) short video? Please
-   export each with **"Save (API Format)"** and drop the JSON in
-   `adlab/config/comfyui/`.
-3. Or is there a different "Media Forge" (another repo or folder) that does
-   generation? If so, where?
+   `http://127.0.0.1:8188`)? Set `COMFYUI_URL`.
+2. Which workflows do you use for (a) a still image and (b) short video? Export each with
+   **"Save (API Format)"** to `adlab/config/comfyui/image.json` and `video.json`, with the
+   placeholders listed in `config/comfyui/README.md`.
+3. Or is there a different "Media Forge" (another repo or folder) that does generation?

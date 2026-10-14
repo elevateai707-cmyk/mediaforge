@@ -3,7 +3,7 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now adlab-schedule
 #   loginctl enable-linger $USER    # keep user services running when logged out
 [Unit]
-Description=AdLab: weekly API scout (APScheduler)
+Description=AdLab: weekly API scout + digest email (APScheduler)
 
 [Service]
 WorkingDirectory=%h/mediaforge/adlab
