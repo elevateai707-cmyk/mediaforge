@@ -23,12 +23,12 @@ from typing import Any, Optional
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, fsutil, models, persist, schemas, touchup
+from . import config, fsutil, models, persist, schemas, touchup, transfer
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
@@ -974,6 +974,142 @@ def touchup_preview(asset_id: int = Query(...), preset: str = Query(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return Response(content=data, media_type="image/jpeg")
+
+
+# ---------------------------------------------------------------------------
+# import (upload / server folder) and media export
+# ---------------------------------------------------------------------------
+def _transfer_http(exc: transfer.TransferError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+@app.post("/api/import/upload", response_model=schemas.UploadOut)
+async def import_upload(request: Request, filename: str = Query(..., min_length=1)):
+    """Stream one raw request body to <library>/imports/<date>/<filename>.
+
+    The client sends each file as its own request (body = file bytes) so the
+    server never buffers a whole file; chunks go straight to a .part file.
+    """
+    try:
+        length = int(request.headers.get("content-length") or 0) or None
+    except ValueError:
+        length = None
+    try:
+        final, part = await asyncio.get_running_loop().run_in_executor(
+            None, transfer.prepare_upload, filename, length)
+    except transfer.TransferError as exc:
+        raise _transfer_http(exc)
+    size = 0
+    try:
+        with open(part, "wb") as fh:
+            async for chunk in request.stream():
+                if chunk:
+                    fh.write(chunk)
+                    size += len(chunk)
+        if size == 0:
+            raise HTTPException(status_code=422, detail="empty upload")
+        final = transfer.commit_upload(part, final)
+    except BaseException:
+        try:
+            part.unlink()
+        except OSError:
+            pass
+        raise
+    return schemas.UploadOut(path=str(final), name=final.name, size=size,
+                             folder=str(final.parent))
+
+
+@app.post("/api/import/folder", response_model=schemas.ImportFolderOut)
+async def import_folder(req: schemas.ImportFolderRequest):
+    """Copy a server-side folder into the library as a background job, then scan it."""
+    loop = asyncio.get_running_loop()
+    try:
+        plan = await loop.run_in_executor(None, transfer.plan_folder_import, req.path)
+    except transfer.TransferError as exc:
+        raise _transfer_http(exc)
+
+    async def _run(progress, flag):
+        def _copy():
+            transfer.copy_tree(plan["files"], plan["src"], plan["dest"],
+                               progress=lambda f, m: progress(f * 0.95, m),
+                               cancelled=lambda: flag.cancelled)
+        await asyncio.get_running_loop().run_in_executor(None, _copy)
+        if flag.cancelled:
+            return
+        progress(0.95, "copy complete, starting scan")
+        jobs.run("scan", _background(scanner.scan_paths, [str(plan["dest"])], rescan=False))
+
+    job_id = jobs.run("import", _run)
+    return schemas.ImportFolderOut(
+        job_id=job_id, kind="import", src=str(plan["src"]), dest=str(plan["dest"]),
+        files=len(plan["files"]), bytes=plan["bytes"], skipped=plan["skipped"])
+
+
+def _parse_ids(raw: str) -> list[int]:
+    try:
+        ids = [int(x) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="ids must be comma-separated integers")
+    if not ids:
+        raise HTTPException(status_code=422, detail="ids must not be empty")
+    if len(ids) > 5000:
+        raise HTTPException(status_code=422, detail="too many ids (max 5000)")
+    return list(dict.fromkeys(ids))
+
+
+def _asset_paths(db: Session, ids: list[int]) -> list[str]:
+    rows = db.query(models.Asset).filter(models.Asset.id.in_(ids)).all()
+    by_id = {a.id: a.path for a in rows if a.path}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def _download_name(name: str) -> str:
+    return name.replace('"', "'")
+
+
+@app.get("/api/assets/{asset_id}/download")
+def asset_download(asset_id: int, db: Session = Depends(get_db)):
+    asset = _get_asset(db, asset_id)
+    if not asset.path or not os.path.isfile(asset.path):
+        raise HTTPException(status_code=404, detail="file missing on disk")
+    return FileResponse(asset.path, filename=os.path.basename(asset.path),
+                        media_type=asset.mime or "application/octet-stream")
+
+
+@app.get("/api/export/media/zip")
+def export_media_zip(ids: str = Query(..., description="comma-separated asset ids"),
+                     sidecars: bool = True, db: Session = Depends(get_db)):
+    paths = _asset_paths(db, _parse_ids(ids))
+    files = transfer.export_file_list(paths, include_sidecars=sidecars)
+    if not files:
+        raise HTTPException(status_code=404, detail="none of the selected files exist on disk")
+    name = f"mediaforge-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        transfer.stream_zip(files), media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{_download_name(name)}"'})
+
+
+@app.post("/api/export/media/copy", response_model=schemas.MediaCopyOut)
+async def export_media_copy(req: schemas.MediaCopyRequest, db: Session = Depends(get_db)):
+    paths = _asset_paths(db, list(dict.fromkeys(req.asset_ids)))
+    if not paths:
+        raise HTTPException(status_code=404, detail="no matching assets")
+    loop = asyncio.get_running_loop()
+    try:
+        plan = await loop.run_in_executor(
+            None, transfer.plan_folder_export, paths, req.dest, req.include_sidecars)
+    except transfer.TransferError as exc:
+        raise _transfer_http(exc)
+
+    async def _run(progress, flag):
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: transfer.copy_export(
+                plan["files"], plan["dest"], progress=progress,
+                cancelled=lambda: flag.cancelled))
+
+    job_id = jobs.run("export", _run)
+    return schemas.MediaCopyOut(job_id=job_id, kind="export", dest=str(plan["dest"]),
+                                files=len(plan["files"]), bytes=plan["bytes"])
 
 
 # ---------------------------------------------------------------------------

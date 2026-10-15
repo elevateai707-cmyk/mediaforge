@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Play, Clock, Sparkles, MapPin } from 'lucide-react'
+import { Play, Clock, Sparkles, MapPin, Check } from 'lucide-react'
 import type { Asset } from '@/lib/types'
 import { posterUrl, thumbUrl } from '@/lib/api'
 import { formatDuration } from '@/lib/utils'
@@ -9,10 +9,13 @@ import { Badge } from '@/components/ui/badge'
 interface AssetCardProps {
   asset: Asset
   onClick: (asset: Asset) => void
+  /** Multi-select: when provided a checkbox is shown and `selected` styles the card. */
+  selected?: boolean
+  onToggleSelect?: (asset: Asset) => void
   className?: string
 }
 
-export function AssetCard({ asset, onClick, className }: AssetCardProps) {
+export function AssetCard({ asset, onClick, selected, onToggleSelect, className }: AssetCardProps) {
   const img = asset.kind === 'video' ? posterUrl(asset.id) : thumbUrl(asset.id)
   const score = asset.aesthetic_score
   const place = asset.city ?? asset.place_name
@@ -28,6 +31,7 @@ export function AssetCard({ asset, onClick, className }: AssetCardProps) {
       onClick={() => onClick(asset)}
       className={cn(
         'group relative aspect-square w-full cursor-pointer overflow-hidden rounded-2xl bg-surface text-left outline outline-1 outline-white/10 -outline-offset-1 transition-[transform] duration-200 ease-out active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        selected && 'ring-2 ring-primary',
         className,
       )}
     >
@@ -45,6 +49,26 @@ export function AssetCard({ asset, onClick, className }: AssetCardProps) {
             <Play className="h-5 w-5 fill-primary-foreground text-primary-foreground" />
           </div>
         </div>
+      )}
+
+      {onToggleSelect && (
+        <span
+          role="checkbox"
+          aria-checked={selected}
+          aria-label={selected ? 'Deselect' : 'Select'}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleSelect(asset)
+          }}
+          className={cn(
+            'absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border backdrop-blur-sm transition-opacity',
+            selected
+              ? 'border-primary bg-primary text-primary-foreground opacity-100'
+              : 'border-white/50 bg-black/40 text-transparent opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+          )}
+        >
+          <Check className="h-4 w-4" />
+        </span>
       )}
 
       <div className="absolute left-2 top-2 flex gap-1.5">

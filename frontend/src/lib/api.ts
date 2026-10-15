@@ -92,6 +92,85 @@ export const rescanPaths = (paths: string[]) =>
 export const cancelScan = (job_id: string) =>
   request<{ ok: boolean }>('/api/scan/cancel', { method: 'POST', body: JSON.stringify({ job_id }) })
 
+// ---------- Import / export media ----------
+
+export interface UploadResult {
+  ok: boolean
+  path: string
+  name: string
+  size: number
+  folder: string
+}
+
+export interface ImportFolderResponse extends StartJobResponse {
+  src: string
+  dest: string
+  files: number
+  bytes: number
+}
+
+export interface MediaCopyResponse extends StartJobResponse {
+  dest: string
+  files: number
+  bytes: number
+}
+
+/** Stream one file as a raw request body (no multipart buffering on the server). */
+export function uploadFile(
+  file: File,
+  onProgress?: (loaded: number, total: number) => void,
+): { promise: Promise<UploadResult>; abort: () => void } {
+  const xhr = new XMLHttpRequest()
+  const promise = new Promise<UploadResult>((resolve, reject) => {
+    xhr.open('POST', `${API_BASE}/api/import/upload${buildQuery({ filename: file.name })}`)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total)
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'Upload failed — cannot reach backend'))
+    xhr.onabort = () => reject(new ApiError(0, 'Upload cancelled'))
+    xhr.onload = () => {
+      let body: { detail?: unknown } & Partial<UploadResult> = {}
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // non-JSON body
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(body as UploadResult)
+      const msg = typeof body.detail === 'string' ? body.detail : `${xhr.status} ${xhr.statusText}`
+      reject(new ApiError(xhr.status, msg, body.detail))
+    }
+    xhr.send(file)
+  })
+  return { promise, abort: () => xhr.abort() }
+}
+
+export const importFolder = (path: string) =>
+  request<ImportFolderResponse>('/api/import/folder', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  })
+
+export const exportMediaCopy = (asset_ids: number[], dest: string | null, include_sidecars: boolean) =>
+  request<MediaCopyResponse>('/api/export/media/copy', {
+    method: 'POST',
+    body: JSON.stringify({ asset_ids, dest: dest || null, include_sidecars }),
+  })
+
+export const downloadUrl = (id: number) => `${API_BASE}/api/assets/${id}/download`
+export const zipExportUrl = (ids: number[], sidecars = true) =>
+  `${API_BASE}/api/export/media/zip${buildQuery({ ids: ids.join(','), sidecars })}`
+
+/** Trigger a browser download for a URL that answers with Content-Disposition: attachment. */
+export function triggerDownload(url: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.rel = 'noreferrer'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 // ---------- Assets ----------
 
 export interface AssetQueryParams {

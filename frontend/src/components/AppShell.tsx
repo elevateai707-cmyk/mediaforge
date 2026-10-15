@@ -13,13 +13,16 @@ import {
   HelpCircle,
   MapPin,
   Copy,
+  Upload,
 } from 'lucide-react'
 import { useWsStore } from '@/lib/ws'
 import { HELP_OPEN_EVENT } from '@/lib/help-kb'
 import { JobProgressPanel } from '@/components/JobProgressPanel'
 import { HelpChat } from '@/components/HelpChat'
+import { ImportDialog } from '@/components/ImportDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { IMPORT_OPEN_EVENT, cn } from '@/lib/utils'
 
 interface NavItem {
   to: string
@@ -105,6 +108,19 @@ function GpuBadge() {
   )
 }
 
+function ImportButton({ compact }: { compact?: boolean }) {
+  return (
+    <Button
+      variant="gradient"
+      size={compact ? 'sm' : 'default'}
+      className={compact ? undefined : 'w-full'}
+      onClick={() => window.dispatchEvent(new CustomEvent(IMPORT_OPEN_EVENT))}
+    >
+      <Upload /> Import
+    </Button>
+  )
+}
+
 function BrandMark({ compact }: { compact?: boolean }) {
   return (
     <NavLink to="/" className="flex items-center gap-2.5">
@@ -135,6 +151,9 @@ export function AppShell() {
         <div className="flex h-16 items-center gap-2 border-b border-border pr-4">
           <div className="sprocket-rail h-16 w-4 shrink-0 opacity-70" aria-hidden />
           <BrandMark />
+        </div>
+        <div className="p-3 pb-0">
+          <ImportButton />
         </div>
         <nav className="flex-1 space-y-5 overflow-y-auto p-3">
           {NAV_GROUPS.map((group) => (
@@ -193,7 +212,10 @@ export function AppShell() {
         <div className="flex h-14 items-center gap-2">
           <BrandMark />
         </div>
-        <GpuBadge />
+        <div className="flex items-center gap-2">
+          <ImportButton compact />
+          <GpuBadge />
+        </div>
       </header>
 
       <main className="relative pb-24 md:pb-8 md:pl-60">
@@ -233,6 +255,7 @@ export function AppShell() {
       </nav>
 
       <JobProgressPanel />
+      <ImportDialog />
       <HelpChat />
     </div>
   )

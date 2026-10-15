@@ -231,6 +231,39 @@ class ExportRequest(BaseModel):
     plan_id: str
 
 
+# --- Media import / export ---------------------------------------------------
+class UploadOut(BaseModel):
+    ok: bool = True
+    path: str
+    name: str
+    size: int
+    folder: str
+
+
+class ImportFolderRequest(BaseModel):
+    path: str
+
+
+class ImportFolderOut(JobRefOut):
+    src: str
+    dest: str
+    files: int
+    bytes: int
+    skipped: int = 0
+
+
+class MediaCopyRequest(BaseModel):
+    asset_ids: list[int] = Field(min_length=1)
+    dest: Optional[str] = None
+    include_sidecars: bool = True
+
+
+class MediaCopyOut(JobRefOut):
+    dest: str
+    files: int
+    bytes: int
+
+
 class ExportPathOut(BaseModel):
     ok: bool = True
     path: str

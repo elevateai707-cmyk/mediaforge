@@ -9,8 +9,12 @@ import {
   MessagesSquare,
   Scissors,
   ExternalLink,
+  Download,
+  FolderOutput,
 } from 'lucide-react'
-import { getAsset, getScenes, getTranscript, proxyUrl, fileUrl, thumbUrl } from '@/lib/api'
+import { getAsset, getScenes, getTranscript, proxyUrl, fileUrl, thumbUrl, downloadUrl } from '@/lib/api'
+import { ExportDialog } from '@/components/ExportDialog'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -42,6 +46,7 @@ export function AssetLightbox({ assetId, onOpenChange }: AssetLightboxProps) {
   const open = assetId !== null
   const videoRef = useRef<HTMLVideoElement>(null)
   const [seekTarget, setSeekTarget] = useState<number | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
 
   const { data: asset, isLoading } = useQuery({
     queryKey: ['asset', assetId],
@@ -213,14 +218,25 @@ export function AssetLightbox({ assetId, onOpenChange }: AssetLightboxProps) {
                   </div>
                 )}
 
-                <a
-                  href={fileUrl(asset.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" /> Open original file
-                </a>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button asChild size="sm">
+                    <a href={downloadUrl(asset.id)} download>
+                      <Download /> Download
+                    </a>
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setExportOpen(true)}>
+                    <FolderOutput /> Export…
+                  </Button>
+                  <a
+                    href={fileUrl(asset.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" /> Open original file
+                  </a>
+                </div>
+                <ExportDialog ids={[asset.id]} open={exportOpen} onOpenChange={setExportOpen} />
               </div>
             </div>
           </>

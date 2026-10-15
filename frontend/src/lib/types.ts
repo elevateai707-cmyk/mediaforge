@@ -160,7 +160,7 @@ export interface AppConfig {
 
 export interface Job {
   id: string
-  kind: 'scan' | 'ai' | 'render' | 'touchup' | string
+  kind: 'scan' | 'ai' | 'render' | 'touchup' | 'import' | 'export' | string
   status: 'running' | 'done' | 'error' | 'cancelled' | string
   progress: number
   message: string | null

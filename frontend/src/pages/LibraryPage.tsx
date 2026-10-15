@@ -2,7 +2,16 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowDownWideNarrow, ArrowUpNarrowWide, Images, Loader2, X } from 'lucide-react'
+import {
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
+  CheckSquare,
+  Download,
+  Images,
+  Loader2,
+  Upload,
+  X,
+} from 'lucide-react'
 import { listAssets, listFaces, listPlaces, type AssetQueryParams } from '@/lib/api'
 import type { Asset } from '@/lib/types'
 import { HELP_OPEN_EVENT } from '@/lib/help-kb'
@@ -11,6 +20,8 @@ import { CommandBar } from '@/components/CommandBar'
 import { TripCards } from '@/components/TripCards'
 import { AssetCard } from '@/components/AssetCard'
 import { AssetLightbox } from '@/components/AssetLightbox'
+import { ExportDialog } from '@/components/ExportDialog'
+import { IMPORT_OPEN_EVENT } from '@/lib/utils'
 import { EmptyState } from '@/components/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
@@ -48,6 +59,9 @@ export function LibraryPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [openAsset, setOpenAsset] = useState<Asset | null>(null)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [exportOpen, setExportOpen] = useState(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const { data: faces } = useQuery({ queryKey: ['faces'], queryFn: listFaces })
@@ -115,6 +129,19 @@ export function LibraryPage() {
       Number.isFinite(tripId),
   )
 
+  const toggleSelect = (asset: Asset) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(asset.id)) next.delete(asset.id)
+      else next.add(asset.id)
+      return next
+    })
+  }
+  const exitSelect = () => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }
+
   const clearFilters = () => {
     setKind('all')
     setQ('')
@@ -136,11 +163,27 @@ export function LibraryPage() {
         }
         description="Browse everything indexed by MediaForge — photos, video, captions and faces."
         actions={
-          total > 0 ? (
-            <Badge variant="outline" className="px-3 py-1">
-              {total.toLocaleString()} assets
-            </Badge>
-          ) : undefined
+          <>
+            {total > 0 && (
+              <Badge variant="outline" className="px-3 py-1">
+                {total.toLocaleString()} assets
+              </Badge>
+            )}
+            {total > 0 && (
+              <Button
+                variant={selectMode ? 'secondary' : 'outline'}
+                onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+              >
+                <CheckSquare /> {selectMode ? 'Done selecting' : 'Select'}
+              </Button>
+            )}
+            <Button
+              variant="gradient"
+              onClick={() => window.dispatchEvent(new CustomEvent(IMPORT_OPEN_EVENT))}
+            >
+              <Upload /> Import
+            </Button>
+          </>
         }
       />
 
@@ -297,7 +340,13 @@ export function LibraryPage() {
         <>
           <motion.div layout className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 sm:gap-4">
             {items.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} onClick={setOpenAsset} />
+              <AssetCard
+                key={asset.id}
+                asset={asset}
+                onClick={selectMode ? toggleSelect : setOpenAsset}
+                selected={selected.has(asset.id)}
+                onToggleSelect={toggleSelect}
+              />
             ))}
           </motion.div>
           <div ref={sentinelRef} className="h-24" />
@@ -308,6 +357,26 @@ export function LibraryPage() {
           )}
         </>
       )}
+
+      {selected.size > 0 && (
+        <div className="glass-strong fixed inset-x-4 bottom-20 z-40 mx-auto flex max-w-xl items-center gap-2 rounded-2xl p-3 shadow-2xl shadow-black/50 md:bottom-4 md:left-[calc(15rem+1rem)] md:mx-0">
+          <span className="flex-1 text-sm font-medium tabular">{selected.size} selected</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelected(new Set(items.map((a) => a.id)))}
+          >
+            Select loaded
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+          <Button size="sm" onClick={() => setExportOpen(true)}>
+            <Download /> Export
+          </Button>
+        </div>
+      )}
+      <ExportDialog ids={[...selected]} open={exportOpen} onOpenChange={setExportOpen} />
 
       <AssetLightbox assetId={openAsset?.id ?? null} onOpenChange={(o) => !o && setOpenAsset(null)} />
     </div>
