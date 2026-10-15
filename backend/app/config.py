@@ -104,8 +104,8 @@ WHISPER_COMPUTE = os.environ.get("MF_WHISPER_COMPUTE", "int8")
 FACE_MODEL = os.environ.get("MF_FACE_MODEL", "buffalo_sc")
 
 # Resolve scripting module (Linux install path)
-RESOLVE_MODULE_DIR = "/opt/resolve/apis/Scripting/Module"
-RESOLVE_LIBS_DIR = "/opt/resolve/libs"
+RESOLVE_MODULE_DIR = os.environ.get("MF_RESOLVE_MODULE_DIR", "/opt/resolve/Developer/Scripting/Modules")
+RESOLVE_LIBS_DIR = os.environ.get("MF_RESOLVE_LIBS_DIR", "/opt/resolve/libs")
 
 # Render defaults
 RENDER_CRF = 18
