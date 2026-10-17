@@ -25,7 +25,8 @@ from typing import Any, Optional
 
 from sqlalchemy import or_
 
-from .. import models
+from .. import config, models, persist
+from ..ai import cloud_llm
 from ..db import SessionLocal
 from ..geo.gazetteer import haversine_km
 from ..ingest.trips import trip_asset_ids
@@ -159,7 +160,7 @@ def _row_source(asset: models.Asset, scene=None) -> dict:
 
 
 def _candidate_sources(db, parsed: Optional[Intent] = None, limit: int = 40,
-                       trip_id: Optional[int] = None) -> tuple[list[dict], dict]:
+                       trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None) -> tuple[list[dict], dict]:
     """Place-prefiltered scenes. Never mixes another city into a placed request."""
     if parsed is None:
         parsed = parse_intent("", trip_id=trip_id)
@@ -189,6 +190,8 @@ def _candidate_sources(db, parsed: Optional[Intent] = None, limit: int = 40,
                 stats["matched_assets"] = len(ids)
                 stats["radius_km"] = float(parsed.radius_km or 45.0) * 2.0
 
+    if selected_ids is not None:
+        ids = set(selected_ids) if ids is None else ids.intersection(selected_ids)
     sources: list[dict] = []
     scene_q = (
         db.query(models.Scene, models.Asset)
@@ -276,7 +279,7 @@ def _caption_text(asset: models.Asset, scene: Optional[models.Scene]) -> str:
 # ---------------------------------------------------------------------------
 
 def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None,
-                        parsed: Optional[Intent] = None) -> dict:
+                        parsed: Optional[Intent] = None, selected_ids: Optional[list[int]] = None) -> dict:
     """Greedy: place-prefiltered scenes, budgeted to duration."""
     parsed = parsed or parse_intent(intent, trip_id=trip_id)
     if trip_id:
@@ -284,7 +287,7 @@ def _deterministic_plan(intent: str, db, trip_id: Optional[int] = None,
     target = parsed.duration_s
     ratio = parsed.ratio
     keywords = _intent_keywords(intent)
-    sources, stats = _candidate_sources(db, parsed=parsed, trip_id=trip_id)
+    sources, stats = _candidate_sources(db, parsed=parsed, trip_id=trip_id, selected_ids=selected_ids)
 
     if parsed.place and not sources:
         place = parsed.place
@@ -476,28 +479,22 @@ def _normalize_clips(clips: Any, db, allowed_ids: Optional[set[int]] = None) -> 
     return out
 
 
-def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dict]:
-    """Ask Ollama for the plan; None on any failure (caller falls back)."""
-    if _ollama_generate is None:
-        log.info("ollama_llm unavailable (%s); using fallback planner",
-                 _OLLAMA_IMPORT_ERROR)
-        return None
+def _llm_plan(intent: str, db, generate, source: str, trip_id: Optional[int] = None,
+              selected_ids: Optional[list[int]] = None) -> Optional[dict]:
+    """Ask an LLM (``generate(prompt) -> str``) for the plan; None on any failure."""
     parsed = parse_intent(intent, trip_id=trip_id)
     target = parsed.duration_s
     ratio = parsed.ratio
-    sources, stats = _candidate_sources(db, parsed=parsed, limit=30, trip_id=trip_id)
+    sources, stats = _candidate_sources(db, parsed=parsed, limit=30, trip_id=trip_id, selected_ids=selected_ids)
     if not sources:
         return None
 
     prompt = _ollama_prompt(intent, sources, target, ratio)
     for attempt in (1,):
         try:
-            text = _ollama_generate(
-                "qwen2.5vl:7b", prompt,
-                format="json", temperature=0.2, retries=1, timeout=12.0,
-            )
-        except Exception as exc:  # noqa: BLE001 - ollama down -> fallback
-            log.warning("ollama plan failed (attempt %d): %s", attempt, exc)
+            text = generate(prompt)
+        except Exception as exc:  # noqa: BLE001 - provider down -> fallback
+            log.warning("%s plan failed (attempt %d): %s", source, attempt, exc)
             continue
         data = _extract_json(text)
         if not isinstance(data, dict):
@@ -514,12 +511,32 @@ def _ollama_plan(intent: str, db, trip_id: Optional[int] = None) -> Optional[dic
             "clips": clips,
             "total_duration": round(sum(c["end"] - c["start"] for c in clips), 2),
             "target_ratio": str(data.get("target_ratio", ratio)),
-            "source": "ollama",
+            "source": source,
             "parsed_intent": parsed.to_dict(),
             "match_stats": stats,
         }
     return None
 
+
+def _ollama_plan(intent: str, db, trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None) -> Optional[dict]:
+    """Local Ollama planner; None on any failure (caller falls back)."""
+    if _ollama_generate is None:
+        log.info("ollama_llm unavailable (%s); using fallback planner", _OLLAMA_IMPORT_ERROR)
+        return None
+    return _llm_plan(
+        intent, db,
+        lambda prompt: _ollama_generate(config.PLAN_MODEL, prompt, format="json", temperature=0.2,
+                                        retries=1, timeout=config.PLAN_TIMEOUT),
+        "ollama", trip_id=trip_id, selected_ids=selected_ids,
+    )
+
+
+def _cloud_plan(intent: str, db, trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None) -> Optional[dict]:
+    """OpenRouter planner, only when Cloud LLM is switched on and a key exists."""
+    if not persist.use_cloud_llm() or not cloud_llm.available():
+        return None
+    return _llm_plan(intent, db, cloud_llm.generate_json, "cloud",
+                     trip_id=trip_id, selected_ids=selected_ids)
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -562,17 +579,20 @@ def _plan_dict(plan: models.EditPlan) -> dict:
     }
 
 
-def create_plan(intent: str, trip_id: Optional[int] = None) -> dict:
+def create_plan(intent: str, trip_id: Optional[int] = None, selected_ids: Optional[list[int]] = None, local_only: bool = False) -> dict:
     """POST /api/edits/plan: build + persist a draft plan."""
     with SessionLocal() as db:
         parsed = parse_intent(intent, trip_id=trip_id)
-        plan_data = _ollama_plan(intent, db, trip_id=trip_id) or _deterministic_plan(
-            intent, db, trip_id=trip_id, parsed=parsed
+        plan_data = (
+            (None if local_only else _cloud_plan(intent, db, trip_id=trip_id, selected_ids=selected_ids))
+            or _ollama_plan(intent, db, trip_id=trip_id, selected_ids=selected_ids)
+        ) or _deterministic_plan(
+            intent, db, trip_id=trip_id, parsed=parsed, selected_ids=selected_ids
         )
         plan_id = _new_plan_id()
         blob = json.dumps({
             "parsed_intent": plan_data.get("parsed_intent") or parsed.to_dict(),
-            "match_stats": plan_data.get("match_stats") or {},
+            "match_stats": {**(plan_data.get("match_stats") or {}), "planner_source": plan_data.get("source", "unknown")},
         })
         plan = models.EditPlan(
             id=plan_id,

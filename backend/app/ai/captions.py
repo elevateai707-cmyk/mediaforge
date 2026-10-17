@@ -15,8 +15,8 @@ import os
 import re
 from typing import Optional
 
-from app import config
-from app.ai import gpu
+from app import config, persist
+from app.ai import cloud_llm, gpu
 from app.ai.ollama_llm import ensure_model, generate, image_to_b64
 from app.images import open_rgb
 
@@ -28,6 +28,14 @@ _CAPTION_PROMPT = (
     "Describe this image in one short sentence (max 15 words). "
     "Only the description, no preamble."
 )
+
+
+def cloud_captions_enabled() -> bool:
+    """Cloud captions follow the Settings -> Cloud LLM switch and need a key."""
+    try:
+        return persist.use_cloud_llm() and cloud_llm.available()
+    except Exception:  # pragma: no cover - settings table missing in bare tests
+        return False
 
 
 def _ensure_model_ready() -> bool:
@@ -112,8 +120,6 @@ def try_caption(image_path: str) -> Optional[str]:
     """
     if not image_path or not os.path.isfile(image_path):
         return None
-    if not _ensure_model_ready():
-        raise CaptionUnavailable("ollama unreachable or model missing")
     try:
         b64 = image_to_b64(image_path, max_side=1024)
     except Exception as exc:  # noqa: BLE001 - one bad file, not a model fault
@@ -121,6 +127,15 @@ def try_caption(image_path: str) -> Optional[str]:
         return None
     if not b64:
         return None
+    if cloud_captions_enabled():
+        try:
+            text = re.sub(r"\s+", " ", cloud_llm.caption(b64) or "").strip()
+            if text:
+                return text[:200]
+        except Exception as exc:
+            log.warning("cloud caption failed, using local model: %s", exc)
+    if not _ensure_model_ready():
+        raise CaptionUnavailable("ollama unreachable or model missing")
     try:
         text = (_generate_caption(b64) or "").strip()
         text = re.sub(r"\s+", " ", text).strip(" '\".,")
@@ -133,7 +148,11 @@ def try_caption(image_path: str) -> Optional[str]:
 
 
 def caption_image(image_path: str) -> str:
-    """Short caption for an image. Always returns a non-empty string."""
+    """Short caption for an image. Always returns a non-empty string.
+
+    Cloud (OpenRouter vision) when Cloud LLM is on and a key exists, else the
+    local Ollama model, else a deterministic filename+colour fallback.
+    """
     if not image_path or not os.path.isfile(image_path):
         return "image"
     try:

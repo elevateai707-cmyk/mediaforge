@@ -1,3 +1,4 @@
+import { AddMedia } from '@/components/AddMedia'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
@@ -79,6 +80,7 @@ export function LibraryPage() {
     error,
   } = useInfiniteQuery({
     queryKey: ['assets', params],
+    refetchInterval: 10000,
     queryFn: ({ pageParam }) => listAssets({ ...params, limit: PAGE_SIZE, offset: pageParam }),
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
@@ -144,6 +146,7 @@ export function LibraryPage() {
         }
       />
 
+      <AddMedia />
       <TripCards />
 
       {places && places.length > 0 && (

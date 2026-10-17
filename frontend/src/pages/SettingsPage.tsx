@@ -1,5 +1,7 @@
+import { BuildInfo } from '@/components/BuildInfo'
+import { ProviderSettings } from '@/components/ProviderSettings'
 import { useEffect, useState, type FormEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Cpu,
   FolderOpen,
@@ -48,6 +50,7 @@ export function SettingsPage() {
   const [cancelling, setCancelling] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
 
+  const queryClient = useQueryClient()
   const { data: config } = useQuery({ queryKey: ['config'], queryFn: getConfig })
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: getHealth })
   const {
@@ -71,8 +74,8 @@ export function SettingsPage() {
   function addDir(e: FormEvent) {
     e.preventDefault()
     const p = dirInput.trim()
-    if (!p.startsWith('/')) {
-      setDirError('Enter an absolute path, e.g. /home/bfam/Pictures')
+    if (!p.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(p) && !p.startsWith('\\\\')) {
+      setDirError('Enter an absolute folder path on the computer running MediaForge')
       return
     }
     setDirError(null)
@@ -96,6 +99,8 @@ export function SettingsPage() {
     setStartingScan(true)
     setScanError(null)
     try {
+      const saved = await putConfig({ media_dirs: dirs })
+      queryClient.setQueryData(['config'], saved)
       const res = await scanPaths(dirs)
       setScanJobId(res.job_id)
     } catch (e) {
@@ -124,6 +129,8 @@ export function SettingsPage() {
 
   return (
     <div>
+      <BuildInfo />
+      <ProviderSettings />
       <PageHeader
         title={
           <>
@@ -145,7 +152,7 @@ export function SettingsPage() {
             <CardContent className="space-y-4">
               <form onSubmit={addDir} className="flex gap-2">
                 <Input
-                  placeholder="/home/bfam/Pictures"
+                  placeholder="/home/you/Pictures"
                   value={dirInput}
                   onChange={(e) => setDirInput(e.target.value)}
                   aria-label="Add media directory path"
@@ -199,7 +206,7 @@ export function SettingsPage() {
                   ) : (
                     <ScanSearch className="h-4 w-4" />
                   )}
-                  {scanRunning ? 'Scanning…' : 'Scan folders'}
+                  {scanRunning ? 'Scanning…' : 'Save folders & scan'}
                 </Button>
                 {scanRunning && (
                   <Button variant="destructive" onClick={handleCancel} disabled={cancelling}>
@@ -269,7 +276,7 @@ export function SettingsPage() {
                   id="watcher"
                   checked={config?.watcher_enabled !== false}
                   onCheckedChange={(on) => {
-                    void putConfig({ watcher_enabled: on })
+                    void putConfig({ watcher_enabled: on }).then(next => queryClient.setQueryData(['config'], next)).catch(e => setScanError(e instanceof Error ? e.message : 'Could not change folder watching'))
                   }}
                 />
               </div>
@@ -288,8 +295,21 @@ export function SettingsPage() {
                   <dd className="font-mono text-xs">{config?.ollama_model ?? '—'}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="text-muted-foreground">Cloud LLM</dt>
-                  <dd className="font-mono text-xs">{config?.use_cloud_llm ? 'on' : 'off'}</dd>
+                  <dt className="text-muted-foreground">
+                    <label htmlFor="cloud-llm">Cloud edit planner (DeepSeek via OpenRouter)</label>
+                    <span className="block text-xs">
+                      Sends your prompt and scene captions only, never media. Falls back to the local model.
+                    </span>
+                  </dt>
+                  <dd>
+                    <Switch
+                      id="cloud-llm"
+                      checked={config?.use_cloud_llm === true}
+                      onCheckedChange={(on) => {
+                        void putConfig({ use_cloud_llm: on }).then((next) => queryClient.setQueryData(['config'], next))
+                      }}
+                    />
+                  </dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-muted-foreground">DaVinci Resolve</dt>

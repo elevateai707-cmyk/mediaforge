@@ -41,6 +41,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: 'Create',
     items: [
+      { to: '/creator', label: 'Creator Studio', icon: Wand2 },
       { to: '/studio', label: 'Studio', icon: Clapperboard },
       { to: '/touchup', label: 'Touch-up', icon: Wand2 },
     ],
@@ -56,7 +57,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 
 const MOBILE_NAV: NavItem[] = [
   { to: '/', label: 'Library', icon: Images, end: true },
-  { to: '/search', label: 'Search', icon: Search },
+  { to: '/creator', label: 'Creator', icon: Wand2 },
   { to: '/studio', label: 'Studio', icon: Clapperboard },
   { to: '/faces', label: 'Faces', icon: Users },
   { to: '/settings', label: 'More', icon: Settings },

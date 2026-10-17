@@ -8,6 +8,7 @@ import { EditStudioPage } from '@/pages/EditStudioPage'
 import { TouchUpPage } from '@/pages/TouchUpPage'
 import { DedupePage } from '@/pages/DedupePage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { CreatorPage } from '@/pages/CreatorPage'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/faces" element={<FacesPage />} />
         <Route path="/map" element={<MapPage />} />
         <Route path="/studio" element={<EditStudioPage />} />
+        <Route path="/creator" element={<CreatorPage />} />
         <Route path="/touchup" element={<TouchUpPage />} />
         <Route path="/dedupe" element={<DedupePage />} />
         <Route path="/settings" element={<SettingsPage />} />

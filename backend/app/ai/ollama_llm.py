@@ -180,6 +180,9 @@ def unload_model(model: Optional[str] = None) -> bool:
         return False
 
 
+from .gpu import serialized
+
+@serialized
 def generate(model: str, prompt: str, images: Optional[list[str]] = None,
              format: Optional[str] = None, temperature: float = 0.2,
              retries: int = 5, timeout: Optional[float] = None,
@@ -190,6 +193,8 @@ def generate(model: str, prompt: str, images: Optional[list[str]] = None,
     Raises RuntimeError with a clear message when Ollama is unreachable or the
     model is missing.
     """
+    from . import whisper, clip
+    whisper.unload(); clip.unload()
     last_exc: Optional[Exception] = None
     payload = build_payload(model, prompt, images, format, temperature,
                             num_gpu)

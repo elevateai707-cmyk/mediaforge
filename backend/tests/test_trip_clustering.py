@@ -14,7 +14,7 @@ from app import models
 from app.ingest.trips import _group_assets
 
 BASE = datetime(2026, 8, 8, 12, 0, 0)
-ROLL = "/home/bfam/iphone-media/100APPLE"
+ROLL = "/test-media/phone/100APPLE"
 
 
 def _asset(aid, hours, city=None, lat=None, lon=None, folder=ROLL):

@@ -47,7 +47,7 @@ class JobManager:
     @staticmethod
     def _create_row(job_id: str, kind: str) -> None:
         with SessionLocal() as db:
-            db.add(models.Job(id=job_id, kind=kind, status="running",
+            db.add(models.Job(id=job_id, kind=kind, status="queued",
                               progress=0.0, message="queued"))
             db.commit()
 
@@ -115,6 +115,7 @@ class JobManager:
             meta: Optional[dict] = None) -> str:
         """Create a job row and schedule the coroutine as a background task."""
         job_id = self.create_job(kind)
+        if meta: self._update_row(job_id, meta=meta)
         flag = _CancelFlag()
         self._cancel_flags[job_id] = flag
 
@@ -124,8 +125,11 @@ class JobManager:
         async def _runner() -> None:
             from .ws import broadcast_job  # deferred to avoid circular import
             try:
+                self._update_row(job_id,status="running")
                 broadcast_job(job_id, kind, "running", 0.0, "starting")
-                await coro_factory(progress, flag)
+                result = await coro_factory(progress, flag)
+                if flag.cancelled: raise asyncio.CancelledError()
+                if result is not None: self._update_row(job_id,meta={**(meta or {}),"result":result})
                 self._update_row(job_id, status="done", progress=1.0,
                                  message="completed")
                 broadcast_job(job_id, kind, "done", 1.0, "completed")
