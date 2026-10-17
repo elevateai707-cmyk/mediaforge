@@ -250,7 +250,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
                 job: Any = None, caption_style: Optional[str] = None,
                 effects: bool = True, reframe: str = "smart",
                 safe_zones: Optional[Mapping[str, Any]] = None,
-                guide_overlay: bool = False,
+                guide_overlay: bool = False, music_start: Optional[float] = None,
                 _reframe_analysis: Optional[Mapping[str, dict]] = None) -> str:
     """Render an approved plan to exports/reel_<plan_id>_<ts>.mp4.
 
@@ -265,6 +265,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     n = len(resolved)
     from . import story as story_mod
     from . import kinetic, reframe as reframe_mod
+    from . import beatmap as beatmap_mod
     story = story_mod.get_story(plan_id)
     # Story sidecars are timing contracts, not merely caption metadata.  Do
     # not render a voiceover against clips that have drifted since planning.
@@ -355,7 +356,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             has_audio = _has_audio(asset.path)
         per_clip.append({
             "clip": c, "asset": asset, "dur": dur, "has_audio": has_audio,
-            "path": asset.path,
+            "path": asset.path, "start": float(c.start), "end": float(c.end),
         })
         total += dur
     # Reframe analysis is source-normalized, so it can be reused by
@@ -382,6 +383,34 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     )
     timeline = total - transition_overlap if n > 1 else total
 
+    # Beat sync (voice-led plans with music): nudge each internal cut onto the
+    # nearest music beat by moving the neighbouring clips' in/out points. The
+    # first start and last end never move, so the timeline length and the
+    # voiceover alignment are unchanged.
+    music_ss: Optional[float] = music_start
+    beat_bm = beatmap_mod.load(music_path) if (is_story and music_path) else None
+    snap_info: Optional[dict] = None
+    if beat_bm is not None:
+        if music_ss is None:
+            music_ss = beatmap_mod.default_start(beat_bm, timeline)
+        music_ss = max(0.0, min(float(music_ss), max(0.0, beat_bm.duration - timeline)))
+        beats_rel = beatmap_mod.rel(beat_bm.beats, music_ss, timeline,
+                                    pad=beatmap_mod.SNAP_TOLERANCE_S)
+        snap_info = beatmap_mod.snap_plan(
+            [pc["dur"] for pc in per_clip],
+            [float(pc["clip"].start) for pc in per_clip],
+            [max(0.0, float(pc["asset"].duration) - float(pc["clip"].end))
+             if pc["asset"].kind == "video" and pc["asset"].duration else 0.0
+             for pc in per_clip],
+            beats_rel)
+        for pc, (s_off, e_off) in zip(per_clip, snap_info["offsets"]):
+            pc["start"] = float(pc["clip"].start) + s_off
+            pc["end"] = float(pc["clip"].end) + e_off
+            pc["dur"] = pc["end"] - pc["start"]
+        log.info("beat sync: %d/%d cuts snapped (music start %.2fs)",
+                 sum(1 for d in snap_info["deltas"] if abs(d) > 1e-6),
+                 len(snap_info["deltas"]), music_ss)
+
     # ------------------------------------------------------------------
     # Build the command
     # ------------------------------------------------------------------
@@ -405,6 +434,8 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     if music_path:
         if not Path(music_path).exists():
             raise RenderError(f"music file not found: {music_path}")
+        if music_ss:
+            cmd += ["-ss", f"{music_ss:.3f}"]
         cmd += ["-stream_loop", "-1", "-i", music_path]
 
     filters: list[str] = []
@@ -435,7 +466,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
 
         chain = [f"[{in_idx}:v]fps={config.RENDER_FPS}"]
         chain.append(
-            f"trim=start={pc['clip'].start:.3f}:end={pc['clip'].end:.3f}"
+            f"trim=start={pc['start']:.3f}:end={pc['end']:.3f}"
             if pc["asset"].kind != "photo" else
             f"trim=start=0:end={pc['dur']:.3f}"
         )
@@ -509,7 +540,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     music_label: Optional[str] = None
     if music_path:
         music_label = f"m{input_index}"
-        fade_duration = min(1.0, max(0.05, timeline))
+        fade_duration = min(0.6 if is_story else 1.0, max(0.05, timeline))
         fade_start = max(0.0, timeline - fade_duration)
         filters.append(
             f"[{input_index}:a]aresample=48000,atrim=end={timeline:.3f},"
@@ -633,6 +664,14 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             _chain("eq=contrast=1.08:saturation=1.15,"
                    "colorbalance=rs=0.03:bs=-0.03:rm=0.02:bm=-0.02", "vgrade")
             starts = [float(b["start"]) for b in (story.get("beats") or [])[1:]]
+            if snap_info is not None:
+                cuts, snapped = snap_info["cuts"], snap_info["snapped"]
+                downs = beatmap_mod.rel(beat_bm.downbeats, music_ss, timeline)
+                mapped = []
+                for t0 in starts:
+                    j = next((i for i, c in enumerate(cuts) if abs(c - t0) < 0.02), None)
+                    mapped.append(beatmap_mod.flash_time(snapped[j] if j is not None else t0, downs))
+                starts = sorted(set(round(t, 3) for t in mapped))
             if starts:
                 flash = 3.0 / config.RENDER_FPS
                 shift = max(2, round(12 * min(width, height) / 1080))
@@ -745,7 +784,7 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
                 job: Any = None, caption_style: Optional[str] = None,
                 effects: bool = True, reframe: str = "smart",
                 safe_zones: Optional[Mapping[str, Any]] = None,
-                guide_overlay: bool = False,
+                guide_overlay: bool = False, music_start: Optional[float] = None,
                 _reframe_analysis: Optional[Mapping[str, dict]] = None) -> str:
     """Render one immutable view of a plan and its story sidecar.
 
@@ -759,7 +798,8 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
             plan_id, ratio=ratio, width=width, height=height, captions=captions,
             music_path=music_path, job=job, caption_style=caption_style,
             effects=effects, reframe=reframe, safe_zones=safe_zones,
-            guide_overlay=guide_overlay, _reframe_analysis=_reframe_analysis,
+            guide_overlay=guide_overlay, music_start=music_start,
+            _reframe_analysis=_reframe_analysis,
         )
 
 
@@ -772,7 +812,8 @@ async def render_job(plan_id: str, ratio: Optional[str], width: Optional[int],
                      progress, _cancel_flag, caption_style: Optional[str] = None,
                      effects: bool = True, reframe: str = "smart",
                      safe_zones: Optional[Mapping[str, Any]] = None,
-                     guide_overlay: bool = False) -> str:
+                     guide_overlay: bool = False,
+                     music_start: Optional[float] = None) -> str:
     """Async entrypoint for jobs.run: renders in a thread, honours cancel."""
     import asyncio
 
@@ -781,7 +822,8 @@ async def render_job(plan_id: str, ratio: Optional[str], width: Optional[int],
                            captions=captions, music_path=music_path,
                            job=progress, caption_style=caption_style,
                            effects=effects, reframe=reframe,
-                           safe_zones=safe_zones, guide_overlay=guide_overlay)
+                           safe_zones=safe_zones, guide_overlay=guide_overlay,
+                           music_start=music_start)
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _sync)
@@ -798,7 +840,8 @@ def _render_batch(plan_id: str, *, presets: Optional[list[str]] = None,
                  job: Any = None, caption_style: Optional[str] = None,
                  effects: bool = True, reframe: str = "smart",
                  safe_zones: Optional[Mapping[str, Any]] = None,
-                 guide_overlay: bool = False, cancel_flag: Any = None) -> dict[str, str]:
+                 guide_overlay: bool = False, cancel_flag: Any = None,
+                 music_start: Optional[float] = None) -> dict[str, str]:
     """Render selected presets sequentially, sharing the light crop analysis.
 
     The sequential loop intentionally avoids competing ffmpeg processes on a
@@ -837,7 +880,8 @@ def _render_batch(plan_id: str, *, presets: Optional[list[str]] = None,
             plan_id, ratio=preset, width=w, height=h, captions=captions,
             music_path=music_path, job=_one_progress, caption_style=caption_style,
             effects=effects, reframe=reframe, safe_zones=safe_zones,
-            guide_overlay=guide_overlay, _reframe_analysis=analysis,
+            guide_overlay=guide_overlay, music_start=music_start,
+            _reframe_analysis=analysis,
         )
     progress(1.0, "batch render complete")
     return output
@@ -848,7 +892,8 @@ def render_batch(plan_id: str, *, presets: Optional[list[str]] = None,
                  job: Any = None, caption_style: Optional[str] = None,
                  effects: bool = True, reframe: str = "smart",
                  safe_zones: Optional[Mapping[str, Any]] = None,
-                 guide_overlay: bool = False, cancel_flag: Any = None) -> dict[str, str]:
+                 guide_overlay: bool = False, cancel_flag: Any = None,
+                 music_start: Optional[float] = None) -> dict[str, str]:
     """Render an entire preset batch from one locked plan/sidecar revision."""
     from .plan_history import plan_lock
 
@@ -857,5 +902,5 @@ def render_batch(plan_id: str, *, presets: Optional[list[str]] = None,
             plan_id, presets=presets, captions=captions, music_path=music_path,
             job=job, caption_style=caption_style, effects=effects,
             reframe=reframe, safe_zones=safe_zones, guide_overlay=guide_overlay,
-            cancel_flag=cancel_flag,
+            cancel_flag=cancel_flag, music_start=music_start,
         )

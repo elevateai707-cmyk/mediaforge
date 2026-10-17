@@ -159,3 +159,28 @@ def approved_plan(client, wait_job, jpeg_library):
         return pid
 
     return _make
+
+
+@pytest.fixture()
+def cleanup_assets(client):
+    """Remove assets (and dependent rows) a test added to the shared session DB so
+    count-based assertions in later modules stay exact."""
+    from sqlalchemy import text
+
+    from app import models
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        top = db.query(models.Asset.id).order_by(models.Asset.id.desc()).first()
+        floor = top[0] if top else 0
+    yield
+    with SessionLocal() as db:
+        for a in db.query(models.Asset).filter(models.Asset.id > floor).all():
+            for tbl in ("clip_embeddings", "asset_fts"):
+                try:
+                    db.execute(text(f"DELETE FROM {tbl} WHERE asset_id = :a"), {"a": a.id})
+                except Exception:  # noqa: BLE001
+                    pass
+            db.query(models.TripAsset).filter_by(asset_id=a.id).delete()
+            db.query(models.FaceDetection).filter_by(asset_id=a.id).delete()
+            db.delete(a)
+        db.commit()

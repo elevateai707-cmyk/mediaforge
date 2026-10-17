@@ -1050,14 +1050,16 @@ async def start_render(req: schemas.RenderRequest):
                 presets=list(dict.fromkeys(req.presets)), captions=req.captions,
                 music_path=selected_music, job=progress, caption_style=req.caption_style,
                 effects=req.effects, reframe=req.reframe, safe_zones=req.safe_zones,
-                guide_overlay=req.guide_overlay, cancel_flag=_flag)
+                guide_overlay=req.guide_overlay, cancel_flag=_flag,
+                music_start=req.music_start)
             out = next(iter(outputs.values()), None)
         else:
             out = await render.render_job(
                 req.plan_id, req.ratio, req.width, req.height,
                 req.captions, selected_music, progress, _flag,
                 caption_style=req.caption_style, effects=req.effects,
-                reframe=req.reframe, safe_zones=req.safe_zones, guide_overlay=req.guide_overlay)
+                reframe=req.reframe, safe_zones=req.safe_zones, guide_overlay=req.guide_overlay,
+                music_start=req.music_start)
             outputs = {req.ratio or plan["target_ratio"]: out} if out else {}
         if out:
             _RENDER_OUTPUTS[ns["job_id"]] = out

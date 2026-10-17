@@ -392,6 +392,7 @@ async def mf_render(
     safe_zones: dict | None = None,
     guide_overlay: bool = False,
     music: Optional[str] = None,
+    music_start: Optional[float] = None,
 ) -> Any:
     """Start a render job for an approved plan (POST /api/render). Returns a job id;
     poll with mf_render_status. Leave ratio/width/height unset for the default: a story plan
@@ -402,12 +403,17 @@ async def mf_render(
     Story plans only: caption_style "kinetic" (default; one word at a time, gradient glitch
     emphasis words, from the user's kinetic caption style) or "classic" (lower-third SRT).
     effects (kinetic only, default true) adds a warm grade, slow push-in on each clip and RGB
-    glitch cuts at beat boundaries. Both are ignored for non-story plans."""
+    glitch cuts at beat boundaries. Both are ignored for non-story plans.
+    Beat sync: when the music track has a beat map (<music dir>/.beats/<file>.json, made by
+    scripts/beatmap.py), story renders start the track at music_start seconds (default: the
+    track's best section, on a downbeat), snap clip cuts to the nearest music beat within
+    +/-150 ms without moving the voice, flash the glitch on downbeats and fade the music over
+    the last 0.6 s. Tracks without a beat map render exactly as before."""
     return await _call("POST", "/api/render", body=dict(
         plan_id=plan_id, ratio=ratio, music_path=music_path, captions=captions,
         width=width, height=height, caption_style=caption_style, effects=effects,
         presets=presets, reframe=reframe, safe_zones=safe_zones,
-        guide_overlay=guide_overlay, music=music))
+        guide_overlay=guide_overlay, music=music, music_start=music_start))
 
 
 @mcp.tool()

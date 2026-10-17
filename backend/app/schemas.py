@@ -264,6 +264,9 @@ class RenderRequest(BaseModel):
     guide_overlay: bool = False
     music: Optional[Literal["auto"]] = None
     music_auto: bool = False
+    # Story/B-roll renders with a beat-mapped track: where in the track the video
+    # starts (seconds). Default: the track's best section on a downbeat.
+    music_start: Optional[float] = Field(default=None, ge=0, le=36000)
 
 
 class RenderJobOut(BaseModel):
