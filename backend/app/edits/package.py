@@ -13,6 +13,7 @@ from .. import config, models
 from ..db import SessionLocal
 from ..subtitles import build_document, serialize
 from . import planner, story
+from .plan_history import plan_lock
 
 
 class PackageError(ValueError):
@@ -28,9 +29,13 @@ def _json_bytes(value: object) -> bytes:
 
 def snapshot(plan_id: str) -> dict:
     # IDs come from the DB but also address story sidecars on disk.
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", plan_id):
+    # Keep package IDs within the plan-history lock's validated namespace.
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", plan_id):
         raise PackageError("plan not found", 404)
-    with SessionLocal() as db:
+    # Mutations and restores use this same lock.  Keep the DB session open
+    # while reading/validating story.json so the returned handoff is one
+    # consistent plan+sidecar view.
+    with plan_lock(plan_id), SessionLocal() as db:
         row = db.get(models.EditPlan, plan_id)
         if row is None:
             raise PackageError("plan not found", 404)
@@ -57,11 +62,16 @@ def snapshot(plan_id: str) -> dict:
                             "kind": asset.kind, "duration": asset.duration}
             transcripts[key] = [{"start": s.start, "end": s.end, "text": s.text}
                                 for s in sorted(asset.transcript, key=lambda s: s.start)]
-    story_data = story.get_story(plan_id) if is_story else None
-    if is_story and (not isinstance(story_data, dict) or not story_data.get("beats")):
-        raise PackageError("The narration sidecar is missing or unreadable; restore it before exporting.")
-    return {"plan": plan, "sources": list(sources.values()),
-            "transcripts": transcripts, "story": story_data}
+        story_data = story.get_story(plan_id) if is_story else None
+        if is_story:
+            if not isinstance(story_data, dict) or not story_data.get("beats"):
+                raise PackageError("The narration sidecar is missing or unreadable; restore it before exporting.")
+            try:
+                planner.validate_story_sync(row, story_data)
+            except ValueError as exc:
+                raise PackageError(str(exc)) from None
+        return {"plan": plan, "sources": list(sources.values()),
+                "transcripts": transcripts, "story": story_data}
 
 
 def _captions(data: dict) -> tuple[dict, str]:
@@ -83,15 +93,17 @@ def _captions(data: dict) -> tuple[dict, str]:
             raise PackageError("The narration sidecar has invalid caption data; restore it before exporting.") from None
         kind = "narration"
     else:
-        # Match the existing FFmpeg renderer's fixed crossfade overlap.
+        # Match each incoming transition in the FFmpeg timeline.
         # Clip captions are visual descriptions, not speech transcriptions.
         cursor = 0.0
-        for c in data["plan"]["clips"]:
+        for index, c in enumerate(data["plan"]["clips"]):
+            if index and c.get("transition", "crossfade") != "cut":
+                cursor -= config.XFADE_DURATION
             duration = max(0.2, c["end"] - c["start"])
             if c.get("caption"):
                 segments.append({"start": cursor, "end": cursor + duration,
                                  "text": c["caption"]})
-            cursor += duration - config.XFADE_DURATION
+            cursor += duration
         kind = "clip_labels"
     style = "social_vertical" if data["plan"]["target_ratio"] == "9:16" else "standard"
     document = build_document(segments, style=style)
@@ -100,7 +112,7 @@ def _captions(data: dict) -> tuple[dict, str]:
     if kind == "clip_labels":
         document["qc"]["limitations"].append(
             "These captions are edit-plan clip labels, not a transcription of the soundtrack. "
-            "Timing follows the default FFmpeg crossfades; NLE imports may use different transitions.")
+            "Timing follows the plan's FFmpeg cuts and crossfades; NLE imports may use different transitions.")
     return document, kind
 
 

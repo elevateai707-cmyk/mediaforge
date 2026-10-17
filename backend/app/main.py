@@ -28,14 +28,15 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, fsutil, models, persist, policy, schemas, touchup, transfer
+from . import auth, config, fsutil, models, persist, policy, schemas, touchup, transfer
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, package, planner, render, resolve_export, story
+from .edits import capcut_export, edl_export, fcpxml_export, package, plan_history, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
+from .ingest.removable import removable_imports
 from .ingest.scanqueue import scan_queue
 from .ingest.trips import cluster_trips, trip_asset_ids, trip_for_asset
 from .jobs import jobs
@@ -62,8 +63,14 @@ _RENDER_OUTPUTS: dict[str, str] = {}
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    auth.startup_notice()
     ws_manager.bind_loop(asyncio.get_running_loop())
     init_db()
+    try:
+        if persist.music_dir():
+            Path(persist.music_dir()).mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.warning("music folder unavailable: %s", exc)
     # Anything still running/queued belongs to a previous process: mark it
     # interrupted so it cannot sit in the job list as a hung job forever.
     try:
@@ -97,14 +104,22 @@ async def lifespan(app: FastAPI):
         ws_manager.set_gpu(gpu.gpu_payload())
     except Exception as exc:  # pragma: no cover
         log.warning("gpu payload failed: %s", exc)
+    removable_imports.start()
     yield
+    removable_imports.stop()
     folder_watcher.stop()
 
 
 app = FastAPI(title="MediaForge", version=config.VERSION, lifespan=lifespan)
+app.add_middleware(auth.AuthMiddleware)
+app.include_router(auth.router)
 
 from .caption_routes import router as caption_router
 app.include_router(caption_router)
+from .import_routes import router as import_router
+from .tighten_routes import router as tighten_router
+app.include_router(import_router)
+app.include_router(tighten_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -316,7 +331,9 @@ def _hybrid_search(db: Session, q: str, limit: int = 50) -> list[int]:
 # system
 # ---------------------------------------------------------------------------
 @app.get("/api/health", response_model=schemas.HealthOut)
-def health():
+def health(request: Request):
+    if config.API_TOKEN and not auth.authorized(request):
+        return schemas.HealthOut(status="ok", gpu="unknown", version=config.VERSION)
     try:
         mode = gpu.device()
         name = gpu.gpu_name()
@@ -857,7 +874,10 @@ def get_plan(plan_id: str):
 @app.put("/api/edits/plan/{plan_id}", response_model=schemas.PlanOut)
 def update_plan(plan_id: str, req: schemas.PlanUpdateRequest):
     clips = [c.model_dump() for c in req.clips]
-    plan = planner.update_plan(plan_id, clips)
+    try:
+        plan = planner.update_plan(plan_id, clips)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if plan is None:
         raise HTTPException(status_code=404, detail=f"plan {plan_id!r} not found")
     return plan
@@ -877,6 +897,53 @@ def approve_plan(plan_id: str):
 @app.get("/api/edits/plans", response_model=list[schemas.PlanOut])
 def list_plans(limit: int = Query(50, ge=1, le=200)):
     return planner.list_plans(limit=limit)
+
+
+@app.get("/api/edits/plan/{plan_id}/versions")
+def plan_versions(plan_id: str):
+    try:
+        return {"versions": plan_history.list_versions(plan_id)}
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/edits/plan/{plan_id}/versions/{version}/restore", response_model=schemas.PlanOut)
+def restore_plan(plan_id: str, version: int):
+    try:
+        return plan_history.restore(plan_id, version)
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/edits/plan/{plan_id}/swap-broll", response_model=schemas.PlanOut)
+def swap_broll(plan_id: str, req: schemas.SwapBrollRequest):
+    try:
+        return planner.swap_broll(plan_id, req.beat_index, req.asset_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/edits/plan/{plan_id}/reframe-preview")
+def reframe_preview(plan_id: str, mode: str = "smart"):
+    from .edits import reframe
+    if mode not in ("smart", "center"):
+        raise HTTPException(422, "mode must be smart or center")
+    try:
+        plan_history.validate_id(plan_id)
+        plan, resolved = render._load_plan(plan_id)
+    except (ValueError, render.RenderError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    output_dir = config.EXPORTS_DIR / "previews" / plan_id
+    clips = []
+    for index, (clip_row, asset) in enumerate(resolved):
+        analysis = reframe.analyze_reframe(asset.path, asset_id=asset.id,
+            start=clip_row.start, end=clip_row.end, mode=mode)
+        images = reframe.generate_preview_stills(asset.path, analysis, output_dir, prefix=f"clip-{index}")
+        clips.append({"clip_index": index, "asset_id": asset.id, "analysis": analysis,
+                      "images": ["/exports/" + str(Path(p).relative_to(config.EXPORTS_DIR)) for p in images]})
+    return {"plan_id": plan_id, "clips": clips}
 
 
 # ---------------------------------------------------------------------------
@@ -946,25 +1013,44 @@ async def start_render(req: schemas.RenderRequest):
             detail="plan not approved; approve it first "
                    "(POST /api/edits/plan/{id}/approve)",
         )
-    if req.ratio is not None and req.ratio not in ("9:16", "16:9", "1:1"):
+    if req.ratio is not None and req.ratio not in ("9:16", "4:5", "16:9", "1:1"):
         raise HTTPException(
-            status_code=422, detail="ratio must be one of 9:16, 16:9, 1:1"
+            status_code=422, detail="ratio must be one of 9:16, 4:5, 16:9, 1:1"
         )
     if req.caption_style not in (None, "kinetic", "classic"):
         raise HTTPException(
             status_code=422, detail="caption_style must be 'kinetic' or 'classic'"
         )
 
+    if req.safe_zones is not None:
+        if any(k not in ("top", "bottom", "left", "right") or not math.isfinite(v) or not 0 <= v <= .45 for k, v in req.safe_zones.items()):
+            raise HTTPException(422, "safe_zones must contain top/bottom/left/right margins between 0 and 0.45")
+    selected_music = req.music_path
+    if req.music == "auto" or req.music_auto:
+        track = await asyncio.to_thread(music.select_track, persist.music_dir(), plan.get("intent") or "", plan["total_duration"])
+        if track is None:
+            raise HTTPException(409, "No usable music tracks. Add licensed audio to the music folder or render without auto music.")
+        selected_music = track["path"]
     ns: dict[str, Any] = {}
 
     async def _render_runner(progress, _flag):
-        out = await render.render_job(
-            req.plan_id, req.ratio, req.width, req.height,
-            req.captions, req.music_path, progress, _flag,
-            caption_style=req.caption_style, effects=req.effects,
-        )
+        if req.presets:
+            outputs = await asyncio.to_thread(render.render_batch, req.plan_id,
+                presets=list(dict.fromkeys(req.presets)), captions=req.captions,
+                music_path=selected_music, job=progress, caption_style=req.caption_style,
+                effects=req.effects, reframe=req.reframe, safe_zones=req.safe_zones,
+                guide_overlay=req.guide_overlay, cancel_flag=_flag)
+            out = next(iter(outputs.values()), None)
+        else:
+            out = await render.render_job(
+                req.plan_id, req.ratio, req.width, req.height,
+                req.captions, selected_music, progress, _flag,
+                caption_style=req.caption_style, effects=req.effects,
+                reframe=req.reframe, safe_zones=req.safe_zones, guide_overlay=req.guide_overlay)
+            outputs = {req.ratio or plan["target_ratio"]: out} if out else {}
         if out:
             _RENDER_OUTPUTS[ns["job_id"]] = out
+        jobs._update_row(ns["job_id"], meta={"plan_id": req.plan_id, "output_paths": outputs})
         return out
 
     job_id = jobs.run("render", _render_runner)
@@ -977,9 +1063,11 @@ def render_status(job_id: str):
     job = jobs.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
-    output_path = _RENDER_OUTPUTS.get(job_id) if job["status"] == "done" else None
+    outputs = (job.get("meta") or {}).get("output_paths", {}) if job["status"] == "done" else {}
+    output_path = (_RENDER_OUTPUTS.get(job_id) or next(iter(outputs.values()), None)) if job["status"] == "done" else None
     return schemas.RenderStatusOut(
         status=job["status"], output_path=output_path, progress=job["progress"],
+        output_paths=outputs,
     )
 
 
@@ -1238,8 +1326,16 @@ async def websocket_endpoint(ws: WebSocket):
     await ws_manager.connect(ws)
     try:
         while True:
-            await ws.receive_text()
+            if not auth.authorized(ws):
+                await ws.close(code=4401)
+                break
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=auth.WS_RECHECK_SECONDS)
+            except asyncio.TimeoutError:
+                continue
     except WebSocketDisconnect:
+        pass
+    finally:
         await ws_manager.disconnect(ws)
 
 

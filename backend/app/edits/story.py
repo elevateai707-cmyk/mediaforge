@@ -378,6 +378,8 @@ def _ratio_size(ratio: str) -> tuple[int, int]:
 
 
 def story_dir(plan_id: str) -> Path:
+    from .plan_history import validate_id
+    validate_id(plan_id)
     return config.EXPORTS_DIR / "story" / plan_id
 
 

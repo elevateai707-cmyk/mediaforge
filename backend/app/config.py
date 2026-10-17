@@ -35,6 +35,7 @@ RENDER_TMP_DIR = Path(os.environ.get("MF_RENDER_TMP", str(DATA_DIR / "render_tmp
 VERSION = "2.0.0"
 APP_HOST = os.environ.get("MF_HOST", "127.0.0.1")
 APP_PORT = int(os.environ.get("MF_PORT", "8420"))
+API_TOKEN = os.environ.get("MF_API_TOKEN", "")
 
 # ---------------------------------------------------------------------------
 # Feature flags / runtime knobs
@@ -74,7 +75,7 @@ MEDIA_DIRS = [
 FFMPEG_JOBS = int(os.environ.get("MF_FFMPEG_JOBS", "8"))
 CLIP_JOBS = int(os.environ.get("MF_CLIP_JOBS", "4"))
 WATCHER_ENABLED = os.environ.get("MF_WATCHER", "1") == "1"
-MUSIC_DIR = os.environ.get("MF_MUSIC_DIR", "")
+MUSIC_DIR = os.environ.get("MF_MUSIC_DIR", "/srv/iris/media/music")
 USE_CLOUD_LLM = os.environ.get("USE_CLOUD_LLM", "false").lower() in ("1", "true", "yes")
 
 # ElevenLabs text-to-speech (story voiceover). The API key is read from the
@@ -120,15 +121,11 @@ RENDER_FPS = 30
 XFADE_DURATION = 0.5
 
 # CORS origins
-CORS_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8420",
-    "http://127.0.0.1:8420",
-]
+CORS_ORIGINS = [origin.strip().rstrip("/") for origin in
+                os.environ.get("MF_CORS_ORIGINS", "").split(",") if origin.strip()]
 
 # Frontend dist served at / when present
-FRONTEND_DIST = MF_ROOT / "frontend" / "dist"
+FRONTEND_DIST = Path(os.environ.get("MF_FRONTEND_DIST", str(MF_ROOT / "frontend" / "dist")))
 
 # DejaVu Sans font for burned-in captions
 FONT_CANDIDATES = [

@@ -22,9 +22,10 @@ import json
 import logging
 import subprocess
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from .. import config, models
 from ..db import SessionLocal
@@ -243,11 +244,14 @@ def _progress_callable(job: Any) -> Callable[[float, str], None]:
     return _noop
 
 
-def render_plan(plan_id: str, ratio: Optional[str] = None,
+def _render_plan(plan_id: str, ratio: Optional[str] = None,
                 width: Optional[int] = None, height: Optional[int] = None,
                 captions: bool = True, music_path: Optional[str] = None,
                 job: Any = None, caption_style: Optional[str] = None,
-                effects: bool = True) -> str:
+                effects: bool = True, reframe: str = "smart",
+                safe_zones: Optional[Mapping[str, Any]] = None,
+                guide_overlay: bool = False,
+                _reframe_analysis: Optional[Mapping[str, dict]] = None) -> str:
     """Render an approved plan to exports/reel_<plan_id>_<ts>.mp4.
 
     Returns the output path. Raises RenderError on any failure.
@@ -260,8 +264,24 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
     plan, resolved = _load_plan(plan_id)
     n = len(resolved)
     from . import story as story_mod
-    from . import kinetic
+    from . import kinetic, reframe as reframe_mod
     story = story_mod.get_story(plan_id)
+    # Story sidecars are timing contracts, not merely caption metadata.  Do
+    # not render a voiceover against clips that have drifted since planning.
+    try:
+        story_marked = bool(json.loads(plan.parsed_json or "{}").get("story"))
+    except (TypeError, json.JSONDecodeError):
+        story_marked = False
+    if story_marked and not story:
+        raise RenderError(f"story sidecar missing or invalid for plan {plan_id!r}")
+    if story_marked and not story.get("voiceover"):
+        raise RenderError(f"story sidecar voiceover missing for plan {plan_id!r}")
+    if story_marked:
+        from . import planner
+        try:
+            planner.validate_story_sync(plan, story)
+        except ValueError as exc:
+            raise RenderError(str(exc)) from None
 
     if ratio is None:
         ratio = (story or {}).get("ratio") or "9:16"
@@ -270,13 +290,15 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
     width = 1080 if width is None else width
     height = 1920 if height is None else height
     ratio = (ratio or "9:16").lower()
-    if ratio not in ("9:16", "16:9", "1:1"):
+    if ratio not in ("9:16", "16:9", "4:5", "1:1"):
         # Derive WxH from the explicit width/height instead of a named ratio.
         pass
     elif ratio == "16:9":
         height = round(width * 9 / 16 / 2) * 2
     elif ratio == "1:1":
         height = width
+    elif ratio == "4:5":
+        height = round(width * 5 / 4 / 2) * 2
     else:  # 9:16
         height = round(width * 16 / 9 / 2) * 2
     if width % 2:
@@ -297,6 +319,7 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
     style = (caption_style or (story or {}).get("caption_style") or "kinetic") \
         if is_story else "classic"
     is_kinetic = is_story and style == "kinetic"
+    kinetic_zones = reframe_mod.normalize_safe_zones(safe_zones) if height > width else None
     fx = is_kinetic and effects
     kin_dir = config.RENDER_TMP_DIR / f"emph_{plan_id}"
     emph_infos: list[dict] = []
@@ -308,16 +331,16 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
         emph_events = events["emphasis"]
         for k, ev in enumerate(emph_events):
             info = kinetic.render_emphasis_images(ev["text"], width, height, kin_dir,
-                                                  f"e{k}", seed=k)
+                                                  f"e{k}", seed=k, safe_zones=kinetic_zones)
             info["list"] = str(kin_dir / f"e{k}.txt")
             kinetic.write_sequence_list(info, ev["end"] - ev["start"],
                                         Path(info["list"]), config.RENDER_FPS)
             emph_infos.append(info)
-        layout = kinetic.emphasis_layout(emph_infos, width, height)
+        layout = kinetic.emphasis_layout(emph_infos, width, height, kinetic_zones)
         for info, lay in zip(emph_infos, layout):
             info.update(lay)
         ass_file = config.RENDER_TMP_DIR / f"cap_{plan_id}_kin.ass"
-        ass_file.write_text(kinetic.build_ass(events, width, height, layout),
+        ass_file.write_text(kinetic.build_ass(events, width, height, layout, kinetic_zones),
                             encoding="utf-8")
 
     xfade = 0.0 if is_story else config.XFADE_DURATION
@@ -335,8 +358,29 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
             "path": asset.path,
         })
         total += dur
-    # Timeline length after xfade overlaps.
-    timeline = total - xfade * (n - 1) if n > 1 else total
+    # Reframe analysis is source-normalized, so it can be reused by
+    # render_batch across output dimensions.  A caller can also supply the
+    # already-computed map to avoid repeat DB/OpenCV work.
+    analysis_by_clip: dict[str, dict] = dict(_reframe_analysis or {})
+    for i, pc in enumerate(per_clip):
+        key = str(pc["clip"].id)
+        if key not in analysis_by_clip:
+            try:
+                analysis_by_clip[key] = reframe_mod.analyze_reframe(
+                    pc["path"], asset_id=pc["asset"].id,
+                    start=float(pc["clip"].start), end=float(pc["clip"].end),
+                    mode=reframe, safe_zones=safe_zones,
+                )
+            except Exception as exc:  # reframe may never make a render fail
+                log.warning("reframe analysis failed for clip %s: %s", key, exc)
+                analysis_by_clip[key] = {"path_points": [], "safe_zones": {}}
+    # Only crossfades overlap time.  Hard cuts retain every source second.
+    transition_overlap = sum(
+        xfade for pc in per_clip[1:]
+        if str(getattr(pc["clip"], "transition", "crossfade") or "crossfade").lower()
+        != "cut"
+    )
+    timeline = total - transition_overlap if n > 1 else total
 
     # ------------------------------------------------------------------
     # Build the command
@@ -399,7 +443,15 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
         chain.append(
             f"scale={width}:{height}:force_original_aspect_ratio=increase"
             ":force_divisible_by=2")
-        chain.append(f"crop={width}:{height}")
+        analysis = analysis_by_clip.get(str(pc["clip"].id), {})
+        zones = reframe_mod.normalize_safe_zones(analysis.get("safe_zones"))
+        chain.append(reframe_mod.build_crop_filter(analysis, width, height, pc["dur"]))
+        if guide_overlay:
+            x = round(width * zones["left"])
+            y = round(height * zones["top"])
+            box_h = max(2, round(height * (1 - zones["top"] - zones["bottom"])))
+            box_w = max(2, round(width * (1 - zones["left"] - zones["right"])))
+            chain.append(f"drawbox=x={x}:y={y}:w={box_w}:h={box_h}:color=cyan@0.8:t=3")
         if fx:
             # Slow push-in 1.00 -> 1.08 over the clip: scale up per frame, then
             # centre-crop back; clip duration is untouched.
@@ -417,11 +469,17 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
                     _caption_file(plan_id, i, txt))
                 caption_files.append(cap_path)
                 fontfile = f":fontfile={font}" if font else ""
+                caption_x = "(w-text_w)/2"
+                if height > width:
+                    left = round(width * zones["left"])
+                    right = round(width * zones["right"])
+                    caption_x = f"max({left},min((w-text_w)/2,w-{right}-text_w))"
                 chain.append(
                     f"drawtext=textfile='{cap_path}'{fontfile}"
                     f":fontsize={fontsize}:line_spacing=8"
                     ":fontcolor=white:borderw=2:bordercolor=black@0.6"
-                    f":x=(w-text_w)/2:y=h-text_h-{max(40, height // 20)}"
+                    f":x={caption_x}:y=h-text_h-"
+                    f"{max(40, height // 20, round(height * zones['bottom']) if height > width else 0)}"
                     f":enable='between(t,0,{pc['dur']:.3f})'")
         filters.append(",".join(chain) + f"[{vlabel}]")
         vlabels.append(vlabel)
@@ -451,35 +509,91 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
     music_label: Optional[str] = None
     if music_path:
         music_label = f"m{input_index}"
-        filters.append(f"[{input_index}:a]aresample=48000[{music_label}]")
+        fade_duration = min(1.0, max(0.05, timeline))
+        fade_start = max(0.0, timeline - fade_duration)
+        filters.append(
+            f"[{input_index}:a]aresample=48000,atrim=end={timeline:.3f},"
+            f"afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[{music_label}]")
 
-    # Video xfade chain (story: plain concat, no overlap).
+    # Video join chain. A hard cut concatenates complete clips; mixed plans
+    # keep crossfade offsets correct after each non-overlapping join.
     vout = vlabels[0]
     if is_story and n > 1:
         filters.append("".join(f"[{v}]" for v in vlabels)
-                       + f"concat=n={n}:v=1:a=0[vout]")
+                       + f"concat=n={n}:v=1:a=0,settb=1/{config.RENDER_FPS}[vout]")
     elif n > 1:
-        offset = per_clip[0]["dur"] - xfade
+        joined_duration = per_clip[0]["dur"]
         for k in range(1, n):
             out = f"x{k}" if k < n - 1 else "vout"
-            filters.append(
-                f"[{vout}][{vlabels[k]}]xfade=transition=fade:"
-                f"duration={xfade:.3f}:offset={offset:.3f}[{out}]")
+            is_cut = str(getattr(per_clip[k]["clip"], "transition", "crossfade")
+                         or "crossfade").lower() == "cut"
+            if is_cut:
+                filters.append(
+                    f"[{vout}][{vlabels[k]}]concat=n=2:v=1:a=0,"
+                    f"settb=1/{config.RENDER_FPS}[{out}]")
+                joined_duration += per_clip[k]["dur"]
+            else:
+                offset = joined_duration - xfade
+                filters.append(
+                    f"[{vout}][{vlabels[k]}]xfade=transition=fade:"
+                    f"duration={xfade:.3f}:offset={offset:.3f}[{out}]")
+                joined_duration += per_clip[k]["dur"] - xfade
             vout = out
-            offset = offset + per_clip[k]["dur"] - xfade
     else:
         filters.append(f"[{vlabels[0]}]null[vout]")
 
-    # Audio chain: acrossfade between consecutive clips, then loudnorm.
+    # Audio follows the same timeline as video.  A mixed cut/crossfade plan
+    # cannot safely chain concat into acrossfade on ffmpeg 5.x (it emits NaN
+    # samples), so each pre-trimmed clip is independently faded and delayed
+    # to its video start before a single sample-rate-normalized mix.
     aout = alabels[0]
     if is_story:
         filters.append(f"[{voice_idx}:a]aresample=48000[amix]")
     elif n > 1:
-        for k in range(1, n):
-            out = f"ax{k}" if k < n - 1 else "amix"
-            filters.append(
-                f"[{aout}][{alabels[k]}]acrossfade=d={xfade:.3f}[{out}]")
-            aout = out
+        has_cut = any(
+            str(getattr(pc["clip"], "transition", "crossfade") or "crossfade").lower()
+            == "cut" for pc in per_clip[1:]
+        )
+        has_crossfade = any(
+            str(getattr(pc["clip"], "transition", "crossfade") or "crossfade").lower()
+            != "cut" for pc in per_clip[1:]
+        )
+        if has_cut and has_crossfade:
+            offsets = [0.0]
+            for k in range(1, n):
+                previous = offsets[-1] + per_clip[k - 1]["dur"]
+                is_crossfade = str(getattr(per_clip[k]["clip"], "transition", "crossfade")
+                                   or "crossfade").lower() != "cut"
+                offsets.append(previous - (xfade if is_crossfade else 0.0))
+            mix_labels: list[str] = []
+            for k, (alabel, pc) in enumerate(zip(alabels, per_clip)):
+                # apad is used by the general clip path; trim it back to the
+                # planned segment before delaying so no padded tail reaches
+                # amix on older ffmpeg builds.
+                chain = [f"[{alabel}]atrim=end={pc['dur']:.3f},"
+                         "asetpts=PTS-STARTPTS,aresample=48000,asettb=expr=1/sr"]
+                if k > 0 and str(getattr(pc["clip"], "transition", "crossfade")
+                                    or "crossfade").lower() != "cut":
+                    chain.append(f"afade=t=in:st=0:d={xfade:.3f}")
+                if k < n - 1 and str(getattr(per_clip[k + 1]["clip"], "transition", "crossfade")
+                                        or "crossfade").lower() != "cut":
+                    chain.append(f"afade=t=out:st={max(0.0, pc['dur'] - xfade):.3f}:d={xfade:.3f}")
+                chain.append(f"adelay={round(offsets[k] * 1000)}:all=1")
+                label = f"mix{k}"
+                filters.append(",".join(chain) + f"[{label}]")
+                mix_labels.append(label)
+            filters.append("".join(f"[{label}]" for label in mix_labels)
+                           + f"amix=inputs={n}:duration=longest:normalize=0,"
+                             f"atrim=end={timeline:.3f},asetpts=PTS-STARTPTS[amix]")
+        elif has_cut:
+            filters.append("".join(f"[{a}]" for a in alabels)
+                           + f"concat=n={n}:v=0:a=1[amix]")
+        else:
+            for k in range(1, n):
+                out = f"ax{k}" if k < n - 1 else "amix"
+                filters.append(
+                    f"[{aout}][{alabels[k]}]acrossfade=d={xfade:.3f}[{out}]")
+                aout = out
     else:
         filters.append(f"[{alabels[0]}]anull[amix]")
 
@@ -541,11 +655,14 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
             vmap = "vout"
     elif is_story and captions and srt_path:
         fontsize = max(18, height // 28)
-        margin_v = max(30, height // 14)
+        story_zones = reframe_mod.normalize_safe_zones(safe_zones)
+        margin_v = max(30, height // 14,
+                       round(height * story_zones["bottom"]) if height > width else 0)
         style = (f"FontName=DejaVu Sans,Bold=1,FontSize={fontsize},"
                  "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
                  "BackColour=&H80000000,BorderStyle=1,Outline=2.5,Shadow=1,"
-                 f"Alignment=2,MarginV={margin_v}")
+                 f"Alignment=2,MarginL={round(width * story_zones['left'])},"
+                 f"MarginR={round(width * story_zones['right'])},MarginV={margin_v}")
         filters.append(
             f"[vout]subtitles=filename='{_escape_filter_path(srt_path)}'"
             f":original_size={width}x{height}:force_style='{style}'[vsub]")
@@ -553,8 +670,11 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
 
     out_dir = config.EXPORTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = out_dir / f"reel_{plan_id}_{ts}.mp4"
+    # Batches can finish several presets in the same second.  Include the
+    # dimensions plus microseconds and a nonce so ffmpeg's ``-y`` never
+    # replaces an earlier preset export.
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    out_path = out_dir / f"reel_{plan_id}_{width}x{height}_{ts}_{uuid.uuid4().hex[:8]}.mp4"
 
     cmd += ["-filter_complex", ";".join(filters),
             "-map", f"[{vmap}]", "-map", f"[{amap}]",
@@ -602,7 +722,45 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
             log.warning("could not copy captions.srt next to render: %s", exc)
 
     progress(1.0, f"render complete: {out_path.name}")
+    # Store the exact source crop plans beside the export as a portable
+    # sidecar.  It is useful when an editor needs to inspect the smart pan
+    # without rerunning face/motion analysis.
+    try:
+        sidecar = out_path.with_suffix(".reframe.json")
+        sidecar.write_text(json.dumps({
+            "version": 1, "plan_id": plan_id, "ratio": ratio,
+            "width": width, "height": height, "reframe": reframe,
+            "safe_zones": reframe_mod.normalize_safe_zones(safe_zones),
+            "clips": [analysis_by_clip.get(str(pc["clip"].id), {}) for pc in per_clip],
+        }, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not write render reframe sidecar: %s", exc)
+
     return str(out_path)
+
+
+def render_plan(plan_id: str, ratio: Optional[str] = None,
+                width: Optional[int] = None, height: Optional[int] = None,
+                captions: bool = True, music_path: Optional[str] = None,
+                job: Any = None, caption_style: Optional[str] = None,
+                effects: bool = True, reframe: str = "smart",
+                safe_zones: Optional[Mapping[str, Any]] = None,
+                guide_overlay: bool = False,
+                _reframe_analysis: Optional[Mapping[str, dict]] = None) -> str:
+    """Render one immutable view of a plan and its story sidecar.
+
+    Plan mutation, approval and sidecar restoration use the same re-entrant
+    lock, so the DB rows and files cannot change halfway through a render.
+    """
+    from .plan_history import plan_lock
+
+    with plan_lock(plan_id):
+        return _render_plan(
+            plan_id, ratio=ratio, width=width, height=height, captions=captions,
+            music_path=music_path, job=job, caption_style=caption_style,
+            effects=effects, reframe=reframe, safe_zones=safe_zones,
+            guide_overlay=guide_overlay, _reframe_analysis=_reframe_analysis,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +770,9 @@ def render_plan(plan_id: str, ratio: Optional[str] = None,
 async def render_job(plan_id: str, ratio: Optional[str], width: Optional[int],
                      height: Optional[int], captions: bool, music_path: Optional[str],
                      progress, _cancel_flag, caption_style: Optional[str] = None,
-                     effects: bool = True) -> str:
+                     effects: bool = True, reframe: str = "smart",
+                     safe_zones: Optional[Mapping[str, Any]] = None,
+                     guide_overlay: bool = False) -> str:
     """Async entrypoint for jobs.run: renders in a thread, honours cancel."""
     import asyncio
 
@@ -620,7 +780,82 @@ async def render_job(plan_id: str, ratio: Optional[str], width: Optional[int],
         return render_plan(plan_id, ratio=ratio, width=width, height=height,
                            captions=captions, music_path=music_path,
                            job=progress, caption_style=caption_style,
-                           effects=effects)
+                           effects=effects, reframe=reframe,
+                           safe_zones=safe_zones, guide_overlay=guide_overlay)
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _sync)
+
+
+_BATCH_PRESETS: dict[str, tuple[int, int]] = {
+    "9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080),
+    "16:9": (1920, 1080),
+}
+
+
+def _render_batch(plan_id: str, *, presets: Optional[list[str]] = None,
+                 captions: bool = True, music_path: Optional[str] = None,
+                 job: Any = None, caption_style: Optional[str] = None,
+                 effects: bool = True, reframe: str = "smart",
+                 safe_zones: Optional[Mapping[str, Any]] = None,
+                 guide_overlay: bool = False, cancel_flag: Any = None) -> dict[str, str]:
+    """Render selected presets sequentially, sharing the light crop analysis.
+
+    The sequential loop intentionally avoids competing ffmpeg processes on a
+    CPU-bound machine.  Values are ``{preset: output_path}``.
+    """
+    def _cancelled() -> bool:
+        value = getattr(cancel_flag, "cancelled", False)
+        return bool(value() if callable(value) else value)
+
+    if _cancelled():
+        import asyncio
+        raise asyncio.CancelledError()
+    chosen = presets or list(_BATCH_PRESETS)
+    invalid = [p for p in chosen if p not in _BATCH_PRESETS]
+    if invalid:
+        raise RenderError(f"unsupported render preset(s): {', '.join(invalid)}")
+    _, resolved = _load_plan(plan_id)
+    from . import reframe as reframe_mod
+    analysis = {
+        str(clip.id): reframe_mod.analyze_reframe(
+            asset.path, asset_id=asset.id, start=float(clip.start), end=float(clip.end),
+            mode=reframe, safe_zones=safe_zones,
+        )
+        for clip, asset in resolved
+    }
+    progress = _progress_callable(job)
+    output: dict[str, str] = {}
+    for index, preset in enumerate(chosen):
+        if _cancelled():
+            import asyncio
+            raise asyncio.CancelledError()
+        w, h = _BATCH_PRESETS[preset]
+        def _one_progress(frac: float, message: str, *, _index: int = index) -> None:
+            progress((_index + frac) / len(chosen), f"{preset}: {message}")
+        output[preset] = render_plan(
+            plan_id, ratio=preset, width=w, height=h, captions=captions,
+            music_path=music_path, job=_one_progress, caption_style=caption_style,
+            effects=effects, reframe=reframe, safe_zones=safe_zones,
+            guide_overlay=guide_overlay, _reframe_analysis=analysis,
+        )
+    progress(1.0, "batch render complete")
+    return output
+
+
+def render_batch(plan_id: str, *, presets: Optional[list[str]] = None,
+                 captions: bool = True, music_path: Optional[str] = None,
+                 job: Any = None, caption_style: Optional[str] = None,
+                 effects: bool = True, reframe: str = "smart",
+                 safe_zones: Optional[Mapping[str, Any]] = None,
+                 guide_overlay: bool = False, cancel_flag: Any = None) -> dict[str, str]:
+    """Render an entire preset batch from one locked plan/sidecar revision."""
+    from .plan_history import plan_lock
+
+    with plan_lock(plan_id):
+        return _render_batch(
+            plan_id, presets=presets, captions=captions, music_path=music_path,
+            job=job, caption_style=caption_style, effects=effects,
+            reframe=reframe, safe_zones=safe_zones, guide_overlay=guide_overlay,
+            cancel_flag=cancel_flag,
+        )

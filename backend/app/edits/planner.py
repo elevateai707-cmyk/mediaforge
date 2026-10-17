@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import uuid
@@ -34,7 +35,7 @@ from .intent import Intent, parse_intent
 log = logging.getLogger("mediaforge.planner")
 
 # Contract transition names the renderer understands.
-KNOWN_TRANSITIONS = {"crossfade", "fade"}
+KNOWN_TRANSITIONS = {"crossfade", "fade", "cut"}
 
 DEFAULT_DURATION = 30.0
 DEFAULT_RATIO = "9:16"
@@ -612,46 +613,193 @@ def get_plan(plan_id: str) -> Optional[dict]:
         return _plan_dict(plan)
 
 
-def update_plan(plan_id: str, clips: list[dict]) -> Optional[dict]:
-    """PUT /api/edits/plan/{plan_id}: replace clip rows, recompute duration."""
+def record_revision(plan_id: str, reason: str = "edit") -> int:
+    from .plan_history import record_revision as record
+    return record(plan_id, reason)
+
+
+def mark_draft(plan_id: str):
     with SessionLocal() as db:
         plan = db.get(models.EditPlan, plan_id)
         if plan is None:
+            raise ValueError("plan not found")
+        plan.status = "draft"
+        db.commit()
+
+
+def validate_story_sync(plan, sidecar: dict | None) -> None:
+    """Fail closed if a restored/interrupted story no longer matches its timeline."""
+    try:
+        if not isinstance(sidecar, dict) or not sidecar.get("beats"):
+            raise ValueError("missing narration sidecar")
+        clips = list(plan.clips)
+        cursor, position = 0.0, 0
+        for beat in sidecar["beats"]:
+            start, slot = float(beat["start"]), float(beat["slot"])
+            audio_duration = float(beat["audio_duration"])
+            if not all(math.isfinite(n) for n in (start, slot, audio_duration)):
+                raise ValueError("non-finite beat timing")
+            if slot <= 0 or audio_duration <= 0 or audio_duration > slot + .01 or abs(start - cursor) > .01:
+                raise ValueError("narration beat timing mismatch")
+            visual_duration = 0.0
+            for item in beat["clips"]:
+                clip = clips[position]
+                position += 1
+                a, b = float(item["start"]), float(item["end"])
+                if not math.isfinite(a) or not math.isfinite(b) or a < 0 or b <= a:
+                    raise ValueError("invalid story trim")
+                if (clip.asset_id != item["asset_id"] or abs(clip.start - a) > .001
+                        or abs(clip.end - b) > .001 or clip.transition != "cut"):
+                    raise ValueError("B-roll differs from narration sidecar")
+                visual_duration += b - a
+            if abs(visual_duration - slot) > .01:
+                raise ValueError("B-roll does not fill narration beat")
+            cursor += slot
+        if (position != len(clips) or abs(cursor - float(sidecar["duration"])) > .01
+                or abs(cursor - float(plan.total_duration)) > .01):
+            raise ValueError("story duration mismatch")
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise ValueError(f"Story narration and clips are not synchronized ({exc}); restore a valid version before approval.") from exc
+
+
+def _fit_story_clips(sidecar: dict, clips: list[dict], db) -> list[dict]:
+    """Keep the existing beat grouping; fit B-roll within each narration slot."""
+    counts = [len(b.get("clips", [])) for b in sidecar["beats"]]
+    if sum(counts) != len(clips):
+        raise ValueError("Story edits must keep the number of clips per beat; use Swap B-roll to replace a beat.")
+    result, cursor = [], 0
+    for beat, count in zip(sidecar["beats"], counts):
+        group = [dict(c) for c in clips[cursor:cursor + count]]
+        cursor += count
+        target = float(beat["slot"])
+        durations, capacities = [], []
+        for c in group:
+            asset = db.get(models.Asset, c["asset_id"])
+            if asset is None:
+                raise ValueError(f"Unknown asset {c['asset_id']}")
+            start, end = float(c["start"]), float(c["end"])
+            if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+                raise ValueError("Clip times must be finite with 0 <= start < end")
+            capacity = (float(asset.duration) - start) if asset.kind == "video" and asset.duration else target
+            if capacity <= 0:
+                raise ValueError("Clip begins beyond its source duration")
+            capacities.append(capacity)
+            durations.append(min(end-start, capacity))
+            c["transition"] = "cut"
+            if c.get("scene_id"):
+                scene = db.get(models.Scene, c["scene_id"])
+                if scene is None or scene.asset_id != asset.id:
+                    c["scene_id"] = None
+        if not group or sum(capacities) + 1e-6 < target:
+            raise ValueError(f"Beat {beat['index']} needs {target:.3f}s of footage; selected source trims are too short")
+        scale = target / sum(durations)
+        fitted = [min(d * scale, cap) for d, cap in zip(durations, capacities)]
+        remaining = target - sum(fitted)
+        for i in range(len(fitted)):
+            add = min(remaining, capacities[i] - fitted[i])
+            fitted[i] += add
+            remaining -= add
+        for c, duration in zip(group, fitted):
+            c["end"] = float(c["start"]) + duration
+            result.append(c)
+        beat["clips"] = [{k: c.get(k) for k in ("asset_id", "scene_id", "start", "end")} for c in group]
+    return result
+
+
+def update_plan(plan_id: str, clips: list[dict]) -> Optional[dict]:
+    from . import story
+    from .plan_history import atomic_write, plan_lock
+    with plan_lock(plan_id), SessionLocal() as db:
+        plan = db.get(models.EditPlan, plan_id)
+        if plan is None:
             return None
-        if plan.status == "approved":
-            # Editing an approved plan is allowed (returns to draft) — the
-            # approval gate protects rendering, not reviewing.
+        is_story = json.loads(plan.parsed_json or "{}").get("story", False)
+        sidecar = story.get_story(plan_id) if is_story else None
+        if is_story and not sidecar:
+            raise ValueError("Story sidecar is missing; refusing an edit that could break narration sync")
+        valid = _fit_story_clips(sidecar, clips, db) if is_story else _normalize_clips(clips, db)
+        record_revision(plan_id, "before clip edit")
+        original = (story.story_dir(plan_id) / "story.json").read_text() if is_story else None
+        plan.status = "draft"
+        db.commit()  # Crash-safe approval revocation precedes any artifact change.
+        try:
+            for c in list(plan.clips):
+                db.delete(c)
+            db.flush()
+            for pos, c in enumerate(valid):
+                db.add(models.EditClip(plan_id=plan_id, position=pos,
+                    **{k: c.get(k) for k in ("asset_id", "scene_id", "start", "end", "caption", "transition", "score")}))
             plan.status = "draft"
-        valid = _normalize_clips(clips, db)
-        for c in plan.clips:
+            plan.total_duration = (float(sidecar["duration"]) if is_story else
+                                   round(sum(c["end"]-c["start"] for c in valid), 3))
+            if is_story:
+                atomic_write(story.story_dir(plan_id) / "story.json", json.dumps(sidecar, allow_nan=False))
+            db.commit()
+        except Exception:
+            if original is not None:
+                atomic_write(story.story_dir(plan_id) / "story.json", original)
+            raise
+        record_revision(plan_id, "clips edited")
+    return get_plan(plan_id)
+
+
+def swap_broll(plan_id: str, beat_index: int, asset_id: int) -> dict:
+    """Beat index is the one-based index shown in the story plan."""
+    from . import story
+    from .plan_history import atomic_write, plan_lock
+    with plan_lock(plan_id), SessionLocal() as db:
+        plan = db.get(models.EditPlan, plan_id)
+        if plan is None:
+            raise LookupError("plan not found")
+        sidecar = story.get_story(plan_id)
+        if not sidecar:
+            raise ValueError("B-roll swap requires a story plan")
+        beat = next((b for b in sidecar["beats"] if b["index"] == beat_index), None)
+        if beat is None:
+            raise ValueError("beat_index must match a story beat's one-based index")
+        asset = db.get(models.Asset, asset_id)
+        if asset is None:
+            raise ValueError("replacement asset not found")
+        need = float(beat["slot"])
+        if asset.kind == "video" and (not asset.duration or float(asset.duration) + 1e-6 < need):
+            raise ValueError(f"Replacement video must cover this beat's {need:.3f}s duration")
+        record_revision(plan_id, "before B-roll swap")
+        original = (story.story_dir(plan_id) / "story.json").read_text()
+        plan.status = "draft"
+        db.commit()  # Approval must stay revoked even if the subsequent write fails.
+        beat["clips"] = [{"asset_id": asset_id, "scene_id": None, "start": 0.0, "end": need}]
+        for c in list(plan.clips):
             db.delete(c)
         db.flush()
-        total = 0.0
-        for pos, c in enumerate(valid):
-            dur = max(0.0, float(c["end"]) - float(c["start"]))
-            total += dur
-            db.add(models.EditClip(
-                plan_id=plan_id, position=pos,
-                asset_id=c["asset_id"], scene_id=c.get("scene_id"),
-                start=c["start"], end=c["end"], caption=c.get("caption"),
-                transition=c.get("transition", "crossfade"),
-                score=c.get("score", 0.0),
-            ))
-        plan.total_duration = round(total, 2)
-        plan.summary = plan.summary or f"Edited plan with {len(valid)} clips."
-        db.commit()
-        db.refresh(plan)
-        return _plan_dict(plan)
+        pos = 0
+        for b in sidecar["beats"]:
+            for c in b["clips"]:
+                db.add(models.EditClip(plan_id=plan_id, position=pos, **c,
+                                       caption=b["text"], transition="cut", score=0.0))
+                pos += 1
+        plan.status = "draft"
+        try:
+            atomic_write(story.story_dir(plan_id) / "story.json", json.dumps(sidecar, allow_nan=False))
+            db.commit()
+        except Exception:
+            atomic_write(story.story_dir(plan_id) / "story.json", original)
+            raise
+        record_revision(plan_id, f"B-roll swapped for beat {beat_index}")
+    return get_plan(plan_id)
 
 
 def approve_plan(plan_id: str) -> Optional[dict]:
     """POST /api/edits/plan/{plan_id}/approve: hard approval gate."""
-    with SessionLocal() as db:
+    from . import story
+    from .plan_history import plan_lock
+    with plan_lock(plan_id), SessionLocal() as db:
         plan = db.get(models.EditPlan, plan_id)
         if plan is None:
             return None
         if not plan.clips:
             raise ValueError("cannot approve a plan with no clips")
+        if json.loads(plan.parsed_json or "{}").get("story"):
+            validate_story_sync(plan, story.get_story(plan_id))
         plan.status = "approved"
         db.commit()
         return {"ok": True, "status": plan.status}

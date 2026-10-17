@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 from .. import config
 
@@ -53,9 +53,28 @@ def _unit(w: int, h: int) -> float:
     return min(w, h) / 1080.0
 
 
-def body_size(w: int, h: int) -> int:
+def _safe_rect(w: int, h: int, safe_zones: Optional[Mapping[str, float]] = None) -> tuple[int, int, int, int]:
+    """Return the usable caption rectangle, accepting fractional margins.
+
+    ``None`` intentionally means the full frame to retain the pre-safe-zone
+    public behavior for callers that use this module directly.
+    """
+    zones = safe_zones or {}
+    def margin(name: str) -> int:
+        try:
+            return max(0, min(int(round((w if name in ("left", "right") else h)
+                                        * float(zones.get(name, 0)))),
+                              (w if name in ("left", "right") else h) // 2))
+        except (TypeError, ValueError):
+            return 0
+    left, right, top, bottom = margin("left"), margin("right"), margin("top"), margin("bottom")
+    return left, top, max(2, w - left - right), max(2, h - top - bottom)
+
+
+def body_size(w: int, h: int, safe_zones: Optional[Mapping[str, float]] = None) -> int:
     """~4.5% of frame height on 9:16; landscape gets a larger share so it reads."""
-    return int(round(h * (0.045 if h >= w else 0.06)))
+    _, _, _inner_w, inner_h = _safe_rect(w, h, safe_zones)
+    return int(round(inner_h * (0.045 if h >= w else 0.06)))
 
 
 # ---------------------------------------------------------------------------
@@ -179,15 +198,29 @@ def _font(size: int):
     return ImageFont.truetype(str(FONTS_DIR / EMPH_FONT_FILE), size)
 
 
-def emphasis_font_size(text: str, w: int, h: int) -> int:
+def emphasis_font_size(text: str, w: int, h: int,
+                       safe_zones: Optional[Mapping[str, float]] = None) -> int:
     """2.7x body size, shrunk so the word fits in 88% of the frame width."""
     from PIL import ImageFont
-    size = int(round(body_size(w, h) * EMPH_SCALE))
+    size = int(round(body_size(w, h, safe_zones) * EMPH_SCALE))
     font = ImageFont.truetype(str(FONTS_DIR / EMPH_FONT_FILE), size)
     width = font.getlength(text)
-    limit = 0.88 * w
+    # Leave enough space for the rendered PNG's glow/shadow padding too.
+    _, _, inner_w, inner_h = _safe_rect(w, h, safe_zones)
+    limit = (0.72 if safe_zones is not None else 0.88) * inner_w
     if width > limit:
-        size = max(12, int(size * limit / width))
+        size = max(1, int(size * limit / width))
+    # The visual extent includes a glow pad that is proportional to font
+    # size.  Recheck the actual PNG dimensions so its image, rather than only
+    # its glyphs, fits within the safe rectangle for unusually long words.
+    u = _unit(w, h)
+    while size > 1:
+        font = ImageFont.truetype(str(FONTS_DIR / EMPH_FONT_FILE), size)
+        l, t, r, b = font.getbbox(text)
+        pad = int(0.15 * size + 30 * u)
+        if r - l + 2 * pad <= inner_w and b - t + 2 * pad <= inner_h:
+            break
+        size = max(1, size - max(1, size // 8))
     return size
 
 
@@ -200,7 +233,8 @@ def _gradient_at(x: float) -> tuple[int, int, int]:
 
 
 def render_emphasis_images(text: str, w: int, h: int, out_dir: Path, tag: str,
-                           seed: int = 0) -> dict:
+                           seed: int = 0,
+                           safe_zones: Optional[Mapping[str, float]] = None) -> dict:
     """Write glitch frames + clean hold frame PNGs for one emphasis word.
 
     Returns {"frames": [paths...], "hold": path, "size": (iw, ih),
@@ -210,7 +244,7 @@ def render_emphasis_images(text: str, w: int, h: int, out_dir: Path, tag: str,
 
     out_dir.mkdir(parents=True, exist_ok=True)
     u = _unit(w, h)
-    size = emphasis_font_size(text, w, h)
+    size = emphasis_font_size(text, w, h, safe_zones)
     font = _font(size)
     l, t, r, b = font.getbbox(text)
     tw, th = r - l, b - t
@@ -298,14 +332,38 @@ def _ass_escape(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")")
 
 
-def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None) -> str:
+def _ass_extent(text: str, size: int, font_file: str) -> tuple[int, int]:
+    """Measured glyph extent used to keep ASS events inside a safe rectangle."""
+    try:
+        from PIL import ImageFont
+        font = ImageFont.truetype(str(FONTS_DIR / font_file), max(1, size))
+        left, top, right, bottom = font.getbbox(text)
+        return max(1, right - left), max(1, bottom - top)
+    except Exception:
+        # Conservative fallback for hosts that use DejaVu through libass.
+        return max(1, int(math.ceil(len(text) * size * .9))), max(1, size)
+
+
+def _fit_ass_size(text: str, wanted: int, max_width: int, max_height: int,
+                  font_file: str, outline: int) -> tuple[int, int, int]:
+    """Return a readable measured font size whose outlined glyphs fit."""
+    for size in range(max(1, wanted), 0, -1):
+        glyph_w, glyph_h = _ass_extent(text, size, font_file)
+        if glyph_w + 2 * outline <= max_width and glyph_h + 2 * outline <= max_height:
+            return size, glyph_w, glyph_h
+    glyph_w, glyph_h = _ass_extent(text, 1, font_file)
+    return 1, glyph_w, glyph_h
+
+
+def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None,
+              safe_zones: Optional[Mapping[str, float]] = None) -> str:
     """ASS document for body words and connector words.
 
     ``layout``: per-emphasis dict {"text_left", "text_top"} (frame pixels), from
     the PNG geometry, so connectors land on the big word's top-left corner.
     """
     u = _unit(w, h)
-    size = body_size(w, h)
+    size = body_size(w, h, safe_zones)
     csize = int(round(size * 0.9))
     body_font, conn_font = BODY_FONT, CONNECTOR_FONT
     if not fonts_available():
@@ -325,11 +383,20 @@ def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None)
         "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
     )
     drift = max(2, round(8 * u))
-    x = w // 2
-    y = int(round(h * BODY_Y))
+    safe_x, safe_y, safe_w, safe_h = _safe_rect(w, h, safe_zones)
+    safe_right, safe_bottom = safe_x + safe_w, safe_y + safe_h
+    x = safe_x + safe_w // 2
+    y = safe_y + int(round(safe_h * BODY_Y))
+    clip = f"\\clip({safe_x},{safe_y},{safe_right},{safe_bottom})"
+    body_file = "Montserrat-Medium.ttf" if fonts_available() else "DejaVuSans.ttf"
+    connector_file = "Montserrat-Regular.ttf" if fonts_available() else "DejaVuSans.ttf"
     lines = [head]
     for ev in events["body"]:
-        tag = (f"{{\\an5\\move({x},{y + drift},{x},{y},0,80)\\fad(80,0)\\blur6"
+        word_size, glyph_w, glyph_h = _fit_ass_size(
+            str(ev["text"]), size, safe_w, safe_h - drift, body_file, shad)
+        word_y = max(safe_y + glyph_h // 2 + shad,
+                     min(safe_bottom - glyph_h // 2 - shad - drift, y))
+        tag = (f"{{\\an5{clip}\\fs{word_size}\\move({x},{word_y + drift},{x},{word_y},0,80)\\fad(80,0)\\blur6"
                f"\\t(0,80,\\blur0)\\4a&H70&}}")
         lines.append(f"Dialogue: 0,{_ass_time(ev['start'])},{_ass_time(ev['end'])},"
                      f"Body,,0,0,0,,{tag}{_ass_escape(ev['text'])}\n")
@@ -340,9 +407,12 @@ def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None)
             cx, cy = layout[i]["text_left"], layout[i]["text_top"]
         else:
             cx, cy = int(w * 0.1), int(h * (EMPH_Y - 0.05))
-        cx = int(cx - 0.01 * w)
-        cy = int(cy + 0.35 * csize)
-        tag = (f"{{\\an1\\move({cx},{cy + drift},{cx},{cy},0,80)\\fad(80,0)\\blur6"
+        conn_size, glyph_w, glyph_h = _fit_ass_size(
+            str(ev["connector"]), csize, safe_w, safe_h - drift, connector_file, shad)
+        cx = max(safe_x + shad, min(safe_right - glyph_w - shad, int(cx - 0.01 * w)))
+        cy = max(safe_y + glyph_h + shad,
+                 min(safe_bottom - shad - drift, int(cy + 0.35 * conn_size)))
+        tag = (f"{{\\an1{clip}\\fs{conn_size}\\move({cx},{cy + drift},{cx},{cy},0,80)\\fad(80,0)\\blur6"
                f"\\t(0,80,\\blur0)\\4a&H70&}}")
         start = ev["connector_start"] if ev.get("connector_start") is not None else ev["start"]
         lines.append(f"Dialogue: 1,{_ass_time(start)},{_ass_time(ev['end'])},"
@@ -350,13 +420,19 @@ def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None)
     return "".join(lines)
 
 
-def emphasis_layout(infos: list[dict], w: int, h: int) -> list[dict]:
+def emphasis_layout(infos: list[dict], w: int, h: int,
+                    safe_zones: Optional[Mapping[str, float]] = None) -> list[dict]:
     """Frame-pixel text corner + image position for each emphasis PNG."""
+    safe_x, safe_y, safe_w, safe_h = _safe_rect(w, h, safe_zones)
+    safe_right, safe_bottom = safe_x + safe_w, safe_y + safe_h
     out = []
     for info in infos:
         iw, ih = info["size"]
-        x0 = (w - iw) // 2
-        y0 = int(round(h * EMPH_Y - ih / 2))
+        # Image generation reserves its padding against this same rectangle;
+        # clamp nevertheless so callers with legacy image infos remain safe.
+        x0 = max(safe_x, min(safe_right - iw, safe_x + (safe_w - iw) // 2))
+        y0 = max(safe_y, min(safe_bottom - ih,
+                             int(round(safe_y + safe_h * EMPH_Y - ih / 2))))
         l, t, _r, _b = info["text_box"]
         out.append({"x": x0, "y": y0, "text_left": x0 + l, "text_top": y0 + t})
     return out

@@ -46,6 +46,9 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 # No live folder watcher / periodic scans in tests (they race with explicit scans);
 # watcher behaviour is tested directly with tmp dirs.
 os.environ["MF_WATCHER"] = "0"
+os.environ["MF_API_TOKEN"] = ""
+os.environ["MF_MUSIC_DIR"] = str(_TMP / "music")
+os.environ["MF_REMOVABLE_WATCHER"] = "0"
 
 
 def _cleanup() -> None:

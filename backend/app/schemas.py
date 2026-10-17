@@ -1,7 +1,7 @@
 """Pydantic request/response schemas matching the API contract exactly."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -219,6 +219,11 @@ class PlanUpdateRequest(BaseModel):
     clips: list[ClipOut] = Field(default_factory=list)
 
 
+class SwapBrollRequest(BaseModel):
+    beat_index: int = Field(ge=1)
+    asset_id: int = Field(ge=1)
+
+
 class ApproveOut(BaseModel):
     ok: bool = True
     status: str = "approved"
@@ -237,6 +242,12 @@ class RenderRequest(BaseModel):
     caption_style: Optional[str] = None
     # Kinetic grade, slow push-in and glitch cuts at beat boundaries.
     effects: bool = True
+    presets: Optional[list[Literal["9:16", "4:5", "1:1", "16:9"]]] = Field(default=None, min_length=1, max_length=4)
+    reframe: Literal["smart", "center"] = "smart"
+    safe_zones: Optional[dict[str, float]] = None
+    guide_overlay: bool = False
+    music: Optional[Literal["auto"]] = None
+    music_auto: bool = False
 
 
 class RenderJobOut(BaseModel):
@@ -249,6 +260,7 @@ class RenderStatusOut(BaseModel):
     status: str
     output_path: Optional[str] = None
     progress: float = 0.0
+    output_paths: dict[str, str] = Field(default_factory=dict)
 
 
 # --- Exports -----------------------------------------------------------------
@@ -388,3 +400,7 @@ class MusicTrackOut(BaseModel):
     name: str
     path: str
     ext: str = ""
+    duration: Optional[float] = None
+    loudness: Optional[float] = None
+    rough_bpm: Optional[float] = None
+    mood_tags: list[str] = Field(default_factory=list)

@@ -42,7 +42,12 @@ class WSManager:
             self._connections.discard(ws)
 
     async def _safe_send(self, ws: WebSocket, payload: dict) -> None:
+        from .auth import authorized
         try:
+            if not authorized(ws):
+                await ws.close(code=4401)
+                await self.disconnect(ws)
+                return
             await ws.send_text(json.dumps(payload))
         except Exception:
             await self.disconnect(ws)

@@ -4,13 +4,15 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from . import config, models
 from .db import get_db
 from .subtitles import build_document, serialize
+from . import caption_editor
+from .edits import planner
 
 router = APIRouter(tags=["captions"])
 
@@ -84,3 +86,44 @@ def download_captions(asset_id: int, format: Literal["srt", "vtt", "ass"], style
         media_type=f"{media_types[format]}; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="asset-{asset_id}.{format}"'},
     )
+
+
+@router.get("/api/assets/{asset_id}/caption-words")
+def get_asset_caption_words(asset_id: int, db: Session = Depends(get_db)):
+    asset = db.get(models.Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="asset not found")
+    words = caption_editor.asset_words(asset)
+    if not words:
+        raise HTTPException(status_code=409, detail="asset has no transcript")
+    return {"words": words, "qc": caption_editor.advisory_qc(words)}
+
+
+@router.put("/api/assets/{asset_id}/caption-words")
+def put_asset_caption_words(asset_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    asset = db.get(models.Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="asset not found")
+    try:
+        return caption_editor.save_asset_words(db, asset, payload.get("words"))
+    except caption_editor.CaptionEditError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/edits/plan/{plan_id}/caption-words")
+def get_plan_caption_words(plan_id: str):
+    try:
+        _sidecar, words = caption_editor.story_words(plan_id)
+    except caption_editor.CaptionEditError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"words": words, "qc": caption_editor.advisory_qc(words)}
+
+
+@router.put("/api/edits/plan/{plan_id}/caption-words")
+def put_plan_caption_words(plan_id: str, payload: dict = Body(...)):
+    try:
+        callback = getattr(planner, "record_revision", None)
+        return caption_editor.save_story_words(plan_id, payload.get("words"), callback)
+    except caption_editor.CaptionEditError as exc:
+        status = 404 if str(exc) == "story plan not found" else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc

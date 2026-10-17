@@ -27,8 +27,10 @@ def _isolated_rows(client):
         for plan in db.query(models.EditPlan).all():
             if plan.id not in plans:
                 db.delete(plan)
+        db.flush()
         for asset in db.query(models.Asset).all():
             if asset.id not in assets:
+                db.query(models.TripAsset).filter_by(asset_id=asset.id).delete()
                 db.execute(text("DELETE FROM asset_fts WHERE asset_id = :id"), {"id": asset.id})
                 (config.DATA_DIR / "transcripts" / f"{asset.id}.json").unlink(missing_ok=True)
                 db.delete(asset)
@@ -165,12 +167,24 @@ def test_package_draft_and_missing_plan_rejected(client, approved_plan):
 def test_package_story_uses_global_word_timing(client, approved_plan):
     pid = approved_plan()
     with SessionLocal() as db:
-        db.get(models.EditPlan, pid).parsed_json = '{"story": true}'
+        plan = db.get(models.EditPlan, pid)
+        plan.parsed_json = '{"story": true}'
+        plan.total_duration = 6
+        asset_id = plan.clips[0].asset_id
+        for clip in list(plan.clips):
+            db.delete(clip)
+        db.flush()
+        db.add(models.EditClip(plan_id=pid, position=0, asset_id=asset_id, start=0, end=4, transition="cut"))
+        db.add(models.EditClip(plan_id=pid, position=1, asset_id=asset_id, start=0, end=2, transition="cut"))
         db.commit()
     directory = story.story_dir(pid)
     directory.mkdir(parents=True)
     (directory / "story.json").write_text(json.dumps({
-        "beats": [{"start": 4, "audio_duration": 2, "text": "Hello world.", "words": [
+        "duration": 6,
+        "beats": [{"start": 0, "slot": 4, "audio_duration": 4, "text": "Opening", "words": [],
+                   "clips": [{"asset_id": asset_id, "start": 0, "end": 4}]},
+                  {"start": 4, "slot": 2, "audio_duration": 2, "text": "Hello world.",
+                   "clips": [{"asset_id": asset_id, "start": 0, "end": 2}], "words": [
             {"start": 0.2, "end": 0.6, "word": "Hello"},
             {"start": 0.8, "end": 1.5, "word": "world."},
         ]}],
