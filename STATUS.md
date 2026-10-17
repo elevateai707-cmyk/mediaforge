@@ -2,40 +2,58 @@
 
 Updated 17 October 2026 (America/Edmonton).
 
-## Completed integration
+## Integration state
 
-The useful portions of the supplied master plan are integrated into the existing
-app: asset caption export/QC, future word-timing preservation, approved-plan
-handoff packages, per-job ElevenLabs consent/character cap/audit receipts,
-MCP tools, and portable launch scripts. See `docs/MASTER_PLAN_REVIEW.md` for
-the keep/add/defer decisions and explicit limitations.
+The earlier master-plan integration is committed at `556eafd`. Claude's follow-up
+adds optional API/session authentication, non-destructive tightening, editable
+captions/QC, approved removable imports, CPU smart crops, batch exports/social safe
+zones, edit revisions/B-roll synchronization and local music selection.
+Work is on `g15/codex-hardening`. Activation instructions: `docs/HARDENING.md`.
 
-## Verification
+**The running mediaforge.service has not been restarted.** Its frontend files
+still match the previous backend. New frontend output is staged in the Codex
+work directory; run the documented build/restart together to activate.
+No token was generated or installed, no secrets were read, and no real database
+or source media was changed by tests. No paid narration or social upload occurred.
 
-- Baseline backend: 187 passed, 1 skipped.
-- Final backend: **206 passed, 1 skipped** (`backend/.venv/bin/python -m pytest -q`,
-  run from `backend/` using `.venv/bin/python`). Existing Starlette/Pillow
-  deprecation warnings remain. Tests now disable Hugging Face network downloads.
-- Frontend: `npm run build` and `npm run lint` passed. Existing bundle-size and
-  two Fast Refresh warnings remain.
-- MCP: **4 offline unittest tests passed**, including consent and API contracts.
-- Launch scripts: Bash syntax passed; mocked unavailable-active-service cases
-  refused to start duplicate processes.
-- Read-only security review: no remaining blocking issue in the new scope.
-- Existing user service was restarted only after confirming no active jobs and
-  an idle AI worker; its Tailscale binding is unchanged. Health is OK and new
-  routes appear in live OpenAPI.
-- Live caption QC and all three downloads passed using existing asset 2000.
-  Browser checks showed its QC, fallback timing disclosure and download links.
-  Story creation remained disabled without consent.
-- No approved plan was available for a live ZIP download check. Isolated tests
-  verified ZIP contents/checksums, source preservation and story failure cases.
-- No paid TTS request, Resolve mutation, source deletion, new cloud provider,
-  dependency installation or full-library reanalysis was performed.
+## Verification checkpoint
 
-## Remaining operational note
+- Before this hardening pass: 206 backend tests passed, 1 skipped.
+- Final full run: **259 passed, 1 skipped**, four existing deprecation warnings.
+- Final suite includes measured safe-zone bounds, crop-path interpolation and missing-voiceover regressions.
+- MCP: 9 offline tests passed; legacy render calls retain no-music behavior.
+- Frontend: staged production build and lint passed. Bundle-size advisory and
+  three Fast Refresh warnings (two existing, one AuthGate export) remain.
+- Isolated HTTP smoke passed: public health, unauthenticated denial, session
+  login, plan approval, three crop previews, private cache policy, cookie media,
+  logout and denial after logout.
+- Browser visual QA unavailable: isolated preview URLs returned
+  `ERR_BLOCKED_BY_CLIENT`. Production auth/physical cards are not live-tested.
+- Read-only rereview cleared auth, approval durability, batch locking, unique
+  output paths, descriptor-based imports, reframe geometry and audio sync.
 
-Already-running MCP clients must reconnect/reload to read the changed server.
-The installed `/home/g15/mediaforge-mcp/server.py` and canonical `mcp/server.py`
-are synchronized. No authentication layer, full sandbox/SBOM audit, or new
-device/cloud adapters are claimed by this integration.
+## Dependency audit
+
+`scripts/audit.sh` ran and returned 1: the retained lockfile reports one high
+source-map-js advisory, GHSA-68fv-2mgg-jv7q (<1.2.2). A targeted 1.2.2 update was
+tested successfully but reverted to honor the no-auto-upgrade instruction.
+`pip-audit` and `syft` are absent; backend auditing and SBOM creation were skipped,
+not passed. No dependency upgrades are included.
+
+## Operational limits
+
+Auth remains optional/unset until configured. Sessions are process-local and
+restart revokes them. History/import approvals are local. Filler cuts require
+real preserved whisper timing; narrated stories reject tightening. Story caption
+edits preserve word count and do not regenerate narration. Music mood/BPM and
+smart crop are heuristics to review before upload. Batch cancellation occurs
+between presets. Claude must reconnect its MCP client after bridge updates.
+
+## Commits
+
+- `556eafd`: earlier selected master-plan integration (already completed).
+- `2e766e5`: authentication, edit history/captions/imports, CPU reframe and rendering, tests.
+- `864f719`: frontend login and review/import/batch controls.
+- `8f1a7d9`: backward-compatible MCP extensions and dependency audit script.
+
+Repository changes are committed locally only. No merge, rebase or push.

@@ -1,50 +1,68 @@
-# MediaForge integration handoff
+# MediaForge handoff to Claude Code
 
-## Objective and decisions
+## Request and state
 
-User asked to compare a supplied MediaForge master plan with the existing app,
-adopt useful gaps, and omit redundant/unneeded features. Completed the selected
-integration without replacing the app or introducing additional dependencies.
-Read `docs/MASTER_PLAN_REVIEW.md` and `STATUS.md` before extending it.
+User asked to integrate useful missing parts of the supplied review, then notify
+Claude Code so they can remotely control it for editing existing media and batch
+content creation for TikTok/Instagram. Do not start uploads or paid generation
+from this handoff. The user intends to direct that work in Claude.
+
+Repository: `/home/g15/mediaforge`, branch `g15/codex-hardening`, based on previous
+integration `556eafd` (on top of Claude's `b9ecf1b`). No merge/rebase/push.
+Read `docs/HARDENING.md` for exact setup/API/MCP contracts and `STATUS.md` for tests.
+
+## Activation still required
+
+No service restart in this pass, per the supplied review. The live frontend is
+kept at `556eafd` to match that running backend; new builds are staged outside it.
+Before activation, inspect jobs/AI worker state and avoid interrupting media work.
+Then follow the build/token/MCP/restart instructions in `docs/HARDENING.md`.
+Do not claim the running service is protected until MF_API_TOKEN is configured
+and the new backend is loaded. This agent never read `.env` or API keys.
 
 ## Implementation map
 
-- `backend/app/subtitles.py`: pure cue generation, QC and SRT/VTT/ASS serializers.
-- `backend/app/caption_routes.py`: asset caption document/download endpoints.
-- `backend/app/transcripts.py` and `ai/pipeline.py`: atomic optional sidecar
-  persistence; DB transcript remains usable if the sidecar cannot be saved.
-- `backend/app/edits/package.py`: approved-plan ZIP snapshots and provenance.
-  Never reads source paths from the manifest. Story sidecar loss is a 409.
-- `backend/app/policy.py`, `edits/story.py`, schemas/main: per-job paid narration
-  guard and redacted append-only receipts. Trusted local API, not authentication.
-- `frontend/src/components/AssetLightbox.tsx`: caption controls and QC.
-- `frontend/src/pages/EditStudioPage.tsx`: story consent, polling, draft loading,
-  package download. Consent clears after each accepted job.
-- `mcp/`: canonical bridge source and offline tests; mirrored to the pre-existing
-  `/home/g15/mediaforge-mcp/` installation.
-- `scripts/launch.sh` / `run.sh`: portable roots, loopback defaults, avoids duplicate
-  backend when the installed user service is active.
+- `backend/app/auth.py`, config/main/ws: bearer token, revocable opaque cookie,
+  login/session/logout, same-origin checks, no-store and ongoing WS authorization.
+- `edits/plan_history.py`, planner/story/package: atomic snapshots, durable draft
+  revocation before sidecar changes, restore, story sync validation, per-plan
+  serialization and beat B-roll replacement. Package caption timing follows cuts.
+- `caption_editor.py`, caption_routes: validated word edits and subtitle export,
+  historical segment fallback, story emphasis preservation and failure rollback.
+- `ingest/removable.py`, import_routes: manifest-bound approval, descriptor reads
+  with no-follow traversal, dated copies, duplicate hashes and scan queue handoff.
+- `edits/tighten.py`, tighten_routes: local silence/filler detection, new drafts,
+  source-transition preservation; story tightening deliberately rejects.
+- `edits/reframe.py`, render/kinetic: CPU face/motion crop paths, preview stills,
+  social safe zones, batch presets, consistent plan revisions and unique outputs.
+  Mixed transition audio uses delayed envelopes at exact visual offsets; tests
+  analyze real output tone timing, not just FFmpeg exit status.
+- `ingest/music.py`: scalable local metadata cache, confined paths, mood/BPM
+  heuristics; optional auto music loops/trims/fades and existing ducking.
+- Frontend AuthGate, CaptionWordEditor, PendingImports, PlanTools, EditStudio:
+  authenticated media, review controls, all batch output links and logout cleanup.
+- `mcp/server.py` is canonical; existing installed bridge is mirrored at handoff.
+- `scripts/audit.sh`: optional pip-audit/Syft and npm audit, no automatic upgrades.
 
-## Runtime and testing
+## Verification and limits
 
-Service: `systemctl --user status mediaforge.service`.
-Existing endpoint: `http://100.104.197.107:8420` (Tailscale).
-Do not change this binding or read/print `.env` secrets casually.
-Before a restart, check jobs and AI worker state; do not interrupt media work.
-
+Tests use conftest temporary DB/media, disabled AI downloads, and no paid calls.
 Run backend from `backend/`: `.venv/bin/python -m pytest -q`.
-Run frontend from `frontend/`: `npm run build && npm run lint`.
-Run MCP from `mcp/`: `/home/g15/mediaforge-mcp/.venv/bin/python -m unittest test_offline`.
-Latest complete results: 206 backend tests passed, 1 skipped; 4 MCP tests passed;
-frontend build/lint passed. See STATUS for live checks and existing warnings.
+Build frontend with an external `--outDir` until activation; ordinary `npm run
+build` writes the live static files, which would mismatch the old running API.
+MCP tests: from `mcp/`, `/home/g15/mediaforge-mcp/.venv/bin/python -m unittest test_offline`.
 
-## Known boundaries
+Do not confuse passing tests with deployment. Browser visual validation was
+blocked by the browser, though isolated HTTP checks passed. Physical removable
+cards and production token setup are not verified. Retain the one documented npm
+advisory pending an explicitly approved dependency change; optional backend/SBOM
+audit tools are missing. Final checks: 259 backend tests passed (1 skipped), 9 MCP tests passed; frontend build/lint passed with documented warnings.
 
-Old assets use stored segment timing unless explicitly retranscribed. Never
-trigger full reanalysis simply to populate sidecars. Package media is referenced,
-not bundled; montage captions are clip labels. Character caps are not USD budgets.
-Voice consent is self-attested, not verified ownership. Existing Resolve/import
-and dedupe authorization are not redesigned. The generic desktop entry/setup
-templates still deserve a separate packaging cleanup if installation portability
-becomes a task. No remaining implementation work is required for this selected
-integration; future features are listed as deferred in the review.
+## Commits
+
+- `556eafd`: earlier selected master-plan integration (already completed).
+- `2e766e5`: authentication, edit history/captions/imports, CPU reframe and rendering, tests.
+- `864f719`: frontend login and review/import/batch controls.
+- `8f1a7d9`: backward-compatible MCP extensions and dependency audit script.
+
+Repository changes are committed locally only. No merge, rebase or push.

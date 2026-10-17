@@ -154,7 +154,22 @@ Generic launch/run scripts default to `127.0.0.1:8420`. Override `MF_HOST`,
 interface. The existing installed systemd service may specify its own host;
 `launch.sh` discovers an active user service and does not start a duplicate.
 
-There is no authentication layer. Network clients able to reach the API can read
-indexed media and invoke operations. A local browser URL alone does not restrict
-an all-interface listener. Keep any LAN/Tailscale access limited to trusted clients.
-Audit records are not tamper-proof against the machine owner.
+Set `MF_API_TOKEN` to protect API routes, exported media and WebSockets. The browser
+exchanges the token for a revocable HttpOnly session cookie; MCP sends a Bearer
+header. No raw tokens appear in URLs or browser storage. Without this setting,
+authentication remains disabled and startup logs a warning. The health endpoint
+stays public with a minimal response. Use HTTPS when the transport is not already
+protected. Audit records are not tamper-proof against the machine owner.
+
+See [hardening and batch workflow](docs/HARDENING.md) for token setup, activation,
+API/MCP additions and current limits. `MF_CORS_ORIGINS` is an explicit comma-separated
+allowlist; the default accepts only same-origin cookie requests. Vite's API proxy
+works without adding a development origin.
+
+## Dependency audit
+
+Run `AUDIT_OUTPUT_DIR=/path/to/audit ./scripts/audit.sh` from this repository.
+It runs pip-audit against backend requirements when installed, npm audit against
+the frontend lockfile, and Syft when installed. Missing optional tools are reported;
+nothing is installed or upgraded. A nonzero status can mean advisories were found.
+Current findings and missing tools are recorded in STATUS.md.
