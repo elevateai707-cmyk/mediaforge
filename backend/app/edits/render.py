@@ -266,6 +266,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     from . import story as story_mod
     from . import kinetic, reframe as reframe_mod
     from . import beatmap as beatmap_mod
+    from . import brands as brands_mod
     story = story_mod.get_story(plan_id)
     # Story sidecars are timing contracts, not merely caption metadata.  Do
     # not render a voiceover against clips that have drifted since planning.
@@ -323,26 +324,12 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     kinetic_zones = reframe_mod.normalize_safe_zones(safe_zones) if height > width else None
     fx = is_kinetic and effects
     kin_dir = config.RENDER_TMP_DIR / f"emph_{plan_id}"
-    emph_infos: list[dict] = []
-    emph_events: list[dict] = []
+    overlays: list[dict] = []      # PNG sequences / images composited by ffmpeg
     ass_file: Optional[Path] = None
-    if is_kinetic and captions:
-        config.RENDER_TMP_DIR.mkdir(parents=True, exist_ok=True)
-        events = kinetic.plan_events(story.get("beats") or [])
-        emph_events = events["emphasis"]
-        for k, ev in enumerate(emph_events):
-            info = kinetic.render_emphasis_images(ev["text"], width, height, kin_dir,
-                                                  f"e{k}", seed=k, safe_zones=kinetic_zones)
-            info["list"] = str(kin_dir / f"e{k}.txt")
-            kinetic.write_sequence_list(info, ev["end"] - ev["start"],
-                                        Path(info["list"]), config.RENDER_FPS)
-            emph_infos.append(info)
-        layout = kinetic.emphasis_layout(emph_infos, width, height, kinetic_zones)
-        for info, lay in zip(emph_infos, layout):
-            info.update(lay)
-        ass_file = config.RENDER_TMP_DIR / f"cap_{plan_id}_kin.ass"
-        ass_file.write_text(kinetic.build_ass(events, width, height, layout, kinetic_zones),
-                            encoding="utf-8")
+    side = story or {}
+    hook_text = side.get("hook_text") if is_kinetic else None
+    brand = side.get("brand") if is_kinetic else None
+    card_s = brands_mod.END_CARD_SECONDS if brand else 0.0
 
     xfade = 0.0 if is_story else config.XFADE_DURATION
     font = config.find_font()
@@ -411,6 +398,54 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
                  sum(1 for d in snap_info["deltas"] if abs(d) > 1e-6),
                  len(snap_info["deltas"]), music_ss)
 
+    timeline_total = timeline + card_s     # clips + (optional) brand end card
+
+    if is_kinetic:
+        config.RENDER_TMP_DIR.mkdir(parents=True, exist_ok=True)
+        events = {"body": [], "emphasis": []}
+        extra_ass: list[str] = []
+        hook_end = kinetic.HOOK_SECONDS if hook_text else 0.0
+        if hook_text:
+            info = kinetic.render_hook_images(hook_text, width, height, kin_dir, "hook",
+                                              safe_zones=kinetic_zones)
+            overlays.append({"info": info, "start": 0.0, "end": hook_end})
+        layout: list[dict] = []
+        if captions:
+            events = kinetic.plan_events(side.get("beats") or [], hook_end=hook_end)
+            for k, ev in enumerate(events["emphasis"]):
+                info = kinetic.render_emphasis_images(ev["text"], width, height, kin_dir,
+                                                      f"e{k}", seed=k, safe_zones=kinetic_zones)
+                overlays.append({"info": info, "start": ev["start"], "end": ev["end"]})
+            layout = kinetic.emphasis_layout(
+                [o["info"] for o in overlays[1 if hook_text else 0:]], width, height, kinetic_zones)
+            for o, lay in zip(overlays[1 if hook_text else 0:], layout):
+                o["info"].update(lay)
+        if brand:
+            card = kinetic.brand_card_assets(brand, width, height, kin_dir, kinetic_zones)
+            name = card["name"]
+            overlays.append({"info": name, "start": timeline, "end": timeline_total, "fade": True,
+                             "x": name["x"], "y": name["y"]})
+            extra_ass = kinetic.card_ass_lines(card, timeline, timeline_total)
+            logo = brand.get("logo_path")
+            if logo and Path(logo).is_file():
+                overlays.append({"image": logo, "start": timeline, "end": timeline_total,
+                                 "fade": True, "scale_w": round(card["safe"][2] * 0.22),
+                                 "cy": max(card["safe"][1], name["y"] - round(height * 0.07)),
+                                 "cx": card["cx"]})
+        for k, o in enumerate(overlays):
+            info = o.get("info")
+            if info is None:
+                continue
+            info["list"] = str(kin_dir / f"seq{k}.txt")
+            kinetic.write_sequence_list(info, o["end"] - o["start"], Path(info["list"]),
+                                        config.RENDER_FPS)
+            o.setdefault("x", info.get("x", 0))
+            o.setdefault("y", info.get("y", 0))
+        if events["body"] or events["emphasis"] or extra_ass:
+            ass_file = config.RENDER_TMP_DIR / f"cap_{plan_id}_kin.ass"
+            ass_file.write_text(kinetic.build_ass(events, width, height, layout, kinetic_zones,
+                                                  extra_lines=extra_ass), encoding="utf-8")
+
     # ------------------------------------------------------------------
     # Build the command
     # ------------------------------------------------------------------
@@ -429,8 +464,12 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         voice_idx = cmd.count("-i")
         cmd += ["-i", voiceover]
     emph_idx0 = cmd.count("-i")
-    for info in emph_infos:
-        cmd += ["-f", "concat", "-safe", "0", "-i", info["list"]]
+    for o in overlays:
+        if o.get("info") is not None:
+            cmd += ["-f", "concat", "-safe", "0", "-i", o["info"]["list"]]
+        else:
+            cmd += ["-loop", "1", "-framerate", str(config.RENDER_FPS),
+                    "-t", f"{o['end'] - o['start']:.3f}", "-i", o["image"]]
     if music_path:
         if not Path(music_path).exists():
             raise RenderError(f"music file not found: {music_path}")
@@ -535,15 +574,15 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         alabels.append(alabel)
 
     if is_story:
-        input_index += 1 + len(emph_infos)  # voiceover + emphasis inputs
+        input_index += 1 + len(overlays)  # voiceover + overlay inputs
     # Music input (last input index).
     music_label: Optional[str] = None
     if music_path:
         music_label = f"m{input_index}"
-        fade_duration = min(0.6 if is_story else 1.0, max(0.05, timeline))
-        fade_start = max(0.0, timeline - fade_duration)
+        fade_duration = min(0.6 if is_story else 1.0, max(0.05, timeline_total))
+        fade_start = max(0.0, timeline_total - fade_duration)
         filters.append(
-            f"[{input_index}:a]aresample=48000,atrim=end={timeline:.3f},"
+            f"[{input_index}:a]aresample=48000,atrim=end={timeline_total:.3f},"
             f"afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[{music_label}]")
 
     # Video join chain. A hard cut concatenates complete clips; mixed plans
@@ -579,7 +618,8 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     # to its video start before a single sample-rate-normalized mix.
     aout = alabels[0]
     if is_story:
-        filters.append(f"[{voice_idx}:a]aresample=48000[amix]")
+        filters.append(f"[{voice_idx}:a]aresample=48000"
+                       + (f",apad=whole_dur={timeline_total:.3f}" if card_s else "") + "[amix]")
     elif n > 1:
         has_cut = any(
             str(getattr(pc["clip"], "transition", "crossfade") or "crossfade").lower()
@@ -660,6 +700,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             filters.append(f"[{cur}]{filt}[{label}]")
             cur = label
 
+        if card_s:
+            # Freeze the last frame for the end card (blurred + darkened below).
+            _chain(f"tpad=stop_mode=clone:stop_duration={card_s:.3f}", "vcard")
         if fx:
             _chain("eq=contrast=1.08:saturation=1.15,"
                    "colorbalance=rs=0.03:bs=-0.03:rm=0.02:bm=-0.02", "vgrade")
@@ -677,13 +720,26 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
                 shift = max(2, round(12 * min(width, height) / 1080))
                 enable = "+".join(f"between(t,{t0:.3f},{t0 + flash:.3f})" for t0 in starts)
                 _chain(f"rgbashift=rh={-shift}:bh={shift}:enable='{enable}'", "vglitch")
-        for k, (info, ev) in enumerate(zip(emph_infos, emph_events)):
+        if card_s:
+            radius = max(4, round(26 * min(width, height) / 1080))
+            _chain(f"boxblur=luma_radius={radius}:luma_power=2:chroma_radius={radius // 2}"
+                   f":enable='gte(t,{timeline:.3f})',"
+                   f"eq=brightness=-0.30:enable='gte(t,{timeline:.3f})'", "vcarddim")
+        for k, o in enumerate(overlays):
             src = f"em{k}"
-            filters.append(f"[{emph_idx0 + k}:v]fps={config.RENDER_FPS},format=rgba,"
-                           f"setpts=PTS+{ev['start']:.3f}/TB[{src}]")
+            chain = [f"[{emph_idx0 + k}:v]fps={config.RENDER_FPS}"]
+            if o.get("scale_w"):
+                chain.append(f"scale={o['scale_w']}:-2")
+            chain.append("format=rgba")
+            chain.append(f"setpts=PTS+{o['start']:.3f}/TB")
+            if o.get("fade"):
+                chain.append(f"fade=t=in:st={o['start']:.3f}:d=0.25:alpha=1")
+            filters.append(",".join(chain) + f"[{src}]")
+            pos = (f"x={o['cx']}-w/2:y={o['cy']}-h/2" if o.get("scale_w")
+                   else f"x={o['x']}:y={o['y']}")
             filters.append(
-                f"[{cur}][{src}]overlay=x={info['x']}:y={info['y']}:eof_action=pass:"
-                f"enable='between(t,{ev['start']:.3f},{ev['end']:.3f})'[vo{k}]")
+                f"[{cur}][{src}]overlay={pos}:eof_action=pass:"
+                f"enable='between(t,{o['start']:.3f},{o['end']:.3f})'[vo{k}]")
             cur = f"vo{k}"
         if ass_file is not None:
             fd = f":fontsdir='{_escape_filter_path(str(kinetic.FONTS_DIR))}'" \

@@ -32,6 +32,7 @@ HOLD_PAD = 0.4            # words linger this long past their end (cap)
 BODY_Y = 0.50
 EMPH_Y = 0.22
 EMPH_SCALE = 2.7
+HOOK_SECONDS = 1.4         # hook headline on screen 0 .. HOOK_SECONDS
 PORTRAIT_BODY = 0.055     # body caption size as a fraction of frame height
 
 STOPWORDS = {
@@ -134,8 +135,11 @@ def _strip_trail(text: str) -> str:
     return text.rstrip(".,!?;:\"')]").lstrip("\"'([") or text
 
 
-def plan_events(beats: list[dict]) -> dict:
+def plan_events(beats: list[dict], hook_end: float = 0.0) -> dict:
     """Timeline events from story.json beats.
+
+    Emphasis words that would start before ``hook_end`` (a hook headline is on
+    screen) stay ordinary body words so the two big texts never collide.
 
     Returns {"body": [{start,end,text}], "emphasis": [{start,end,text,
     connector, connector_start}]}. Emphasis words and their connector words are
@@ -159,7 +163,8 @@ def plan_events(beats: list[dict]) -> dict:
             if chosen and s < chosen[-1][1]:
                 continue
             chosen.append((s, e))
-        chosen = chosen[:MAX_EMPH_PER_BEAT]
+        chosen = [(s, e) for s, e in chosen[:MAX_EMPH_PER_BEAT]
+                  if off + float(words[s]["start"]) >= hook_end]
         skip: set[int] = set()
         for s, e in chosen:
             skip.update(range(s, e))
@@ -225,11 +230,12 @@ def emphasis_font_size(text: str, w: int, h: int,
     return size
 
 
-def _gradient_at(x: float) -> tuple[int, int, int]:
-    x = min(1.0, max(0.0, x)) * (len(GRADIENT) - 1)
-    i = min(int(x), len(GRADIENT) - 2)
+def _gradient_at(x: float, colors: Optional[list] = None) -> tuple[int, int, int]:
+    stops = colors or GRADIENT
+    x = min(1.0, max(0.0, x)) * (len(stops) - 1)
+    i = min(int(x), len(stops) - 2)
     f = x - i
-    a, b = GRADIENT[i], GRADIENT[i + 1]
+    a, b = stops[i], stops[i + 1]
     return tuple(int(round(a[k] + (b[k] - a[k]) * f)) for k in range(3))  # type: ignore[return-value]
 
 
@@ -241,25 +247,41 @@ def render_emphasis_images(text: str, w: int, h: int, out_dir: Path, tag: str,
     Returns {"frames": [paths...], "hold": path, "size": (iw, ih),
     "text_box": (left, top, right, bottom) inside the image}.
     """
-    from PIL import Image, ImageChops, ImageFilter
+    size = emphasis_font_size(text, w, h, safe_zones)
+    return render_gradient_images([text], size, w, h, out_dir, tag, seed=seed)
+
+
+def render_gradient_images(lines: list[str], size: int, w: int, h: int, out_dir: Path,
+                           tag: str, seed: int = 0, colors: Optional[list] = None,
+                           glitch_in: bool = True) -> dict:
+    """Gradient-filled (multi-line, centred) text as transparent PNGs.
+
+    ``glitch_in`` writes the RGB-split/slice-displacement frames before the clean
+    hold frame; without it only the hold frame exists (``frames`` is empty).
+    """
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
     out_dir.mkdir(parents=True, exist_ok=True)
     u = _unit(w, h)
-    size = emphasis_font_size(text, w, h, safe_zones)
     font = _font(size)
-    l, t, r, b = font.getbbox(text)
-    tw, th = r - l, b - t
+    boxes = [font.getbbox(line) for line in lines]
+    widths = [r - l for l, _t, r, _b in boxes]
+    tw = max(widths)
+    line_h = int(size * 1.15)
+    top0 = min(t for _l, t, _r, _b in boxes)
+    th = (len(lines) - 1) * line_h + max(b for _l, _t, _r, b in boxes) - top0
     pad = int(0.15 * size + 30 * u)
     iw, ih = tw + 2 * pad, th + 2 * pad
 
     mask = Image.new("L", (iw, ih), 0)
-    from PIL import ImageDraw
-    ImageDraw.Draw(mask).text((pad - l, pad - t), text, font=font, fill=255)
+    draw = ImageDraw.Draw(mask)
+    for i, (line, (l, _t, _r, _b), lw) in enumerate(zip(lines, boxes, widths)):
+        draw.text((pad + (tw - lw) // 2 - l, pad + i * line_h - top0), line, font=font, fill=255)
 
     strip = Image.new("RGB", (iw, 1))
     sp = strip.load()
     for x in range(iw):
-        sp[x, 0] = _gradient_at((x - pad) / max(1, tw))
+        sp[x, 0] = _gradient_at((x - pad) / max(1, tw), colors)
     grad = strip.resize((iw, ih))
     base = grad.convert("RGBA")
     base.putalpha(mask)
@@ -294,14 +316,159 @@ def render_emphasis_images(text: str, w: int, h: int, out_dir: Path, tag: str,
         return img
 
     frames: list[str] = []
-    for k in range(GLITCH_FRAMES - 1):
-        p = out_dir / f"{tag}_g{k}.png"
-        finish(glitch(k)).save(p)
-        frames.append(str(p))
+    if glitch_in:
+        for k in range(GLITCH_FRAMES - 1):
+            p = out_dir / f"{tag}_g{k}.png"
+            finish(glitch(k)).save(p)
+            frames.append(str(p))
     hold = out_dir / f"{tag}_hold.png"
     finish(base).save(hold)
     return {"frames": frames, "hold": str(hold), "size": (iw, ih),
             "text_box": (pad, pad, pad + tw, pad + th)}
+
+
+def _split_lines(words: list[str], n: int) -> list[str]:
+    """Split words into ``n`` consecutive lines minimising the widest line (by characters)."""
+    if n <= 1 or len(words) <= 1:
+        return [" ".join(words)]
+    best, best_w = None, None
+    from itertools import combinations
+    for cuts in combinations(range(1, len(words)), min(n - 1, len(words) - 1)):
+        parts, prev = [], 0
+        for c in (*cuts, len(words)):
+            parts.append(" ".join(words[prev:c]))
+            prev = c
+        widest = max(len(p) for p in parts)
+        if best_w is None or widest < best_w:
+            best, best_w = parts, widest
+    return best or [" ".join(words)]
+
+
+def hook_layout(text: str, w: int, h: int,
+                safe_zones: Optional[Mapping[str, float]] = None) -> tuple[list[str], int]:
+    """Uppercase hook wrapped to <= 3 lines at the largest size that fits the safe
+    rectangle (<= 2.4x body size, <= 88% of safe width, <= 26% of safe height)."""
+    from PIL import ImageFont
+    safe_x, safe_y, safe_w, safe_h = _safe_rect(w, h, safe_zones)
+    words = text.upper().split()
+    base = int(round(body_size(w, h, safe_zones) * 2.4))
+    u = _unit(w, h)
+    best_lines, best_size = [" ".join(words)], 1
+    for n in (1, 2, 3):
+        lines = _split_lines(words, n)
+        size = base
+        while size > 8:
+            font = ImageFont.truetype(str(FONTS_DIR / EMPH_FONT_FILE), size)
+            width = max(font.getlength(line) for line in lines)
+            height = int(size * 1.15) * (len(lines) - 1) + int(size * 1.0)
+            pad = int(0.15 * size + 30 * u)
+            if width + 2 * pad <= 0.96 * safe_w and height + 2 * pad <= 0.30 * safe_h \
+                    and width <= 0.88 * safe_w:
+                break
+            size -= max(1, size // 12)
+        if size > best_size:
+            best_lines, best_size = lines, size
+    return best_lines, best_size
+
+
+def render_hook_images(text: str, w: int, h: int, out_dir: Path, tag: str = "hook",
+                       safe_zones: Optional[Mapping[str, float]] = None) -> dict:
+    """Hook headline PNGs plus its frame position (top-anchored in the safe zone)."""
+    lines, size = hook_layout(text, w, h, safe_zones)
+    info = render_gradient_images(lines, size, w, h, out_dir, tag, seed=7919)
+    safe_x, safe_y, safe_w, safe_h = _safe_rect(w, h, safe_zones)
+    iw, ih = info["size"]
+    info["x"] = safe_x + (safe_w - iw) // 2
+    info["y"] = safe_y
+    info["lines"] = lines
+    return info
+
+
+def _legible(color: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Lighten colours too dark to read on the darkened end-card background."""
+    r, g, b = color
+    luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+    if luma >= 0.3:
+        return color
+    mix = 0.65
+    return tuple(int(c + (255 - c) * mix) for c in color)  # type: ignore[return-value]
+
+
+def _hex_rgb(value: str) -> tuple[int, int, int]:
+    v = value.lstrip("#")
+    return int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16)
+
+
+def brand_card_assets(brand: dict, w: int, h: int, out_dir: Path,
+                      safe_zones: Optional[Mapping[str, float]] = None) -> dict:
+    """Brand-name PNG (brand gradient) plus ASS text lines geometry for an end card.
+
+    Returns {"name": image info with x/y, "texts": [{text, size, y, color, font}], "cx"}.
+    """
+    from PIL import ImageFont
+    safe_x, safe_y, safe_w, safe_h = _safe_rect(w, h, safe_zones)
+    body = body_size(w, h, safe_zones)
+    colors = [_legible(_hex_rgb(c)) for c in brand.get("colors") or ["#FFFFFF", "#FFFFFF"]]
+    if len(colors) < 2:
+        colors = colors * 2
+    words = str(brand["name"]).split()
+    u = _unit(w, h)
+    best_lines, size = [" ".join(words)], int(round(body * 2.3))
+    for n in (1, 2):
+        lines = _split_lines(words, n)
+        s_try = int(round(body * 2.3))
+        while s_try > 8:
+            font = ImageFont.truetype(str(FONTS_DIR / EMPH_FONT_FILE), s_try)
+            pad = int(0.15 * s_try + 30 * u)
+            if max(font.getlength(x) for x in lines) + 2 * pad <= safe_w * 0.94:
+                break
+            s_try -= max(1, s_try // 12)
+        if n == 1 or s_try > size * 1.15:
+            best_lines, size = lines, s_try
+    info = render_gradient_images(best_lines, size, w, h, out_dir, "card_name",
+                                  colors=colors, glitch_in=False)
+    iw, ih = info["size"]
+    cx = safe_x + safe_w // 2
+    name_center = safe_y + int(round(safe_h * 0.40))
+    info["x"] = cx - iw // 2
+    info["y"] = max(safe_y, name_center - ih // 2)
+    bottom = info["y"] + ih
+    gap = int(body * 0.9)
+    texts = []
+    y = bottom + gap
+    if brand.get("cta"):
+        texts.append({"text": brand["cta"], "size": int(body * 1.15), "y": y,
+                      "color": (255, 255, 255), "font": "Montserrat Medium"})
+        y += int(body * 1.15) + gap // 2
+    if brand.get("url"):
+        texts.append({"text": brand["url"], "size": int(body * 0.95), "y": y,
+                      "color": colors[0], "font": "Montserrat Medium"})
+        y += int(body * 0.95) + gap // 3
+    if brand.get("handle") and brand.get("handle") != brand.get("url"):
+        texts.append({"text": brand["handle"], "size": int(body * 0.85), "y": y,
+                      "color": (220, 220, 220), "font": "Montserrat"})
+    return {"name": info, "texts": texts, "cx": cx, "safe": (safe_x, safe_y, safe_w, safe_h)}
+
+
+def card_ass_lines(card: dict, start: float, end: float) -> list[str]:
+    """Pre-formatted ASS Dialogue lines for the end card's text (appended to build_ass)."""
+    out = []
+    safe_x, _sy, safe_w, _sh = card["safe"]
+    for i, t in enumerate(card["texts"]):
+        size, text = t["size"], str(t["text"])
+        # shrink to the safe width (measured with the same font file)
+        font_file = "Montserrat-Medium.ttf" if "Medium" in t["font"] else "Montserrat-Regular.ttf"
+        if not fonts_available():
+            font_file = "DejaVuSans.ttf"
+        while size > 8 and _ass_extent(text, size, font_file)[0] > safe_w * 0.92:
+            size -= max(1, size // 15)
+        r, g, b = t["color"]
+        font = t["font"] if fonts_available() else "DejaVu Sans"
+        tag = (f"{{\\an8\\pos({card['cx']},{t['y']})\\fn{font}\\fs{size}"
+               f"\\1c&H{b:02X}{g:02X}{r:02X}&\\fad(250,0)}}")
+        out.append(f"Dialogue: 2,{_ass_time(start + 0.15 * (i + 1))},{_ass_time(end)},"
+                   f"Body,,0,0,0,,{tag}{_ass_escape(text)}\n")
+    return out
 
 
 def write_sequence_list(info: dict, duration: float, list_path: Path, fps: float) -> float:
@@ -357,7 +524,8 @@ def _fit_ass_size(text: str, wanted: int, max_width: int, max_height: int,
 
 
 def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None,
-              safe_zones: Optional[Mapping[str, float]] = None) -> str:
+              safe_zones: Optional[Mapping[str, float]] = None,
+              extra_lines: Optional[list[str]] = None) -> str:
     """ASS document for body words and connector words.
 
     ``layout``: per-emphasis dict {"text_left", "text_top"} (frame pixels), from
@@ -418,6 +586,7 @@ def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None,
         start = ev["connector_start"] if ev.get("connector_start") is not None else ev["start"]
         lines.append(f"Dialogue: 1,{_ass_time(start)},{_ass_time(ev['end'])},"
                      f"Connector,,0,0,0,,{tag}{_ass_escape(ev['connector'])}\n")
+    lines.extend(extra_lines or [])
     return "".join(lines)
 
 
