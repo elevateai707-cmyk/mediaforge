@@ -41,6 +41,8 @@ import { RENDER_RATIOS, ratioDimensions } from '@/lib/types'
 import { onJobEvent, useWsStore } from '@/lib/ws'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
+import { CaptionWordEditor } from '@/components/CaptionWordEditor'
+import { PlanTools } from '@/components/PlanTools'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -302,6 +304,12 @@ export function EditStudioPage() {
   const [height, setHeight] = useState(1920)
   const [captions, setCaptions] = useState(true)
   const [musicPath, setMusicPath] = useState('')
+  const [musicAuto, setMusicAuto] = useState(true)
+  const [renderPresets, setRenderPresets] = useState<RenderRatio[]>(['9:16'])
+  const [reframe, setReframe] = useState<'smart' | 'center'>('smart')
+  const [guideOverlay, setGuideOverlay] = useState(false)
+  const [safeTop, setSafeTop] = useState(0.1)
+  const [safeBottom, setSafeBottom] = useState(0.16)
   const [approved, setApproved] = useState(false)
 
   // ---- save ----
@@ -331,6 +339,7 @@ export function EditStudioPage() {
   const [storyBusy, setStoryBusy] = useState(false)
   const [storyError, setStoryError] = useState<string | null>(null)
   const [storyJobId, setStoryJobId] = useState<string | null>(null)
+  const [captionRevision, setCaptionRevision] = useState(0)
 
   // live render job state from the shared WebSocket store
   const renderLive = useWsStore((s) => (renderJobId ? s.jobs[renderJobId] : undefined))
@@ -470,7 +479,12 @@ export function EditStudioPage() {
         captions,
         width,
         height,
-      })
+        presets: renderPresets,
+        music_auto: musicAuto,
+        reframe,
+        safe_zones: { top: safeTop, bottom: safeBottom },
+        guide_overlay: guideOverlay,
+      } as Parameters<typeof startRender>[0])
       setRenderJobId(job.job_id)
       setRenderStatus({ status: 'running', output_path: null, progress: 0 })
     } catch (e) {
@@ -511,9 +525,10 @@ export function EditStudioPage() {
   }, [renderJobId, renderTerminal])
 
   const outputUrl = exportedFileUrl(renderStatus?.output_path)
+  const outputUrls = Object.entries(renderStatus?.output_paths ?? {}).map(([preset, path]) => ({ preset, url: exportedFileUrl(path) })).filter((item): item is { preset: string; url: string } => item.url !== null)
   const renderProgress = renderLive?.progress ?? renderStatus?.progress ?? 0
   const renderRunning = renderJobId !== null && !renderTerminal
-  const renderDone = renderStatus?.status === 'done' && outputUrl !== null
+  const renderDone = renderStatus?.status === 'done' && (outputUrl !== null || outputUrls.length > 0)
   const renderFailed = renderStatus?.status === 'error'
 
   const handleExport = async (format: ExportFormat) => {
@@ -755,6 +770,9 @@ export function EditStudioPage() {
             <p className="mt-3 text-sm leading-relaxed text-foreground/90">{plan.summary}</p>
           </div>
 
+          <PlanTools key={`${plan.plan_id}-${captionRevision}`} planId={plan.plan_id} isStory={Boolean((plan as EditPlan & { story?: unknown }).story) || plan.summary.toLowerCase().includes('story')} onPlan={(updated) => { applyPlan(updated); setCaptionRevision((current) => current + 1) }} />
+          <CaptionWordEditor key={`${plan.plan_id}-${captionRevision}`} planId={plan.plan_id} onSaved={() => { void getPlan(plan.plan_id).then((updated) => { applyPlan(updated); setCaptionRevision((current) => current + 1) }).catch(() => {}) }} />
+
           <div className="grid items-start gap-4 lg:grid-cols-[1fr_300px]">
             {/* timeline */}
             <div className="glass rounded-xl p-4">
@@ -847,6 +865,13 @@ export function EditStudioPage() {
                     </button>
                   ))}
                 </div>
+                <div className="mb-3">
+                  <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Render presets</Label>
+                  <div className="flex gap-1 rounded-lg border border-border bg-white/[0.03] p-1">
+                    {RENDER_RATIOS.map((preset) => <button key={preset} type="button" onClick={() => setRenderPresets((current) => current.includes(preset) ? current.filter((value) => value !== preset) : [...current, preset])} className={cn('flex-1 cursor-pointer rounded-md px-2 py-1.5 text-xs font-medium', renderPresets.includes(preset) ? 'bg-primary/20 text-primary' : 'text-muted-foreground')} aria-pressed={renderPresets.includes(preset)}>{preset}</button>)}
+                  </div>
+                  <p className="mt-1 text-[10px] text-muted-foreground">Selected outputs render as a batch. Your current ratio is selected by default.</p>
+                </div>
 
                 <div className="mb-3 grid grid-cols-2 gap-2">
                   <div>
@@ -902,6 +927,13 @@ export function EditStudioPage() {
                     Absolute path on the backend machine — enables beat-synced cuts.
                   </p>
                 </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <Label className="text-xs">Choose music automatically<span className="block text-[10px] font-normal text-muted-foreground">Uses the library music selector when no path is supplied.</span></Label>
+                  <Switch checked={musicAuto} onCheckedChange={setMusicAuto} disabled={approved} />
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3"><Label className="text-xs">Smart reframe<span className="block text-[10px] font-normal text-muted-foreground">Tracks the focal area; turn off to use a centered crop.</span></Label><Switch checked={reframe === 'smart'} onCheckedChange={(enabled) => setReframe(enabled ? 'smart' : 'center')} disabled={approved} /></div>
+                <div className="mt-3 grid grid-cols-2 gap-2"><div><Label className="mb-1 block text-[10px] uppercase text-muted-foreground">Safe top</Label><Input type="number" min={0} max={0.45} step={0.01} value={safeTop} onChange={(e) => setSafeTop(Number(e.target.value))} className="h-8 text-xs" /></div><div><Label className="mb-1 block text-[10px] uppercase text-muted-foreground">Safe bottom</Label><Input type="number" min={0} max={0.45} step={0.01} value={safeBottom} onChange={(e) => setSafeBottom(Number(e.target.value))} className="h-8 text-xs" /></div></div>
+                <div className="mt-3 flex items-center justify-between gap-3"><Label className="text-xs">Frame guide overlay<span className="block text-[10px] font-normal text-muted-foreground">Draws the safe zones in the rendered preview.</span></Label><Switch checked={guideOverlay} onCheckedChange={setGuideOverlay} disabled={approved} /></div>
               </div>
 
               <div className="glass rounded-xl p-4">
@@ -979,7 +1011,7 @@ export function EditStudioPage() {
           </div>
 
           {/* ---------- render progress / output ---------- */}
-          {(renderJobId || renderStatus || outputUrl) && (
+          {(renderJobId || renderStatus || outputUrl || outputUrls.length > 0) && (
             <div className="glass rounded-xl p-4">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                 <Film className="h-4 w-4" /> Render
@@ -1007,7 +1039,7 @@ export function EditStudioPage() {
                 </div>
               )}
 
-              {renderDone && outputUrl && (
+              {renderDone && (outputUrl || outputUrls[0]?.url) && (
                 <div>
                   <div className="flex items-center gap-2">
                     <Play className="h-4 w-4 text-primary" />
@@ -1015,20 +1047,11 @@ export function EditStudioPage() {
                   </div>
                   <video
                     controls
-                    src={outputUrl}
+                    src={outputUrls[0]?.url ?? outputUrl ?? undefined}
                     className="mt-3 max-h-[420px] w-full rounded-lg border border-border bg-black"
                   />
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <a
-                      href={outputUrl}
-                      download
-                      className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground transition-colors hover:bg-white/5 hover:text-primary"
-                    >
-                      <Download className="h-3.5 w-3.5" /> Download MP4
-                    </a>
-                    <span className="text-[11px] text-muted-foreground">
-                      {outputUrl.split('/').pop()}
-                    </span>
+                    {(outputUrls.length > 0 ? outputUrls : outputUrl ? [{ preset: 'render', url: outputUrl }] : []).map(({ preset, url }) => <a key={preset} href={url} download className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground transition-colors hover:bg-white/5 hover:text-primary"><Download className="h-3.5 w-3.5" /> Download {preset}</a>)}
                   </div>
                 </div>
               )}

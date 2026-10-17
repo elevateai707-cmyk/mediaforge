@@ -25,6 +25,7 @@ import {
 } from '@/lib/api'
 import type { CaptionStyle } from '@/lib/types'
 import { ExportDialog } from '@/components/ExportDialog'
+import { CaptionWordEditor } from '@/components/CaptionWordEditor'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -299,6 +300,10 @@ export function AssetLightbox({ assetId, onOpenChange }: AssetLightboxProps) {
                       ))}
                     </div>
                   </div>
+                )}
+
+                {asset.kind === 'video' && asset.has_transcript && (
+                  <CaptionWordEditor assetId={asset.id} onSaved={() => void captionsQuery.refetch()} />
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">

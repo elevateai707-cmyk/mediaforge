@@ -215,6 +215,7 @@ export interface RenderStatus {
   status: 'done' | 'running' | 'error' | string
   output_path: string | null
   progress: number
+  output_paths?: Record<string, string>
 }
 
 export interface ExportResponse {
@@ -224,14 +225,16 @@ export interface ExportResponse {
   project?: string
 }
 
-export type RenderRatio = '9:16' | '1:1' | '16:9'
+export type RenderRatio = '9:16' | '4:5' | '1:1' | '16:9'
 
-export const RENDER_RATIOS: RenderRatio[] = ['9:16', '1:1', '16:9']
+export const RENDER_RATIOS: RenderRatio[] = ['9:16', '4:5', '1:1', '16:9']
 
 export function ratioDimensions(ratio: RenderRatio): { width: number; height: number } {
   switch (ratio) {
     case '9:16':
       return { width: 1080, height: 1920 }
+    case '4:5':
+      return { width: 1080, height: 1350 }
     case '1:1':
       return { width: 1080, height: 1080 }
     case '16:9':

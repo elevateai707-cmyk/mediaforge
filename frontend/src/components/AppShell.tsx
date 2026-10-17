@@ -14,6 +14,7 @@ import {
   MapPin,
   Copy,
   Upload,
+  LogOut,
 } from 'lucide-react'
 import { useWsStore } from '@/lib/ws'
 import { HELP_OPEN_EVENT } from '@/lib/help-kb'
@@ -23,6 +24,8 @@ import { ImportDialog } from '@/components/ImportDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { IMPORT_OPEN_EVENT, cn } from '@/lib/utils'
+import { PendingImports } from '@/components/PendingImports'
+import { useAuthGate } from '@/components/AuthGate'
 
 interface NavItem {
   to: string
@@ -138,6 +141,7 @@ function BrandMark({ compact }: { compact?: boolean }) {
 
 export function AppShell() {
   const location = useLocation()
+  const { authEnabled, logout } = useAuthGate()
 
   return (
     <div className="bg-grid min-h-screen">
@@ -202,6 +206,7 @@ export function AppShell() {
               ?
             </kbd>
           </button>
+          {authEnabled ? <Button variant="ghost" className="w-full justify-start" onClick={() => void logout()}><LogOut /> Sign out</Button> : null}
           <p className="px-1 text-[10px] leading-relaxed text-muted-foreground/70">
             Local-first cutting room · :8420
           </p>
@@ -215,11 +220,13 @@ export function AppShell() {
         <div className="flex items-center gap-2">
           <ImportButton compact />
           <GpuBadge />
+          {authEnabled ? <Button variant="ghost" size="icon" aria-label="Sign out" onClick={() => void logout()}><LogOut /></Button> : null}
         </div>
       </header>
 
       <main className="relative pb-24 md:pb-8 md:pl-60">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <PendingImports />
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

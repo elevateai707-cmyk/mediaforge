@@ -44,6 +44,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
     res = await fetch(API_BASE + path, {
+      credentials: 'include',
       ...init,
       headers: {
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
@@ -54,6 +55,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, `Cannot reach backend at ${API_BASE || '/api'} — is it running on :8420?`)
   }
   if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new Event('mf-auth-required'))
     let message = `${res.status} ${res.statusText}`
     let detail: unknown
     try {
@@ -127,6 +129,7 @@ export function uploadFile(
   const xhr = new XMLHttpRequest()
   const promise = new Promise<UploadResult>((resolve, reject) => {
     xhr.open('POST', `${API_BASE}/api/import/upload${buildQuery({ filename: file.name })}`)
+    xhr.withCredentials = true
     xhr.setRequestHeader('Content-Type', 'application/octet-stream')
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress?.(e.loaded, e.total)
@@ -134,6 +137,7 @@ export function uploadFile(
     xhr.onerror = () => reject(new ApiError(0, 'Upload failed — cannot reach backend'))
     xhr.onabort = () => reject(new ApiError(0, 'Upload cancelled'))
     xhr.onload = () => {
+      if (xhr.status === 401) window.dispatchEvent(new Event('mf-auth-required'))
       let body: { detail?: unknown } & Partial<UploadResult> = {}
       try {
         body = JSON.parse(xhr.responseText)
@@ -268,6 +272,12 @@ export const startRender = (body: {
   captions: boolean
   width: number
   height: number
+  presets?: RenderRatio[]
+  reframe?: 'smart' | 'center'
+  safe_zones?: { top?: number; bottom?: number; right?: number }
+  guide_overlay?: boolean
+  music?: 'auto'
+  music_auto?: boolean
 }) => request<StartJobResponse>('/api/render', { method: 'POST', body: JSON.stringify(body) })
 
 export const getRenderStatus = (jobId: string) => request<RenderStatus>(`/api/render/${jobId}`)
@@ -326,7 +336,7 @@ export const getJob = (jobId: string) => request<Job>(`/api/jobs/${jobId}`)
 // The backend writes these under its exports dir; they are served statically at /exports/... .
 export function exportedFileUrl(serverPath: string | null | undefined): string | null {
   if (!serverPath) return null
-  const filename = serverPath.split('/').pop()
-  if (!filename) return null
-  return `${API_BASE}/exports/${encodeURIComponent(filename)}`
+  const relative = serverPath.includes('/exports/') ? serverPath.split('/exports/').slice(1).join('/exports/') : serverPath.split('/').pop()
+  if (!relative || relative.split('/').some((part) => part === '..')) return null
+  return `${API_BASE}/exports/${relative.split('/').map(encodeURIComponent).join('/')}`
 }
