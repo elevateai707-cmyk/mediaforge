@@ -434,9 +434,36 @@ def export_companions(plan_id: str, export_path: str) -> dict[str, str]:
 def create_story_plan(script: str, voice_id: Optional[str] = None,
                       trip_id: Optional[int] = None, ratio: str = "16:9",
                       title: Optional[str] = None, caption_style: str = "kinetic",
-                      
+                      cloud_approved: bool = False, voice_consent: bool = False,
+                      max_characters: int = 5000,
                       progress: Optional[Callable[[float, str], None]] = None,
                       search_fn: Optional[Callable] = None) -> dict:
+    """Generate narration only after per-job consent and a character cap."""
+    from .. import policy
+    from . import planner
+
+    selected_voice = voice_id or config.ELEVENLABS_VOICE_ID
+    approval = policy.story_approval(
+        script, selected_voice, cloud_approved=cloud_approved,
+        voice_consent=voice_consent, max_characters=max_characters)
+    plan_id = planner._new_plan_id()
+    policy.record_story_event(plan_id, "approved", approval)
+    try:
+        result = _create_story_plan(
+            script, voice_id=selected_voice, trip_id=trip_id, ratio=ratio,
+            title=title, caption_style=caption_style, progress=progress,
+            search_fn=search_fn, plan_id=plan_id, approval=approval)
+    except Exception:
+        policy.record_story_event(plan_id, "failed", approval)
+        raise
+    policy.record_story_event(plan_id, "completed", approval)
+    return result
+
+
+def _create_story_plan(script: str, *, voice_id: str, trip_id: Optional[int],
+                       ratio: str, title: Optional[str], caption_style: str,
+                       progress: Optional[Callable], search_fn: Optional[Callable],
+                       plan_id: str, approval: dict) -> dict:
     from . import planner
     from ..ingest.trips import trip_asset_ids
 
@@ -456,7 +483,6 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
                          "environment (.env) and restart MediaForge.")
     search_fn = search_fn or _default_search
 
-    plan_id = planner._new_plan_id()
     out_dir = story_dir(plan_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -533,6 +559,7 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
         db.commit()
 
     sidecar = {
+        "provenance": approval,
         "plan_id": plan_id, "title": title, "voice_id": voice_id,
         "model": config.ELEVENLABS_MODEL, "ratio": ratio, "trip_id": trip_id,
         "voiceover": str(voiceover), "srt": str(srt_path),

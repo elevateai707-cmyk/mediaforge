@@ -237,6 +237,7 @@ def test_create_story_plan(client, fake_tts, story_assets):
     ids = list(story_assets.values())
     plan = story.create_story_plan(
         SCRIPT, trip_id=None, ratio="16:9", title="Valley",
+        cloud_approved=True, voice_consent=True,
         search_fn=lambda db, q, limit: ids)
     pid = plan["plan_id"]
     assert plan["status"] == "draft"
@@ -286,7 +287,8 @@ def test_create_story_plan(client, fake_tts, story_assets):
 def test_story_endpoint_job(client, wait_job, fake_tts, story_assets, monkeypatch):
     ids = list(story_assets.values())
     monkeypatch.setattr(story, "_default_search", lambda db, q, limit: ids)
-    r = client.post("/api/edits/story", json={"script": SCRIPT, "ratio": "16:9"})
+    r = client.post("/api/edits/story", json={"script": SCRIPT, "ratio": "16:9",
+                                            "cloud_approved": True, "voice_consent": True})
     assert r.status_code == 200, r.text
     job = wait_job(client, r.json()["job_id"])
     assert job["status"] == "done", job
@@ -305,7 +307,8 @@ def test_story_endpoint_validation(client, monkeypatch):
 # render + exports
 # ---------------------------------------------------------------------------
 def _approved_story(client, ids):
-    plan = story.create_story_plan(SCRIPT, search_fn=lambda db, q, limit: ids)
+    plan = story.create_story_plan(SCRIPT, cloud_approved=True, voice_consent=True,
+                                  search_fn=lambda db, q, limit: ids)
     assert client.post(f"/api/edits/plan/{plan['plan_id']}/approve").status_code == 200
     return plan
 
@@ -416,6 +419,7 @@ def test_script_markup_stripped_before_tts_and_stored(client, fake_tts, story_as
     ids = list(story_assets.values())
     plan = story.create_story_plan(
         "We rose above the *valley* at dawn.\n\nThe river cut *silver light* through trees.",
+        cloud_approved=True, voice_consent=True,
         search_fn=lambda db, q, limit: ids)
     for call in fake_tts:
         assert "*" not in call["payload"]["text"]

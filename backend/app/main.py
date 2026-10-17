@@ -28,11 +28,11 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, fsutil, models, persist, schemas, touchup, transfer
+from . import config, fsutil, models, persist, policy, schemas, touchup, transfer
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, planner, render, resolve_export, story
+from .edits import capcut_export, edl_export, fcpxml_export, package, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
@@ -102,6 +102,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MediaForge", version=config.VERSION, lifespan=lifespan)
+
+from .caption_routes import router as caption_router
+app.include_router(caption_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -894,6 +897,12 @@ async def create_story(req: schemas.StoryRequest):
         raise HTTPException(status_code=422, detail="script is empty")
     if not config.ELEVENLABS_API_KEY:
         raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is not configured")
+    try:
+        policy.story_approval(req.script, req.voice_id or config.ELEVENLABS_VOICE_ID,
+                              cloud_approved=req.cloud_approved, voice_consent=req.voice_consent,
+                              max_characters=req.max_characters)
+    except policy.PolicyError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     ns: dict[str, Any] = {}
 
     async def _runner(progress, _flag):
@@ -901,6 +910,8 @@ async def create_story(req: schemas.StoryRequest):
             return story.create_story_plan(
                 req.script, voice_id=req.voice_id, trip_id=req.trip_id,
                 ratio=req.ratio, title=req.title,
+                cloud_approved=req.cloud_approved, voice_consent=req.voice_consent,
+                max_characters=req.max_characters,
                 caption_style=req.caption_style, progress=progress)
 
         plan = await asyncio.get_event_loop().run_in_executor(None, _sync)
@@ -975,6 +986,16 @@ def render_status(job_id: str):
 # ---------------------------------------------------------------------------
 # exports
 # ---------------------------------------------------------------------------
+@app.get("/api/edits/plan/{plan_id}/package")
+def download_handoff_package(plan_id: str):
+    try:
+        content = package.build_package(plan_id)
+    except package.PackageError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    return Response(content=content, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="mediaforge-{plan_id}.zip"'})
+
+
 def _export_file(plan_id: str, exporter) -> schemas.ExportPathOut:
     try:
         path = exporter(plan_id)

@@ -22,12 +22,17 @@ import {
 import {
   ApiError,
   approvePlan,
+  createStory,
   exportPlan,
   exportedFileUrl,
   getRenderStatus,
+  getJob,
+  getPlan,
   planEdit,
+  planPackageUrl,
   startRender,
   thumbUrl,
+  triggerDownload,
   proxyUrl,
   updatePlan,
 } from '@/lib/api'
@@ -317,6 +322,16 @@ export function EditStudioPage() {
   const [resolveInfo, setResolveInfo] = useState<{ resolve?: string; project?: string } | null>(null)
   const [exportDialog, setExportDialog] = useState<{ format: ExportFormat; message: string } | null>(null)
 
+  // ---- ElevenLabs story voiceover ----
+  const [storyScript, setStoryScript] = useState('')
+  const [storyVoiceId, setStoryVoiceId] = useState('')
+  const [storyCap, setStoryCap] = useState(5000)
+  const [storyCloudApproved, setStoryCloudApproved] = useState(false)
+  const [storyVoiceConsent, setStoryVoiceConsent] = useState(false)
+  const [storyBusy, setStoryBusy] = useState(false)
+  const [storyError, setStoryError] = useState<string | null>(null)
+  const [storyJobId, setStoryJobId] = useState<string | null>(null)
+
   // live render job state from the shared WebSocket store
   const renderLive = useWsStore((s) => (renderJobId ? s.jobs[renderJobId] : undefined))
 
@@ -341,6 +356,44 @@ export function EditStudioPage() {
     setExportErrors({})
     setResolveInfo(null)
   }, [])
+
+  useEffect(() => {
+    if (!storyJobId) return
+    let cancelled = false
+    let timer: ReturnType<typeof window.setTimeout>
+    const poll = async () => {
+      try {
+        const job = await getJob(storyJobId)
+        if (cancelled) return
+        if (job.status === 'done') {
+          const planId = job.meta?.plan_id
+          if (typeof planId !== 'string') throw new Error('Story finished without an edit plan.')
+          const completed = await getPlan(planId)
+          if (cancelled) return
+          applyPlan(completed)
+          setStoryBusy(false)
+          setStoryJobId(null)
+          setStoryError(null)
+          return
+        }
+        if (['error', 'cancelled', 'interrupted'].includes(job.status)) {
+          setStoryError(job.message || `Story job ${job.status}.`)
+          setStoryBusy(false)
+          setStoryJobId(null)
+          return
+        }
+        setStoryError(null)
+      } catch (error) {
+        if (cancelled) return
+        setStoryError(`Checking story status: ${error instanceof Error ? error.message : String(error)}. Retrying…`)
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 3000)
+    }
+    void poll()
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [storyJobId, applyPlan])
+
+  useEffect(() => { setStoryCloudApproved(false) }, [storyCap, ratio])
 
   const generatePlan = async (override?: string) => {
     const text = (override ?? intent).trim()
@@ -489,7 +542,48 @@ export function EditStudioPage() {
     }
   }
 
+  const updateStoryScript = (value: string) => {
+    setStoryScript(value)
+    setStoryCloudApproved(false)
+    setStoryVoiceConsent(false)
+  }
+
+  const updateStoryVoice = (value: string) => {
+    setStoryVoiceId(value)
+    setStoryCloudApproved(false)
+    setStoryVoiceConsent(false)
+  }
+
+  const createStoryPlan = async () => {
+    const script = storyScript.trim()
+    const maxCharacters = Math.min(50000, Math.max(1, Math.floor(storyCap) || 1))
+    if (!script || script.length > maxCharacters || !storyCloudApproved || !storyVoiceConsent || storyBusy) return
+    setStoryBusy(true)
+    setStoryError(null)
+    setStoryJobId(null)
+    try {
+      const job = await createStory({
+        script,
+        voice_id: storyVoiceId.trim() || null,
+        ratio,
+        cloud_approved: true,
+        voice_consent: true,
+        max_characters: maxCharacters,
+      })
+      setStoryJobId(job.job_id)
+      setStoryCloudApproved(false)
+      setStoryVoiceConsent(false)
+    } catch (e) {
+      setStoryError(e instanceof Error ? e.message : 'Story creation could not start.')
+      setStoryBusy(false)
+    }
+  }
+
   const canExport = Boolean(plan) && (approved || renderDone)
+  const storyLength = storyScript.length
+  const storyCapValid = Number.isFinite(storyCap) && storyCap >= 1 && storyCap <= 50000
+  const canCreateStory = Boolean(storyScript.trim()) && storyCapValid && storyLength <= storyCap &&
+    storyCloudApproved && storyVoiceConsent && !storyBusy
 
   return (
     <div>
@@ -552,6 +646,97 @@ export function EditStudioPage() {
           </div>
         )}
       </motion.div>
+
+      <div className="glass mb-6 rounded-xl p-4">
+        <div className="flex items-start gap-3">
+          <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-secondary" />
+          <div className="min-w-0 flex-1">
+            <h2 className="font-semibold">Story voiceover</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Create a draft edit plan with an ElevenLabs voiceover. Your script is sent to ElevenLabs to synthesize audio.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <div>
+            <Label htmlFor="story-script" className="text-xs font-medium text-muted-foreground">
+              Script
+            </Label>
+            <Textarea
+              id="story-script"
+              value={storyScript}
+              onChange={(e) => updateStoryScript(e.target.value)}
+              placeholder="Write the narration to turn into a voiceover…"
+              className="mt-1 min-h-[120px]"
+              disabled={storyBusy}
+            />
+            <p className={cn('mt-1 text-[11px]', storyLength > storyCap ? 'text-destructive' : 'text-muted-foreground')}>
+              {storyLength.toLocaleString()} of {Math.max(0, storyCap || 0).toLocaleString()} characters
+            </p>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="story-voice" className="text-xs font-medium text-muted-foreground">
+                Voice ID (optional)
+              </Label>
+              <Input
+                id="story-voice"
+                value={storyVoiceId}
+                onChange={(e) => updateStoryVoice(e.target.value)}
+                placeholder="Configured default voice"
+                className="mt-1 h-9 text-xs"
+                disabled={storyBusy}
+              />
+            </div>
+            <div>
+              <Label htmlFor="story-cap" className="text-xs font-medium text-muted-foreground">
+                Character cap
+              </Label>
+              <Input
+                id="story-cap"
+                type="number"
+                min={1}
+                max={50000}
+                value={storyCap}
+                onChange={(e) => setStoryCap(Number(e.target.value))}
+                className="mt-1 h-9 text-xs"
+                disabled={storyBusy}
+              />
+              <p className="mt-1 text-[10px] text-muted-foreground">Choose 1 to 50,000 characters.</p>
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 space-y-2 text-xs text-foreground">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              checked={storyCloudApproved}
+              onChange={(e) => setStoryCloudApproved(e.target.checked)}
+              disabled={storyBusy}
+              className="mt-0.5 h-4 w-4 accent-primary"
+            />
+            <span>I approve sending this script to ElevenLabs and using its quota for this job.</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              checked={storyVoiceConsent}
+              onChange={(e) => setStoryVoiceConsent(e.target.checked)}
+              disabled={storyBusy}
+              className="mt-0.5 h-4 w-4 accent-primary"
+            />
+            <span>I confirm I am permitted to use the selected voice{storyVoiceId.trim() ? ` (${storyVoiceId.trim()})` : ''}.</span>
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button variant="gradient" disabled={!canCreateStory} onClick={() => void createStoryPlan()}>
+            {storyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+            {storyBusy ? 'Creating story…' : 'Create story draft'}
+          </Button>
+          {storyJobId && <span className="text-xs text-emerald-400">Story job started: {storyJobId}</span>}
+          {storyError && <span className="text-xs text-destructive">{storyError}</span>}
+        </div>
+      </div>
 
       {/* ---------- plan review ---------- */}
       {plan && (
@@ -860,6 +1045,24 @@ export function EditStudioPage() {
                 ? 'Timeline exports use the approved plan.'
                 : 'Approve the plan (and render once) to unlock exports.'}
             </p>
+            <div className="mb-4 rounded-lg border border-border bg-white/[0.02] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Download handoff package</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    ZIP includes the edit plan, provenance, and captions. Source media is not included.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!approved}
+                  onClick={() => plan && triggerDownload(planPackageUrl(plan.plan_id))}
+                >
+                  <Download className="h-3.5 w-3.5" /> Download handoff package
+                </Button>
+              </div>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {EXPORT_FORMATS.map(({ format, label, hint, icon: Icon }) => {
                 const url = exportResults[format]

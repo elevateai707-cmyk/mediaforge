@@ -1,6 +1,9 @@
 import type {
   AppConfig,
   Asset,
+  AssetCaptionsResponse,
+  CaptionFormat,
+  CaptionStyle,
   AssetListResponse,
   Clip,
   EditPlan,
@@ -19,6 +22,7 @@ import type {
   ScenesResponse,
   SearchResponse,
   StartJobResponse,
+  StoryJobResponse,
   TranscriptResponse,
   Trip,
 } from './types'
@@ -194,6 +198,10 @@ export const listAssets = (params: AssetQueryParams = {}) =>
 export const getAsset = (id: number) => request<Asset>(`/api/assets/${id}`)
 export const getTranscript = (id: number) =>
   request<TranscriptResponse>(`/api/assets/${id}/transcript`)
+export const getAssetCaptions = (id: number, style: CaptionStyle) =>
+  request<AssetCaptionsResponse>(`/api/assets/${id}/captions${buildQuery({ style })}`)
+export const captionDownloadUrl = (id: number, format: CaptionFormat, style: CaptionStyle) =>
+  `${API_BASE}/api/assets/${id}/captions/${format}${buildQuery({ style })}`
 export const getScenes = (id: number) =>
   request<ScenesResponse>(`/api/assets/${id}/scenes`).then((r) => r.scenes as SceneInfo[])
 
@@ -234,6 +242,22 @@ export const updatePlan = (planId: string, clips: Clip[]) =>
   })
 export const approvePlan = (planId: string) =>
   request<{ ok: boolean; status: string }>(`/api/edits/plan/${planId}/approve`, { method: 'POST' })
+export const planPackageUrl = (planId: string) => `${API_BASE}/api/edits/plan/${planId}/package`
+
+export interface CreateStoryRequest {
+  script: string
+  voice_id?: string | null
+  trip_id?: number | null
+  ratio?: RenderRatio
+  title?: string | null
+  caption_style?: 'kinetic' | 'classic'
+  cloud_approved: boolean
+  voice_consent: boolean
+  max_characters: number
+}
+
+export const createStory = (body: CreateStoryRequest) =>
+  request<StoryJobResponse>('/api/edits/story', { method: 'POST', body: JSON.stringify(body) })
 
 // ---------- Render ----------
 

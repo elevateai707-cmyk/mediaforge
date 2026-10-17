@@ -282,6 +282,13 @@ def process_asset(db: Session, asset_id: int,
             try:
                 result = whisper.transcribe(asset.path)
                 if result and result.get("segments"):
+                    from ..transcripts import save_transcript
+                    try:
+                        save_transcript(asset.id, asset.hash, result)
+                    except (OSError, ValueError, TypeError) as exc:
+                        # Still keep the primary transcript if optional word
+                        # timing storage is unavailable (for example full disk).
+                        log.warning("word timing sidecar failed for asset %s: %s", asset.id, exc)
                     db.query(models.TranscriptSegment) \
                         .filter_by(asset_id=asset.id).delete()
                     db.flush()

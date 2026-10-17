@@ -2,8 +2,12 @@
 
 Local-first AI media scanner, tagger, search and editor for Ubuntu 24.04.
 Point it at your photo/video folders; it indexes everything with local AI
-models (no cloud), lets you search by content, face, and spoken words, then
+models, lets you search by content, face, and spoken words, then
 assembles edit recipes you approve before rendering or pushing to an NLE.
+Optional ElevenLabs story narration sends text to the provider only after
+per-job consent. See [master-plan integration review](docs/MASTER_PLAN_REVIEW.md)
+for caption exports, quality checks, handoff packages and the decisions about
+which proposed features to adopt.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -35,9 +39,9 @@ assembles edit recipes you approve before rendering or pushing to an NLE.
 ## Setup
 
 ```bash
-cd /home/bfam/mediaforge
+cd ~/mediaforge
 ./scripts/setup.sh     # idempotent; may prompt for sudo (apt + ollama install)
-./scripts/run.sh       # starts backend :8420, serves app; prints localhost + LAN URLs
+./scripts/run.sh       # starts backend :8420 on loopback and serves the app
 ```
 
 `setup.sh` installs system deps (ffmpeg, exiftool), ollama +
@@ -137,17 +141,20 @@ Edmonton / 9:16 / 30s and return only Edmonton clips.
 
 ## Security note
 
-MediaForge is **local-first**: everything runs on this machine, nothing
-leaves it unless you export files yourself. `run.sh` binds the backend to
-`0.0.0.0:8420` so you can browse from your phone/tablet on the LAN — that
-means anyone on your network can reach the API and read indexed content. If
-you are on an untrusted network, either browse only via
-`http://localhost:8420`, or firewall the port:
+MediaForge's indexing and rendering run locally. Model downloads may occur on
+first use. Optional ElevenLabs narration sends the script and adjacent beat
+context to ElevenLabs, consumes provider quota, and requires per-job cloud and
+voice permission confirmations plus an input character cap. A receipt containing
+the script hash (not script text or API key) is saved in
+`DATA_DIR/audit/operations.jsonl`; narration provenance is also saved in its story
+sidecar. This is a caller attestation, not verified identity or ownership.
 
-```bash
-sudo ufw allow 8420/tcp     # only if you want LAN access
-sudo ufw deny 8420/tcp      # revert to localhost-only
-```
+Generic launch/run scripts default to `127.0.0.1:8420`. Override `MF_HOST`,
+`MF_PORT` or the browser/health `MF_URL` deliberately when using a trusted remote
+interface. The existing installed systemd service may specify its own host;
+`launch.sh` discovers an active user service and does not start a duplicate.
 
-There is no auth layer yet — treat 0.0.0.0 exposure as deliberate and
-bounded to trusted networks.
+There is no authentication layer. Network clients able to reach the API can read
+indexed media and invoke operations. A local browser URL alone does not restrict
+an all-interface listener. Keep any LAN/Tailscale access limited to trusted clients.
+Audit records are not tamper-proof against the machine owner.

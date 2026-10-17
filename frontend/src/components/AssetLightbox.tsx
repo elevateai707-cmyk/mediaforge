@@ -12,7 +12,18 @@ import {
   Download,
   FolderOutput,
 } from 'lucide-react'
-import { getAsset, getScenes, getTranscript, proxyUrl, fileUrl, thumbUrl, downloadUrl } from '@/lib/api'
+import {
+  captionDownloadUrl,
+  getAsset,
+  getAssetCaptions,
+  getScenes,
+  getTranscript,
+  proxyUrl,
+  fileUrl,
+  thumbUrl,
+  downloadUrl,
+} from '@/lib/api'
+import type { CaptionStyle } from '@/lib/types'
 import { ExportDialog } from '@/components/ExportDialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -47,6 +58,7 @@ export function AssetLightbox({ assetId, onOpenChange }: AssetLightboxProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [seekTarget, setSeekTarget] = useState<number | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>('standard')
 
   const { data: asset, isLoading } = useQuery({
     queryKey: ['asset', assetId],
@@ -64,6 +76,12 @@ export function AssetLightbox({ assetId, onOpenChange }: AssetLightboxProps) {
     queryKey: ['scenes', assetId],
     queryFn: () => getScenes(assetId as number),
     enabled: open && asset?.kind === 'video',
+  })
+
+  const captionsQuery = useQuery({
+    queryKey: ['asset-captions', assetId, captionStyle],
+    queryFn: () => getAssetCaptions(assetId as number, captionStyle),
+    enabled: open && asset?.kind === 'video' && asset.has_transcript === true,
   })
 
   useEffect(() => {
@@ -213,6 +231,71 @@ export function AssetLightbox({ assetId, onOpenChange }: AssetLightboxProps) {
                           </span>
                           <span className="text-foreground/90">{seg.text}</span>
                         </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {asset.kind === 'video' && asset.has_transcript && (
+                  <div className="rounded-xl bg-white/[0.03] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Caption exports
+                      </p>
+                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                        Style
+                        <select
+                          value={captionStyle}
+                          onChange={(e) => setCaptionStyle(e.target.value as CaptionStyle)}
+                          className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                        >
+                          <option value="standard">Standard</option>
+                          <option value="social_vertical">Social vertical</option>
+                          <option value="accessibility">Accessibility</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    {captionsQuery.isLoading && (
+                      <p className="mt-2 text-xs text-muted-foreground">Checking caption cues…</p>
+                    )}
+                    {captionsQuery.isError && (
+                      <p className="mt-2 text-xs text-destructive">
+                        {captionsQuery.error instanceof Error
+                          ? captionsQuery.error.message
+                          : 'Caption QC could not be loaded.'}
+                      </p>
+                    )}
+                    {captionsQuery.data && (
+                      <div className="mt-2 space-y-2 text-xs">
+                        <p className="text-muted-foreground">
+                          {captionsQuery.data.qc.cue_count} cues · {captionsQuery.data.qc.issue_count} QC issue
+                          {captionsQuery.data.qc.issue_count === 1 ? '' : 's'}
+                        </p>
+                        {captionsQuery.data.qc.issues.length > 0 && (
+                          <ul className="max-h-24 space-y-1 overflow-y-auto rounded-md border border-amber-400/25 bg-amber-400/5 p-2 text-amber-200">
+                            {captionsQuery.data.qc.issues.map((issue, index) => (
+                              <li key={`${issue.cue_index}-${issue.code}-${index}`}>
+                                Cue {issue.cue_index + 1}: {issue.message}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {captionsQuery.data.qc.limitations && captionsQuery.data.qc.limitations.length > 0 && (
+                          <p className="text-muted-foreground">
+                            {captionsQuery.data.qc.limitations.join(' ')}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(['srt', 'vtt', 'ass'] as const).map((format) => (
+                        <Button key={format} asChild size="sm" variant="outline">
+                          <a href={captionDownloadUrl(asset.id, format, captionStyle)} download>
+                            <Download className="h-3.5 w-3.5" /> {format.toUpperCase()}
+                          </a>
+                        </Button>
                       ))}
                     </div>
                   </div>

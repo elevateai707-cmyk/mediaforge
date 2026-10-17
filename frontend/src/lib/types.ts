@@ -108,6 +108,34 @@ export interface TranscriptResponse {
   segments: TranscriptSegment[]
 }
 
+export type CaptionStyle = 'standard' | 'social_vertical' | 'accessibility'
+export type CaptionFormat = 'srt' | 'vtt' | 'ass'
+
+export interface CaptionCue {
+  start: number
+  end: number
+  text: string
+}
+
+export interface CaptionQcIssue {
+  cue_index: number
+  code: string
+  message: string
+}
+
+export interface CaptionQc {
+  cue_count: number
+  issue_count: number
+  issues: CaptionQcIssue[]
+  limitations?: string[]
+}
+
+export interface AssetCaptionsResponse {
+  cues: CaptionCue[]
+  qc: CaptionQc
+  style: CaptionStyle
+}
+
 export interface SceneInfo {
   id: number
   start: number
@@ -166,6 +194,7 @@ export interface Job {
   message: string | null
   created_at: string
   finished_at: string | null
+  meta?: Record<string, unknown> | null
 }
 
 export interface JobListResponse {
@@ -176,6 +205,10 @@ export interface StartJobResponse {
   job_id: string
   kind: string
   plan_id?: string
+}
+
+export interface StoryJobResponse extends StartJobResponse {
+  kind: 'story'
 }
 
 export interface RenderStatus {

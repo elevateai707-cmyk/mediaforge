@@ -2,7 +2,7 @@
 # =============================================================================
 # MediaForge — start the backend (uvicorn :8420) and make the UI reachable.
 #
-# * Backend : .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8420
+# * Backend : .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8420
 #             (background, PID -> /tmp/mediaforge_backend.pid)
 # * Frontend: if frontend/dist exists the backend serves the built app;
 #             otherwise a Vite dev server is started as a fallback
@@ -17,8 +17,10 @@ MF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$MF_ROOT/backend"
 FRONTEND_DIR="$MF_ROOT/frontend"
 VENV_DIR="$BACKEND_DIR/.venv"
-NODE_BIN="/home/bfam/.nvm/versions/node/v22.22.3/bin"
-PORT=8420
+HOST="${MF_HOST:-127.0.0.1}"
+PORT="${MF_PORT:-8420}"
+BASE_URL="${MF_URL:-http://${HOST}:${PORT}}"
+BASE_URL="${BASE_URL%/}"
 VITE_PORT=5173
 BACKEND_PID_FILE="/tmp/mediaforge_backend.pid"
 VITE_PID_FILE="/tmp/mediaforge_vite.pid"
@@ -36,7 +38,7 @@ echo "================================================================"
 echo
 
 # --- Preflight --------------------------------------------------------------
-export PATH="$NODE_BIN:$PATH"
+command -v node >/dev/null 2>&1 || warn "node is not on PATH; Vite fallback may fail."
 
 if [ ! -d "$VENV_DIR" ]; then
   err "Backend venv missing ($VENV_DIR)."
@@ -66,12 +68,15 @@ done
 echo
 echo "── Backend (uvicorn :$PORT) ────────────────────────────────────"
 
-if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+if curl -sf "$BASE_URL/api/health" >/dev/null 2>&1; then
   ok "backend already answering on port $PORT."
+elif command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet mediaforge.service; then
+  err "mediaforge.service is active but not answering at $BASE_URL; set MF_URL to its configured endpoint or inspect systemctl --user show mediaforge.service."
+  exit 1
 else
   info "starting uvicorn ..."
   (cd "$BACKEND_DIR" && "$VENV_DIR/bin/python" -m uvicorn app.main:app \
-      --host 0.0.0.0 --port "$PORT") \
+      --host "$HOST" --port "$PORT") \
       >/tmp/mediaforge_backend.log 2>&1 &
   echo $! > "$BACKEND_PID_FILE"
   ok "backend started (pid $(cat "$BACKEND_PID_FILE"), log /tmp/mediaforge_backend.log)"
@@ -88,7 +93,7 @@ else
     ok "Vite dev server already running (pid $(cat "$VITE_PID_FILE"))."
   else
     info "frontend/dist missing — starting Vite dev server as fallback ..."
-    (cd "$FRONTEND_DIR" && npm run dev -- --port "$VITE_PORT" --host 0.0.0.0) \
+    (cd "$FRONTEND_DIR" && npm run dev -- --port "$VITE_PORT" --host "$HOST") \
         >/tmp/mediaforge_vite.log 2>&1 &
     echo $! > "$VITE_PID_FILE"
     ok "Vite started (pid $(cat "$VITE_PID_FILE"), log /tmp/mediaforge_vite.log)"
@@ -100,7 +105,7 @@ echo
 echo "── Health check ────────────────────────────────────────────────"
 
 sleep 3
-HEALTH_JSON="$(curl -s --max-time 5 "http://127.0.0.1:$PORT/api/health" || true)"
+HEALTH_JSON="$(curl -s --max-time 5 "$BASE_URL/api/health" || true)"
 if [ -n "$HEALTH_JSON" ]; then
   ok "GET /api/health -> $HEALTH_JSON"
 else
@@ -109,18 +114,15 @@ else
 fi
 
 # --- URLs -------------------------------------------------------------------
-LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 echo "================================================================"
 echo "  MediaForge is up"
 echo "================================================================"
 echo
-echo "  Local : http://localhost:$PORT/"
-[ -n "$LAN_IP" ] && echo "  LAN   : http://$LAN_IP:$PORT/   (browse from phone/tablet on the same network)"
+echo "  URL   : $BASE_URL/"
 if [ ! -d "$FRONTEND_DIR/dist" ]; then
   echo
   echo "  Vite dev fallback (hot reload) : http://localhost:$VITE_PORT/"
-  [ -n "$LAN_IP" ] && echo "  Vite dev LAN                    : http://$LAN_IP:$VITE_PORT/"
 fi
 echo
 echo "  Stop everything:"

@@ -1,0 +1,393 @@
+"""MediaForge MCP server (stdio). Drives the MediaForge HTTP API.
+
+Story voiceover: mf_create_story_plan -> review -> mf_approve_edit_plan -> mf_render(captions=True).
+Workflow: mf_create_edit_plan -> mf_get_edit_plan / mf_update_edit_plan ->
+mf_approve_edit_plan -> mf_render or mf_export (fcpxml|edl|capcut|resolve).
+"""
+import asyncio
+import os
+import time
+from typing import Any, Literal, Optional
+from urllib.parse import quote
+
+import httpx
+from mcp.server.fastmcp import FastMCP
+
+BASE = os.environ.get("MEDIAFORGE_URL", "http://100.104.197.107:8420").rstrip("/")
+# Plan creation can call an LLM, so allow a long read timeout.
+TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+
+mcp = FastMCP("mediaforge")
+
+
+async def _call(method: str, path: str, params: dict | None = None, body: Any = None) -> Any:
+    """Call the API; raise RuntimeError with the server's message on any failure."""
+    params = {k: v for k, v in (params or {}).items() if v is not None}
+    try:
+        async with httpx.AsyncClient(base_url=BASE, timeout=TIMEOUT) as c:
+            r = await c.request(method, path, params=params, json=body)
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"MediaForge unreachable at {BASE}: {type(e).__name__}: {e}") from e
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail", r.text)
+        except Exception:
+            detail = r.text
+        raise RuntimeError(f"MediaForge {method} {path} -> HTTP {r.status_code}: {detail}")
+    try:
+        return r.json()
+    except ValueError:
+        return {"raw": r.text}
+
+
+def _with_urls(asset: dict) -> dict:
+    """Add URLs for the binary endpoints (not exposed as tools)."""
+    i = asset.get("id")
+    if i is not None:
+        for n in ("file", "thumb", "poster", "proxy"):
+            asset[f"{n}_url"] = f"{BASE}/api/assets/{i}/{n}"
+    return asset
+
+
+def _decorate(data: Any) -> Any:
+    if isinstance(data, list):
+        return [_with_urls(a) if isinstance(a, dict) and "kind" in a else a for a in data]
+    if isinstance(data, dict):
+        for k in ("assets", "items", "results"):
+            if isinstance(data.get(k), list):
+                data[k] = _decorate(data[k])
+        if "kind" in data and "path" in data:
+            _with_urls(data)
+    return data
+
+
+@mcp.tool()
+async def mf_health() -> Any:
+    """Check that MediaForge is up (GET /api/health) and return its config (GET /api/config),
+    including `resolve_available` (whether DaVinci Resolve scripting is reachable). The health
+    result's `ingest` block shows per-folder watcher status, the scan queue (running job,
+    pending paths), the last catch-up scan and the AI worker queue."""
+    health = await _call("GET", "/api/health")
+    try:
+        cfg = await _call("GET", "/api/config")
+    except RuntimeError:
+        cfg = None
+    return {"health": health, "config": cfg, "base_url": BASE}
+
+
+@mcp.tool()
+async def mf_search(query: str, limit: int = 20) -> Any:
+    """Semantic/text search over the media library (GET /api/search).
+    limit 1-100. Results include URLs for file/thumb/poster/proxy when they are assets."""
+    return _decorate(await _call("GET", "/api/search", {"q": query, "limit": limit}))
+
+
+@mcp.tool()
+async def mf_list_assets(
+    limit: int = 50,
+    offset: int = 0,
+    kind: Optional[str] = None,
+    sort: str = "added",
+    order: str = "desc",
+    tag: Optional[str] = None,
+    face: Optional[str] = None,
+    q: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    radius_km: Optional[float] = None,
+    city: Optional[str] = None,
+    trip_id: Optional[int] = None,
+    min_aesthetic: Optional[float] = None,
+) -> Any:
+    """List/filter library assets (GET /api/assets). limit 1-500, offset for paging.
+    kind e.g. 'video'/'image'; sort/order; tag, face (name), q (text), date_from/date_to,
+    geo filter (lat, lon, radius_km), city, trip_id, min_aesthetic. Each asset carries
+    file_url/thumb_url/poster_url/proxy_url links."""
+    p = dict(limit=limit, offset=offset, kind=kind, sort=sort, order=order, tag=tag, face=face,
+             q=q, date_from=date_from, date_to=date_to, lat=lat, lon=lon, radius_km=radius_km,
+             city=city, trip_id=trip_id, min_aesthetic=min_aesthetic)
+    return _decorate(await _call("GET", "/api/assets", p))
+
+
+@mcp.tool()
+async def mf_get_asset(asset_id: int, include_transcript: bool = False, include_scenes: bool = False) -> Any:
+    """Get one asset's details (GET /api/assets/{id}), with file/thumb/poster/proxy URLs.
+    Optionally also fetch its transcript and/or scene list (scene ids/times are what
+    edit-plan clips reference)."""
+    out = _with_urls(await _call("GET", f"/api/assets/{asset_id}"))
+    if include_transcript:
+        out["transcript"] = await _call("GET", f"/api/assets/{asset_id}/transcript")
+    if include_scenes:
+        out["scenes"] = await _call("GET", f"/api/assets/{asset_id}/scenes")
+    return out
+
+
+@mcp.tool()
+async def mf_get_captions(
+    asset_id: int,
+    style: Literal["standard", "social_vertical", "accessibility"] = "standard",
+) -> Any:
+    """Get generated caption cues and QC for a transcript-bearing asset.
+
+    Calls GET /api/assets/{id}/captions and adds downloadable SRT, VTT, and ASS URLs
+    for the selected style. Review the returned QC issues and limitations before using
+    captions in a finished deliverable.
+    """
+    encoded_id = quote(str(asset_id), safe="")
+    captions = await _call("GET", f"/api/assets/{encoded_id}/captions", {"style": style})
+    captions["downloads"] = {
+        fmt: f"{BASE}/api/assets/{encoded_id}/captions/{fmt}?style={style}"
+        for fmt in ("srt", "vtt", "ass")
+    }
+    return captions
+
+
+@mcp.tool()
+async def mf_list_faces() -> Any:
+    """List face clusters (GET /api/faces): id, name, count. Use a name with mf_list_assets(face=...)."""
+    return await _call("GET", "/api/faces")
+
+
+@mcp.tool()
+async def mf_list_places() -> Any:
+    """List known places/locations in the library (GET /api/places)."""
+    return await _call("GET", "/api/places")
+
+
+@mcp.tool()
+async def mf_list_trips() -> Any:
+    """List auto-detected trips (GET /api/trips). Trip ids feed mf_make_trip_reel,
+    mf_create_edit_plan(trip_id) and mf_list_assets(trip_id)."""
+    return await _call("GET", "/api/trips")
+
+
+@mcp.tool()
+async def mf_make_trip_reel(trip_id: int, intent: Optional[str] = None) -> Any:
+    """Create an edit plan for a trip (POST /api/trips/{id}/reel). Optional intent text.
+    Creates a new plan (state-changing); review it, then approve and render/export."""
+    return await _call("POST", f"/api/trips/{trip_id}/reel", body={"intent": intent})
+
+
+@mcp.tool()
+async def mf_create_edit_plan(
+    intent: str = "30-second highlight reel, upbeat",
+    trip_id: Optional[int] = None,
+    auto_approve: bool = False,
+) -> Any:
+    """Create an edit plan from a natural-language intent (POST /api/edits/plan).
+    Workflow: create plan -> review (mf_get_edit_plan) / adjust (mf_update_edit_plan) ->
+    mf_approve_edit_plan -> mf_render (local video) or mf_export (fcpxml|edl|capcut|resolve).
+    Leave auto_approve false unless the user explicitly wants to skip review."""
+    return await _call("POST", "/api/edits/plan",
+                       body={"intent": intent, "trip_id": trip_id, "auto_approve": auto_approve})
+
+
+@mcp.tool()
+async def mf_create_story_plan(
+    script: str,
+    voice_id: Optional[str] = None,
+    trip_id: Optional[int] = None,
+    ratio: Literal["16:9", "9:16", "1:1"] = "16:9",
+    title: Optional[str] = None,
+    caption_style: Literal["kinetic", "classic"] = "kinetic",
+    cloud_approved: bool = False,
+    voice_consent: bool = False,
+    max_characters: int = 5000,
+) -> Any:
+    """Story voiceover: turn a narration script into a draft edit plan (POST /api/edits/story).
+    The script is transmitted to ElevenLabs for synthesis and spends ElevenLabs character quota.
+    Call only when the user has authorized this specific transmission/quota use and confirmed
+    they are permitted to use the selected voice; this tool does not verify voice ownership.
+    The script is split into beats, each beat is spoken in the selected or configured voice, and
+    matching drone/aerial clips are picked from the library, trimmed to each beat's audio.
+    Waits for the background job (up to ~10 min) and returns the plan plus `story` info
+    (voiceover.mp3 and captions.srt paths, beat count).
+    Workflow: mf_create_story_plan -> review (mf_get_edit_plan / mf_get_story) ->
+    mf_approve_edit_plan -> mf_render(ratio="16:9", width=1920, height=1080, captions=True) (match the plan ratio) for a local video with burned-in word-timed
+    captions, or mf_export (resolve|fcpxml|edl|capcut; voiceover.mp3 + captions.srt are written
+    next to the export). Do not edit story clips' lengths after creation: they are aligned to the
+    voiceover. Mark emphasis words in the script with *asterisks* (e.g. "the city *wakes up*");
+    1-2 per beat become big gradient headline words in the kinetic caption style, and the
+    asterisks are stripped before the text is spoken. With no markup one word per beat is
+    auto-picked. 9:16 is the kinetic style's native format. voice_id defaults to the configured
+    voice; trip_id restricts footage to one trip. max_characters is a per-job cap (1-50,000)."""
+    if not cloud_approved:
+        raise RuntimeError("Story creation requires cloud_approved=True for this job before sending the script to ElevenLabs")
+    if not voice_consent:
+        raise RuntimeError("Story creation requires voice_consent=True confirming permission to use the selected voice")
+    if not 1 <= max_characters <= 50000:
+        raise RuntimeError("max_characters must be between 1 and 50000")
+    if len(script) > max_characters:
+        raise RuntimeError(f"script has {len(script)} characters, exceeding this job's max_characters={max_characters}")
+    started = await _call("POST", "/api/edits/story", body={
+        "script": script, "voice_id": voice_id, "trip_id": trip_id,
+        "ratio": ratio, "title": title, "caption_style": caption_style,
+        "cloud_approved": cloud_approved, "voice_consent": voice_consent,
+        "max_characters": max_characters})
+    job_id = started["job_id"]
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        job = await _call("GET", f"/api/jobs/{job_id}")
+        if job["status"] == "done":
+            plan_id = (job.get("meta") or {}).get("plan_id")
+            if not plan_id:
+                raise RuntimeError(f"story job {job_id} finished without a plan id")
+            return await _call("GET", f"/api/edits/plan/{plan_id}")
+        if job["status"] in ("error", "cancelled", "interrupted"):
+            raise RuntimeError(f"story job {job_id} {job['status']}: {job.get('message')}")
+        await asyncio.sleep(3)
+    raise RuntimeError(f"story job {job_id} still running; poll mf_get_job('{job_id}') "
+                       "then mf_get_edit_plan with meta.plan_id")
+
+
+@mcp.tool()
+async def mf_get_story(plan_id: str) -> Any:
+    """Get a story plan's sidecar (GET /api/edits/{id}/story): beats with text, audio
+    durations, word timings and chosen clips, voice_id, voiceover/SRT paths."""
+    return await _call("GET", f"/api/edits/{plan_id}/story")
+
+
+@mcp.tool()
+async def mf_get_edit_plan(plan_id: str) -> Any:
+    """Get an edit plan (GET /api/edits/plan/{id}): status, clips, duration, ratio, match stats."""
+    return await _call("GET", f"/api/edits/plan/{plan_id}")
+
+
+@mcp.tool()
+async def mf_handoff_package(plan_id: str) -> Any:
+    """Return the download URL for an approved plan's handoff ZIP.
+
+    The package contains edit-plan metadata, provenance, and captions; source media is not
+    bundled. This checks the plan's current status first and returns a URL only when approved.
+    """
+    encoded_id = quote(plan_id, safe="")
+    plan = await _call("GET", f"/api/edits/plan/{encoded_id}")
+    if plan.get("status") != "approved":
+        raise RuntimeError(f"handoff package requires an approved plan; plan {plan_id!r} is {plan.get('status', 'unknown')!r}")
+    return {
+        "plan_id": plan_id,
+        "download_url": f"{BASE}/api/edits/plan/{encoded_id}/package",
+        "contents": "edit plan, provenance, and captions; source media is not included",
+    }
+
+
+@mcp.tool()
+async def mf_update_edit_plan(plan_id: str, clips: list[dict]) -> Any:
+    """Replace a plan's clip list (PUT /api/edits/plan/{id}). Send the FULL list; each clip:
+    {asset_id:int, start:float, end:float, scene_id?:int, caption?:str,
+     transition?:str (default 'crossfade'), score?:float}. Fetch the plan first, edit, send back."""
+    return await _call("PUT", f"/api/edits/plan/{plan_id}", body={"clips": clips})
+
+
+@mcp.tool()
+async def mf_approve_edit_plan(plan_id: str) -> Any:
+    """Approve a plan (POST /api/edits/plan/{id}/approve). Required before render/export."""
+    return await _call("POST", f"/api/edits/plan/{plan_id}/approve")
+
+
+@mcp.tool()
+async def mf_list_edit_plans(limit: int = 50) -> Any:
+    """List edit plans, newest first (GET /api/edits/plans). limit 1-200."""
+    return await _call("GET", "/api/edits/plans", {"limit": limit})
+
+
+@mcp.tool()
+async def mf_render(
+    plan_id: str,
+    ratio: Optional[Literal["9:16", "16:9", "1:1"]] = None,
+    music_path: Optional[str] = None,
+    captions: bool = True,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    caption_style: Optional[Literal["kinetic", "classic"]] = None,
+    effects: bool = True,
+) -> Any:
+    """Start a render job for an approved plan (POST /api/render). Returns a job id;
+    poll with mf_render_status. Leave ratio/width/height unset for the default: a story plan
+    renders in its own ratio (1920x1080 for 16:9), other plans 9:16 at 1080x1920. If you set
+    them, keep ratio and width/height consistent (e.g. 16:9 with 1920x1080).
+    music_path is a server-side file path (see the API's /api/music).
+    Story plans only: caption_style "kinetic" (default; one word at a time, gradient glitch
+    emphasis words, from the user's kinetic caption style) or "classic" (lower-third SRT).
+    effects (kinetic only, default true) adds a warm grade, slow push-in on each clip and RGB
+    glitch cuts at beat boundaries. Both are ignored for non-story plans."""
+    return await _call("POST", "/api/render", body=dict(
+        plan_id=plan_id, ratio=ratio, music_path=music_path, captions=captions,
+        width=width, height=height, caption_style=caption_style, effects=effects))
+
+
+@mcp.tool()
+async def mf_render_status(job_id: str) -> Any:
+    """Status/progress/output of a render job (GET /api/render/{job_id})."""
+    return await _call("GET", f"/api/render/{job_id}")
+
+
+@mcp.tool()
+async def mf_export(plan_id: str, format: Literal["fcpxml", "edl", "capcut", "resolve"]) -> Any:
+    """Export an approved plan (POST /api/export/{format}). fcpxml/edl/capcut write a file
+    on the MediaForge host and return its path. 'resolve' pushes the plan into a RUNNING
+    DaVinci Resolve (project, bins, timeline, markers, subtitles); it errors with a setup
+    message (HTTP 503) if Resolve isn't running or external scripting is disabled
+    (Resolve > Preferences > General > External scripting using = Local)."""
+    return await _call("POST", f"/api/export/{format}", body={"plan_id": plan_id})
+
+
+@mcp.tool()
+async def mf_list_jobs(limit: int = 20) -> Any:
+    """List background jobs (scan, analysis, render...) (GET /api/jobs). limit 1-200."""
+    return await _call("GET", "/api/jobs", {"limit": limit})
+
+
+@mcp.tool()
+async def mf_get_job(job_id: str) -> Any:
+    """Get one background job's status (GET /api/jobs/{id})."""
+    return await _call("GET", f"/api/jobs/{job_id}")
+
+
+@mcp.tool()
+async def mf_scan(paths: Optional[list[str]] = None, rescan: bool = False) -> Any:
+    """Start a library scan job (POST /api/scan), or a full re-analysis with rescan=true
+    (POST /api/rescan). paths: server-side directories/files; omit to use configured media
+    dirs. Heavy and state-changing: only run when the user asks. Track with mf_get_job.
+    Scans share one queue: only one runs at a time and overlapping requests merge into a single
+    follow-up job (the returned job id is the one that will cover your paths). To add a new
+    folder from outside the library use mf_import. Job status can be queued|running|done|error|
+    cancelled|interrupted."""
+    return await _call("POST", "/api/rescan" if rescan else "/api/scan", body={"paths": paths or []})
+
+
+@mcp.tool()
+async def mf_import(path: str, copy: bool = True) -> Any:
+    """Add media to the library at any time. path: an ABSOLUTE server-side folder (or a single
+    file). A folder outside the library is COPIED into it (POST /api/import/folder) and then
+    scanned; a folder/file already inside the library (or copy=false) is just scanned in place
+    (POST /api/scan). Everything funnels into one scan queue (one scan at a time; requests made
+    during a scan merge into a single follow-up), files still being copied are deferred until
+    stable, and the folder watcher + a periodic safety scan also pick up new files by themselves.
+    Returns a job id; track with mf_get_job. State-changing: only run when the user asks."""
+    if copy:
+        try:
+            return await _call("POST", "/api/import/folder", body={"path": path})
+        except RuntimeError as e:
+            msg = str(e)
+            if "already inside the library" not in msg and "not a directory" not in msg:
+                raise
+    return await _call("POST", "/api/scan", body={"paths": [path]})
+
+
+@mcp.tool()
+async def mf_cleanup_jobs(older_than_minutes: float = 0, delete_finished_older_than_days: Optional[float] = None) -> Any:
+    """Housekeeping for the job list (POST /api/jobs/cleanup): marks ghost jobs (still
+    'running'/'queued' but with no live task, e.g. left over from a crash or restart) as
+    'interrupted', skipping ones younger than older_than_minutes, and optionally DELETES finished
+    jobs (done/error/cancelled/interrupted) older than delete_finished_older_than_days. Returns
+    {interrupted, deleted}. Deleting is irreversible: only pass the days value when asked."""
+    return await _call("POST", "/api/jobs/cleanup", body={
+        "older_than_minutes": older_than_minutes,
+        "delete_finished_older_than_days": delete_finished_older_than_days})
+
+
+if __name__ == "__main__":
+    mcp.run()

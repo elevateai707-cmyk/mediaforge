@@ -199,12 +199,15 @@ class PlanOut(BaseModel):
 
 
 class StoryRequest(BaseModel):
-    script: str = Field(min_length=1)
+    script: str = Field(min_length=1, max_length=50000)
     voice_id: Optional[str] = None
     trip_id: Optional[int] = None
     ratio: str = "16:9"
     title: Optional[str] = None
     caption_style: str = "kinetic"
+    cloud_approved: bool = False
+    voice_consent: bool = False
+    max_characters: int = Field(default=5000, ge=1, le=50000)
 
 
 class StoryJobOut(BaseModel):
