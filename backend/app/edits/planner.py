@@ -548,8 +548,14 @@ def _plan_dict(plan: models.EditPlan) -> dict:
             extra = json.loads(plan.parsed_json)
         except json.JSONDecodeError:
             extra = {}
+    try:
+        from .story import story_summary
+        story = story_summary(plan.id) if extra.get("story") else None
+    except Exception:  # noqa: BLE001 - story info is optional decoration
+        story = None
     return {
         "plan_id": plan.id,
+        "story": story,
         "status": plan.status,
         "summary": plan.summary,
         "clips": [_clip_dict(c) for c in plan.clips],

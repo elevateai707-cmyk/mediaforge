@@ -72,6 +72,11 @@ _quarantined: set[int] = set()
 DEFER_BASE_SECONDS = 30.0
 DEFER_MAX_SECONDS = 300.0
 MAX_CAPTION_DEFERRALS = 8
+# CLIP unavailable (CUDA OOM, no weights): after this many deferrals the asset
+# is indexed WITHOUT an embedding (scenes/captions/FTS still happen) and flagged
+# with NO_EMBED_PREFIX in status_error; the idle loop re-embeds it once CLIP loads.
+MAX_CLIP_DEFERRALS = 3
+NO_EMBED_PREFIX = "indexed without CLIP embedding: "
 _deferrals: dict[int, int] = {}
 _retry_after: dict[int, float] = {}
 
@@ -205,6 +210,7 @@ def process_asset(db: Session, asset_id: int,
     prog = progress or (lambda _f, _m: None)
     stages_run: list[str] = []
     cur = STAGE_ORDER.get(asset.status, 0)
+    no_embed_note: Optional[str] = None
 
     # ---- 1. embedding + aesthetic ----------------------------------------
     if cur < 1:
@@ -223,12 +229,17 @@ def process_asset(db: Session, asset_id: int,
                 # Readable image but no embedding: the model is unavailable
                 # (OOM / load failure). Do NOT advance to embedding_done.
                 err = clip.model_error() or "clip embedding failed"
-                return _defer(db, asset, stages_run, f"clip unavailable: {err}")
+                if _deferrals.get(asset.id, 0) < MAX_CLIP_DEFERRALS:
+                    return _defer(db, asset, stages_run, f"clip unavailable: {err}")
+                log.warning("asset %s: CLIP still unavailable after %s deferrals; "
+                            "indexing without an embedding (%s)",
+                            asset.id, MAX_CLIP_DEFERRALS, err)
+                no_embed_note = f"{NO_EMBED_PREFIX}{err}"[:500]
             if vec is None:
                 log.info("asset %s: image unreadable; skipping embedding",
                          asset.id)
         asset.status = "embedding_done"
-        asset.status_error = None
+        asset.status_error = no_embed_note
         db.commit()
         stages_run.append("embedding")
         prog(0.2, f"asset {asset_id}: embedding done")
@@ -336,8 +347,10 @@ def process_asset(db: Session, asset_id: int,
         _rebuild_fts(db, asset)
         asset.status = "indexed"
         # Drop any error left over from an earlier failed attempt so the UI
-        # does not keep showing a crash that has since been fixed.
-        asset.status_error = None
+        # does not keep showing a crash that has since been fixed, but keep the
+        # "no embedding" marker so the backfill can find the asset later.
+        if not (asset.status_error or "").startswith(NO_EMBED_PREFIX):
+            asset.status_error = None
         _deferrals.pop(asset.id, None)
         _retry_after.pop(asset.id, None)
         db.commit()
@@ -406,20 +419,82 @@ _worker_lock = asyncio.Lock()
 
 
 def _ensure_ai_job_row() -> None:
-    """Persist the fixed 'ai-worker' job row so progress survives restarts."""
+    """Persist the fixed 'ai-worker' status row (hidden from job lists).
+
+    It is a status holder, not a job: idle is stored as ``done`` so it can never
+    look like a hung running job, and it is reset on every worker start.
+    """
     with SessionLocal() as db:
-        if db.get(models.Job, AI_JOB_ID) is None:
-            db.add(models.Job(id=AI_JOB_ID, kind="ai", status="running",
-                              progress=0.0, message="AI worker idle"))
-            db.commit()
+        row = db.get(models.Job, AI_JOB_ID)
+        if row is None:
+            db.add(models.Job(id=AI_JOB_ID, kind="ai", status="done",
+                              progress=1.0, message="AI worker idle"))
+        else:
+            row.status, row.progress, row.message = "done", 1.0, "AI worker idle"
+        db.commit()
 
 
-def _report(frac: float, msg: str) -> None:
+_last_message = "starting"
+_last_state = "starting"
+
+
+def _report(frac: float, msg: str, idle: bool = False) -> None:
+    global _last_message, _last_state
+    status = "done" if idle else "running"
+    _last_message, _last_state = msg, ("idle" if idle else "working")
     try:
-        JobManager._update_row(AI_JOB_ID, progress=frac, message=msg)
+        JobManager._update_row(AI_JOB_ID, status=status, progress=frac, message=msg)
     except Exception:  # noqa: BLE001 - reporting is best-effort
         pass
-    broadcast_job(AI_JOB_ID, "ai", "running", frac, msg)
+    broadcast_job(AI_JOB_ID, "ai", status, frac, msg)
+
+
+def worker_status() -> dict:
+    """Queue state for /api/health (the ai worker is not listed as a job)."""
+    with SessionLocal() as db:
+        pending = (db.query(models.Asset)
+                   .filter(models.Asset.status != "indexed").count())
+        no_embed = (db.query(models.Asset)
+                    .filter(models.Asset.status_error.like(NO_EMBED_PREFIX + "%")).count())
+    now = time.monotonic()
+    return {
+        "enabled": bool(config.AI_ENABLED),
+        "state": _last_state if config.AI_ENABLED else "disabled",
+        "message": _last_message,
+        "pending_assets": pending,
+        "deferred_assets": len([1 for t in _retry_after.values() if t > now]),
+        "quarantined_assets": len(_quarantined),
+        "indexed_without_embedding": no_embed,
+        "clip": dict(gpu.model_status("clip")),
+    }
+
+
+def _backfill_one() -> bool:
+    """Idle-time: embed one asset that was indexed while CLIP was unavailable."""
+    with SessionLocal() as db:
+        q = (db.query(models.Asset)
+             .filter(models.Asset.status == "indexed",
+                     models.Asset.status_error.like(NO_EMBED_PREFIX + "%")))
+        waiting = [i for i, t in _retry_after.items() if t > time.monotonic()]
+        if waiting:
+            q = q.filter(~models.Asset.id.in_(waiting))
+        asset = q.order_by(models.Asset.id).first()
+        if asset is None:
+            return False
+        img = _representative_image(db, asset)
+        vec = None
+        if img:
+            with _gpu_lock:
+                _prepare_clip()
+                vec = clip.embed_image(img)
+        if vec is None:
+            _retry_after[asset.id] = time.monotonic() + 600
+            return False
+        store_embedding(db, asset.id, np.asarray(vec, dtype=np.float32))
+        asset.status_error = None
+        db.commit()
+        log.info("asset %s: CLIP embedding backfilled", asset.id)
+        return True
 
 
 def _process_one_sync(asset_id: int) -> None:
@@ -461,11 +536,14 @@ async def _queue_loop() -> None:
                     return
                 ids = next_pending_ids(workers)
                 if not ids:
+                    loop = asyncio.get_running_loop()
+                    if await loop.run_in_executor(pool, _backfill_one):
+                        continue
                     if _quarantined:
                         _report(1.0, f"queue idle ({len(_quarantined)} asset(s) "
-                                     "skipped after repeated failures)")
+                                     "skipped after repeated failures)", idle=True)
                     else:
-                        _report(1.0, "queue idle")
+                        _report(1.0, "queue idle", idle=True)
                     continue
                 loop = asyncio.get_running_loop()
                 futs = [

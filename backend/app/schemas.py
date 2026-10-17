@@ -15,6 +15,8 @@ class HealthOut(BaseModel):
     version: str
     models: dict[str, Any] = {}
     warnings: list[str] = []
+    # watcher per dir, scan queue, last catch-up scan, AI worker queue
+    ingest: Optional[dict[str, Any]] = None
 
 
 class ConfigOut(BaseModel):
@@ -193,6 +195,21 @@ class PlanOut(BaseModel):
     created_at: Optional[str] = None
     parsed_intent: Optional[dict[str, Any]] = None
     match_stats: Optional[dict[str, Any]] = None
+    story: Optional[dict[str, Any]] = None
+
+
+class StoryRequest(BaseModel):
+    script: str = Field(min_length=1)
+    voice_id: Optional[str] = None
+    trip_id: Optional[int] = None
+    ratio: str = "16:9"
+    title: Optional[str] = None
+    caption_style: str = "kinetic"
+
+
+class StoryJobOut(BaseModel):
+    job_id: str
+    kind: str = "story"
 
 
 class PlanUpdateRequest(BaseModel):
@@ -207,11 +224,16 @@ class ApproveOut(BaseModel):
 # --- Render ------------------------------------------------------------------
 class RenderRequest(BaseModel):
     plan_id: str
-    ratio: str = "9:16"
+    # None = the story's own ratio for story plans, else 9:16 (1080x1920).
+    ratio: Optional[str] = None
     music_path: Optional[str] = None
     captions: bool = True
-    width: int = 1080
-    height: int = 1920
+    width: Optional[int] = None
+    height: Optional[int] = None
+    # Story plans only: "kinetic" (default) or "classic" lower-third SRT.
+    caption_style: Optional[str] = None
+    # Kinetic grade, slow push-in and glitch cuts at beat boundaries.
+    effects: bool = True
 
 
 class RenderJobOut(BaseModel):
@@ -267,12 +289,14 @@ class MediaCopyOut(JobRefOut):
 class ExportPathOut(BaseModel):
     ok: bool = True
     path: str
+    story_files: Optional[dict[str, str]] = None
 
 
 class ResolveExportOut(BaseModel):
     ok: bool = True
     resolve: str
     project: str
+    story: Optional[dict[str, Any]] = None
 
 
 # --- Touchup -----------------------------------------------------------------
@@ -289,6 +313,16 @@ class TouchupOut(BaseModel):
 
 
 # --- Jobs --------------------------------------------------------------------
+class JobCleanupRequest(BaseModel):
+    older_than_minutes: float = 0.0
+    delete_finished_older_than_days: Optional[float] = None
+
+
+class JobCleanupOut(BaseModel):
+    interrupted: int = 0
+    deleted: int = 0
+
+
 class JobOut(BaseModel):
     id: str
     kind: str
@@ -297,6 +331,7 @@ class JobOut(BaseModel):
     message: Optional[str] = None
     created_at: Optional[str] = None
     finished_at: Optional[str] = None
+    meta: Optional[dict[str, Any]] = None
 
 
 class PlaceOut(BaseModel):

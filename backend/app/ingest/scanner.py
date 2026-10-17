@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
@@ -57,37 +58,83 @@ def _phash_of(path: str) -> Optional[str]:
         return None
 
 
+# Files modified more recently than this are assumed to still be copying.
+SETTLE_SECONDS = 3.0
+DEFER_UNSTABLE_S = 4.0       # re-check a still-changing file after this long
+DEFER_INCOMPLETE_S = 60.0    # re-probe a file ffprobe could not read after this long
+
+_IGNORED_SUFFIXES = (".part", ".crdownload", ".tmp", ".temp", ".partial", ".download")
+
+
+def is_ignored_name(name: str) -> bool:
+    """Hidden, temp and partial-download names (never media)."""
+    low = name.lower()
+    return (name.startswith(".") or name.startswith("~$")
+            or low.endswith(_IGNORED_SUFFIXES) or low == "thumbs.db")
+
+
+def is_settled(path: Path, now: Optional[float] = None) -> bool:
+    """True when neither mtime nor ctime changed in the last SETTLE_SECONDS.
+
+    ctime moves on every write/extend even when a copy tool restores the old
+    mtime, so a still-growing file never looks settled.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    now = time.time() if now is None else now
+    return now - max(st.st_mtime, st.st_ctime) >= SETTLE_SECONDS
+
+
+class Deferred:
+    """A file that cannot be ingested yet (still copying / unreadable)."""
+
+    def __init__(self, path: str, delay: float, reason: str) -> None:
+        self.path, self.delay, self.reason = path, delay, reason
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"Deferred({self.path!r}, {self.delay}, {self.reason!r})"
+
+
 def scan_paths(paths: list[str], progress: Callable[[float, str], None] | None = None,
-               cancel_flag=None, rescan: bool = False) -> dict:
-    """Scan directories/files. Returns {'added': n, 'skipped': n, 'errors': [...]}.
+               cancel_flag=None, rescan: bool = False, settle: bool = False) -> dict:
+    """Scan directories/files. Returns {'added', 'skipped', 'errors', 'deferred'}.
 
     `rescan=True` re-checks metadata of known assets (same as scan, but known
     hashes get metadata refreshed instead of being skipped silently).
+
+    Known paths are skipped with one set lookup and previously seen duplicates
+    by path+size+mtime (scan_skips), so a catch-up scan over a large library
+    never re-hashes anything. `settle=True` defers files modified in the last
+    few seconds (a copy may still be running). A video ffprobe cannot read is
+    deferred, not inserted half-indexed. ``deferred`` lists these files as
+    ``Deferred`` objects for the caller to re-enqueue.
     """
     added, skipped, errors = 0, 0, []
+    deferred: list[Deferred] = []
     files = _collect_files(paths)
     total = len(files)
     new_ids: list[int] = []
+    known_paths: set[str] = set()
+    skip_rows: dict[str, tuple[int, int]] = {}
+    if not rescan:
+        with SessionLocal() as db:
+            known_paths = {r[0] for r in db.query(models.Asset.path).all()}
+            skip_rows = {r[0]: (r[1], r[2]) for r in db.query(
+                models.ScanSkip.path, models.ScanSkip.size, models.ScanSkip.mtime_ns).all()}
     for i, path in enumerate(files):
         if cancel_flag is not None and cancel_flag.cancelled:
             log.info("scan cancelled at %s", path)
             break
         try:
-            with SessionLocal() as db:
-                known = db.query(models.Asset).filter_by(path=str(path)).first()
-                if known is not None:
-                    skipped += 1
-                    if rescan:
-                        _refresh_asset(db, known)
-                    continue
-                file_hash = sha256_of(path)
-                dup = db.query(models.Asset).filter_by(hash=file_hash).first()
-                if dup is not None:
-                    skipped += 1
-                    continue
-                asset = _insert_asset(db, path, file_hash)
-                new_ids.append(asset.id)
+            outcome = _scan_one(path, rescan, settle, known_paths, skip_rows, new_ids)
+            if isinstance(outcome, Deferred):
+                deferred.append(outcome)
+            elif outcome == "added":
                 added += 1
+            else:
+                skipped += 1
         except Exception as exc:  # noqa: BLE001 - per-file resilience
             log.exception("scan failed for %s", path)
             errors.append(f"{path}: {exc}")
@@ -100,37 +147,93 @@ def scan_paths(paths: list[str], progress: Callable[[float, str], None] | None =
     if new_ids:
         _generate_derivatives_parallel(new_ids)
 
-    try:
-        cluster_trips()
-    except Exception as exc:
-        log.warning("trip clustering failed: %s", exc)
+    if new_ids or rescan:
+        try:
+            cluster_trips()
+        except Exception as exc:
+            log.warning("trip clustering failed: %s", exc)
 
     if progress:
-        progress(1.0, f"scan complete: {added} added, {skipped} skipped")
-    return {"added": added, "skipped": skipped, "errors": errors}
+        progress(1.0, f"scan complete: {added} added, {skipped} skipped"
+                      + (f", {len(deferred)} deferred" if deferred else ""))
+    return {"added": added, "skipped": skipped, "errors": errors,
+            "deferred": deferred}
+
+
+def _scan_one(path: Path, rescan: bool, settle: bool, known_paths: set[str],
+              skip_rows: dict[str, tuple[int, int]], new_ids: list[int]):
+    """Ingest one file. Returns 'added' | 'skipped' | Deferred."""
+    spath = str(path)
+    if rescan:
+        with SessionLocal() as db:
+            known = db.query(models.Asset).filter_by(path=spath).first()
+            if known is not None:
+                _refresh_asset(db, known)
+                return "skipped"
+    elif spath in known_paths:
+        return "skipped"
+    st = path.stat()
+    if skip_rows.get(spath) == (st.st_size, st.st_mtime_ns):
+        return "skipped"
+    if settle and not is_settled(path):
+        return Deferred(spath, DEFER_UNSTABLE_S, "file still changing")
+    kind = "video" if path.suffix.lower() in config.VIDEO_EXTS else "photo"
+    meta = metadata.extract_metadata(spath, kind)
+    if kind == "video" and not meta.get("duration"):
+        # ffprobe could not read it: most likely an incomplete copy.
+        return Deferred(spath, DEFER_INCOMPLETE_S, "video not readable yet")
+    # Hash outside any DB session: it can take minutes on a 4K file and must
+    # not pin a pooled connection while it runs.
+    file_hash = sha256_of(path)
+    st2 = path.stat()
+    if (st2.st_size, st2.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
+        return Deferred(spath, DEFER_UNSTABLE_S, "file changed while hashing")
+    with SessionLocal() as db:
+        if db.query(models.Asset).filter_by(path=spath).first() is not None:
+            return "skipped"
+        dup = db.query(models.Asset).filter_by(hash=file_hash).first()
+        if dup is not None:
+            row = db.get(models.ScanSkip, spath)
+            if row is None:
+                db.add(models.ScanSkip(path=spath, size=st2.st_size,
+                                       mtime_ns=st2.st_mtime_ns,
+                                       reason=f"duplicate of asset {dup.id}"))
+            else:
+                row.size, row.mtime_ns = st2.st_size, st2.st_mtime_ns
+            db.commit()
+            return "skipped"
+        asset = _insert_asset(db, path, file_hash, meta)
+        new_ids.append(asset.id)
+        known_paths.add(spath)
+        return "added"
 
 
 def _collect_files(paths: list[str]) -> list[Path]:
-    files: list[Path] = []
+    files: dict[str, Path] = {}
     for p in paths:
         path = Path(p)
         if not path.exists():
             continue
         if path.is_file():
-            if path.suffix.lower() in config.SUPPORTED_EXTS:
-                files.append(path)
+            if path.suffix.lower() in config.SUPPORTED_EXTS and not is_ignored_name(path.name):
+                files[str(path)] = path
             continue
-        for root, _dirs, names in os.walk(path):
+        for root, dirs, names in os.walk(path):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
             for name in names:
+                if is_ignored_name(name):
+                    continue
                 f = Path(root) / name
                 if f.suffix.lower() in config.SUPPORTED_EXTS and f.is_file():
-                    files.append(f)
-    return sorted(files, key=lambda f: str(f))
+                    files[str(f)] = f
+    return [files[k] for k in sorted(files)]
 
 
-def _insert_asset(db: Session, path: Path, file_hash: str) -> models.Asset:
+def _insert_asset(db: Session, path: Path, file_hash: str,
+                  meta: Optional[dict] = None) -> models.Asset:
     kind = "video" if path.suffix.lower() in config.VIDEO_EXTS else "photo"
-    meta = metadata.extract_metadata(str(path), kind)
+    if meta is None:
+        meta = metadata.extract_metadata(str(path), kind)
     asset = models.Asset(
         path=str(path), hash=file_hash, kind=kind,
         mime=meta.get("mime"), size=path.stat().st_size,

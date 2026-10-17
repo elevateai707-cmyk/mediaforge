@@ -136,6 +136,21 @@ def export_fcpxml(plan_id: str) -> str:
             format="r1", src=src,
         )
 
+    # Story plans: voiceover as an audio-only asset attached to the first clip.
+    from . import story as story_mod
+    story = story_mod.get_story(plan_id)
+    vo_path = Path(story["voiceover"]) if story and story.get("voiceover") else None
+    if vo_path is not None and not vo_path.is_file():
+        vo_path = None
+    if vo_path is not None:
+        vo_total = float(story.get("duration") or 0.0)
+        ET.SubElement(
+            resources, "asset", id="r_vo", name=vo_path.name, start="0s",
+            duration=f"{_ticks(vo_total, fps)}/{int(round(fps))}s"
+            if not MS_TICKS else f"{_ticks(vo_total, fps)}/1000s",
+            hasVideo="0", hasAudio="1", audioSources="1", audioChannels="2",
+            audioRate="44100", src=vo_path.as_uri())
+
     # -- project -------------------------------------------------------------
     seq_dur = sum(_ticks(float(c.end) - float(c.start), fps) for c, _ in rows)
     seq_dur_s = sum(float(c.end) - float(c.start) for c, _ in rows)
@@ -175,6 +190,14 @@ def export_fcpxml(plan_id: str) -> str:
             title = ET.SubElement(clip, "text")
             title_style = ET.SubElement(title, "text-style", ref="ts1")
             title_style.text = c.caption.strip()
+        if vo_path is not None and offset_ticks == 0:
+            den = int(round(fps)) if not MS_TICKS else 1000
+            ET.SubElement(
+                clip, "asset-clip", ref="r_vo", name=vo_path.name,
+                lane="-1", role="dialogue",
+                offset=f"{_ticks(float(c.start), fps)}/{den}s",
+                start="0s",
+                duration=f"{_ticks(float(story.get('duration') or 0.0), fps)}/{den}s")
         offset_ticks += _ticks(dur_s, fps)
 
     project = ET.Element(

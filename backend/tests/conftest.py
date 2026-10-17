@@ -40,6 +40,9 @@ os.environ["MF_SKIP_WHISPER"] = "1"
 os.environ["MF_SKIP_FACES"] = "1"
 os.environ["MF_SKIP_CAPTIONS"] = "1"
 os.environ["MF_SKIP_ENV_WRITE"] = "1"
+# No live folder watcher / periodic scans in tests (they race with explicit scans);
+# watcher behaviour is tested directly with tmp dirs.
+os.environ["MF_WATCHER"] = "0"
 
 
 def _cleanup() -> None:

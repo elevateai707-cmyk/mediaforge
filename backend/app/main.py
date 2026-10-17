@@ -32,10 +32,11 @@ from . import config, fsutil, models, persist, schemas, touchup, transfer
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, planner, render, resolve_export
+from .edits import capcut_export, edl_export, fcpxml_export, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
+from .ingest.scanqueue import scan_queue
 from .ingest.trips import cluster_trips, trip_asset_ids, trip_for_asset
 from .jobs import jobs
 from .ws import manager as ws_manager
@@ -63,6 +64,13 @@ _RENDER_OUTPUTS: dict[str, str] = {}
 async def lifespan(app: FastAPI):
     ws_manager.bind_loop(asyncio.get_running_loop())
     init_db()
+    # Anything still running/queued belongs to a previous process: mark it
+    # interrupted so it cannot sit in the job list as a hung job forever.
+    try:
+        jobs.reconcile_startup()
+    except Exception as exc:
+        log.warning("startup job reconciliation failed: %s", exc)
+    scan_queue.bind_loop(asyncio.get_running_loop())
     try:
         with SessionLocal() as db:
             n_assets = db.query(models.Asset).count()
@@ -72,7 +80,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("startup trip cluster skipped: %s", exc)
     try:
-        folder_watcher.start()
+        if folder_watcher.start(asyncio.get_running_loop()):
+            # One catch-up scan for files added while the service was down. The
+            # scanner skips known paths without hashing, so this is cheap.
+            scan_queue.note_catchup()
+            scan_queue.enqueue(persist.media_dirs(), settle=True, source="startup")
     except Exception as exc:
         log.warning("folder watcher not started: %s", exc)
     try:
@@ -311,9 +323,21 @@ def health():
     except Exception as exc:  # pragma: no cover
         log.warning("health gpu probe failed: %s", exc)
         mode, name, vram, warnings, models_status = "cpu", "", 0, [], {}
+    try:
+        from .ai import pipeline as ai_pipeline
+        ingest = {
+            "watcher": folder_watcher.status(),
+            "scan_queue": scan_queue.state(),
+            "last_catchup": scan_queue.last_catchup,
+            "ai_worker": ai_pipeline.worker_status(),
+        }
+    except Exception as exc:  # pragma: no cover
+        log.warning("health ingest probe failed: %s", exc)
+        ingest = None
     return schemas.HealthOut(
         status="ok", gpu=mode, gpu_name=name, vram_mb=vram,
         version=config.VERSION, models=models_status, warnings=warnings,
+        ingest=ingest,
     )
 
 
@@ -367,9 +391,7 @@ async def scan(req: schemas.ScanRequest):
         paths = persist.persisted_media_dirs()
     if not paths:
         raise HTTPException(status_code=422, detail="paths must not be empty")
-    job_id = jobs.run(
-        "scan", _background(scanner.scan_paths, paths, rescan=False)
-    )
+    job_id = scan_queue.enqueue(paths, rescan=False, source="api")
     return schemas.JobRefOut(job_id=job_id, kind="scan")
 
 
@@ -380,9 +402,7 @@ async def rescan(req: schemas.ScanRequest):
         paths = persist.persisted_media_dirs()
     if not paths:
         raise HTTPException(status_code=422, detail="paths must not be empty")
-    job_id = jobs.run(
-        "scan", _background(scanner.scan_paths, paths, rescan=True)
-    )
+    job_id = scan_queue.enqueue(paths, rescan=True, source="api")
     return schemas.JobRefOut(job_id=job_id, kind="scan")
 
 
@@ -857,6 +877,51 @@ def list_plans(limit: int = Query(50, ge=1, le=200)):
 
 
 # ---------------------------------------------------------------------------
+# story voiceover
+# ---------------------------------------------------------------------------
+@app.post("/api/edits/story", response_model=schemas.StoryJobOut)
+async def create_story(req: schemas.StoryRequest):
+    """Script -> ElevenLabs voiceover + matched B-roll draft plan (runs as a job).
+
+    Poll GET /api/jobs/{job_id}; on done, ``meta.plan_id`` names the new plan.
+    """
+    if req.ratio not in ("9:16", "16:9", "1:1"):
+        raise HTTPException(status_code=422, detail="ratio must be one of 9:16, 16:9, 1:1")
+    if req.caption_style not in ("kinetic", "classic"):
+        raise HTTPException(status_code=422,
+                            detail="caption_style must be 'kinetic' or 'classic'")
+    if not story.split_beats(req.script):
+        raise HTTPException(status_code=422, detail="script is empty")
+    if not config.ELEVENLABS_API_KEY:
+        raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is not configured")
+    ns: dict[str, Any] = {}
+
+    async def _runner(progress, _flag):
+        def _sync():
+            return story.create_story_plan(
+                req.script, voice_id=req.voice_id, trip_id=req.trip_id,
+                ratio=req.ratio, title=req.title,
+                caption_style=req.caption_style, progress=progress)
+
+        plan = await asyncio.get_event_loop().run_in_executor(None, _sync)
+        jobs._update_row(ns["job_id"], meta={"plan_id": plan["plan_id"],
+                                             "story": plan.get("story")})
+        return plan
+
+    job_id = jobs.run("story", _runner)
+    ns["job_id"] = job_id
+    return schemas.StoryJobOut(job_id=job_id)
+
+
+@app.get("/api/edits/{plan_id}/story")
+def get_plan_story(plan_id: str):
+    data = story.get_story(plan_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"no story for plan {plan_id!r}")
+    return data
+
+
+# ---------------------------------------------------------------------------
 # render
 # ---------------------------------------------------------------------------
 @app.post("/api/render", response_model=schemas.RenderJobOut)
@@ -870,9 +935,13 @@ async def start_render(req: schemas.RenderRequest):
             detail="plan not approved; approve it first "
                    "(POST /api/edits/plan/{id}/approve)",
         )
-    if req.ratio not in ("9:16", "16:9", "1:1"):
+    if req.ratio is not None and req.ratio not in ("9:16", "16:9", "1:1"):
         raise HTTPException(
             status_code=422, detail="ratio must be one of 9:16, 16:9, 1:1"
+        )
+    if req.caption_style not in (None, "kinetic", "classic"):
+        raise HTTPException(
+            status_code=422, detail="caption_style must be 'kinetic' or 'classic'"
         )
 
     ns: dict[str, Any] = {}
@@ -881,6 +950,7 @@ async def start_render(req: schemas.RenderRequest):
         out = await render.render_job(
             req.plan_id, req.ratio, req.width, req.height,
             req.captions, req.music_path, progress, _flag,
+            caption_style=req.caption_style, effects=req.effects,
         )
         if out:
             _RENDER_OUTPUTS[ns["job_id"]] = out
@@ -912,7 +982,8 @@ def _export_file(plan_id: str, exporter) -> schemas.ExportPathOut:
         raise HTTPException(status_code=404, detail=str(exc))
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"export file not found: {path}")
-    return schemas.ExportPathOut(ok=True, path=path)
+    files = story.export_companions(plan_id, path)
+    return schemas.ExportPathOut(ok=True, path=path, story_files=files or None)
 
 
 @app.post("/api/export/fcpxml", response_model=schemas.ExportPathOut)
@@ -1015,6 +1086,8 @@ async def import_upload(request: Request, filename: str = Query(..., min_length=
         except OSError:
             pass
         raise
+    if final.suffix.lower() in config.SUPPORTED_EXTS:
+        scan_queue.enqueue([str(final)], source="upload")
     return schemas.UploadOut(path=str(final), name=final.name, size=size,
                              folder=str(final.parent))
 
@@ -1037,7 +1110,7 @@ async def import_folder(req: schemas.ImportFolderRequest):
         if flag.cancelled:
             return
         progress(0.95, "copy complete, starting scan")
-        jobs.run("scan", _background(scanner.scan_paths, [str(plan["dest"])], rescan=False))
+        scan_queue.enqueue([str(plan["dest"])], source="import")
 
     job_id = jobs.run("import", _run)
     return schemas.ImportFolderOut(
@@ -1118,6 +1191,14 @@ async def export_media_copy(req: schemas.MediaCopyRequest, db: Session = Depends
 @app.get("/api/jobs", response_model=list[schemas.JobOut])
 def list_jobs(limit: int = Query(20, ge=1, le=200)):
     return jobs.list_jobs(limit=limit)
+
+
+@app.post("/api/jobs/cleanup", response_model=schemas.JobCleanupOut)
+def cleanup_jobs(req: schemas.JobCleanupRequest):
+    """Mark ghost jobs (running/queued with no live task) interrupted; optionally
+    delete finished jobs older than N days."""
+    return jobs.cleanup(older_than_minutes=req.older_than_minutes,
+                        delete_finished_older_than_days=req.delete_finished_older_than_days)
 
 
 @app.get("/api/jobs/{job_id}", response_model=schemas.JobOut)

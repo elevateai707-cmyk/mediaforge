@@ -243,18 +243,32 @@ def _progress_callable(job: Any) -> Callable[[float, str], None]:
     return _noop
 
 
-def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
-                height: int = 1920, captions: bool = True,
-                music_path: Optional[str] = None,
-                job: Any = None) -> str:
+def render_plan(plan_id: str, ratio: Optional[str] = None,
+                width: Optional[int] = None, height: Optional[int] = None,
+                captions: bool = True, music_path: Optional[str] = None,
+                job: Any = None, caption_style: Optional[str] = None,
+                effects: bool = True) -> str:
     """Render an approved plan to exports/reel_<plan_id>_<ts>.mp4.
 
     Returns the output path. Raises RenderError on any failure.
+
+    Story plans (see story.py) default to ``caption_style="kinetic"`` and to
+    the story's own ratio when ``ratio`` is None; non-story plans ignore both
+    ``caption_style`` and ``effects`` and render exactly as before.
     """
     progress = _progress_callable(job)
     plan, resolved = _load_plan(plan_id)
     n = len(resolved)
+    from . import story as story_mod
+    from . import kinetic
+    story = story_mod.get_story(plan_id)
 
+    if ratio is None:
+        ratio = (story or {}).get("ratio") or "9:16"
+        if width is None and height is None and ratio == "16:9" and story:
+            width = 1920
+    width = 1080 if width is None else width
+    height = 1920 if height is None else height
     ratio = (ratio or "9:16").lower()
     if ratio not in ("9:16", "16:9", "1:1"):
         # Derive WxH from the explicit width/height instead of a named ratio.
@@ -270,13 +284,49 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
     if height % 2:
         height += 1
 
-    xfade = config.XFADE_DURATION
+    # Story plans: voiceover is the audio, clips are hard-cut (xfade would
+    # shorten the timeline and drift it away from the voiceover), clip audio
+    # is muted and captions come from captions.srt.
+    voiceover = story.get("voiceover") if story else None
+    if voiceover and not Path(voiceover).is_file():
+        raise RenderError(f"story voiceover file missing: {voiceover}")
+    srt_path = story.get("srt") if story else None
+    if srt_path and not Path(srt_path).is_file():
+        srt_path = None
+    is_story = bool(voiceover)
+    style = (caption_style or (story or {}).get("caption_style") or "kinetic") \
+        if is_story else "classic"
+    is_kinetic = is_story and style == "kinetic"
+    fx = is_kinetic and effects
+    kin_dir = config.RENDER_TMP_DIR / f"emph_{plan_id}"
+    emph_infos: list[dict] = []
+    emph_events: list[dict] = []
+    ass_file: Optional[Path] = None
+    if is_kinetic and captions:
+        config.RENDER_TMP_DIR.mkdir(parents=True, exist_ok=True)
+        events = kinetic.plan_events(story.get("beats") or [])
+        emph_events = events["emphasis"]
+        for k, ev in enumerate(emph_events):
+            info = kinetic.render_emphasis_images(ev["text"], width, height, kin_dir,
+                                                  f"e{k}", seed=k)
+            info["list"] = str(kin_dir / f"e{k}.txt")
+            kinetic.write_sequence_list(info, ev["end"] - ev["start"],
+                                        Path(info["list"]), config.RENDER_FPS)
+            emph_infos.append(info)
+        layout = kinetic.emphasis_layout(emph_infos, width, height)
+        for info, lay in zip(emph_infos, layout):
+            info.update(lay)
+        ass_file = config.RENDER_TMP_DIR / f"cap_{plan_id}_kin.ass"
+        ass_file.write_text(kinetic.build_ass(events, width, height, layout),
+                            encoding="utf-8")
+
+    xfade = 0.0 if is_story else config.XFADE_DURATION
     font = config.find_font()
     total = 0.0
     per_clip: list[dict] = []
     for c, asset in resolved:
         dur = max(0.2, float(c.end) - float(c.start))
-        if asset.kind == "photo":
+        if asset.kind == "photo" or is_story:
             has_audio = False
         else:
             has_audio = _has_audio(asset.path)
@@ -298,9 +348,16 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
             cmd += ["-loop", "1", "-t", f"{pc['dur']:.3f}", "-i", pc["path"]]
         else:
             cmd += ["-i", pc["path"]]
-        if not pc["has_audio"]:
+        if not pc["has_audio"] and not is_story:
             cmd += ["-f", "lavfi", "-t", f"{pc['dur']:.3f}",
                     "-i", "anullsrc=r=48000:cl=stereo"]
+    voice_idx: Optional[int] = None
+    if is_story:
+        voice_idx = cmd.count("-i")
+        cmd += ["-i", voiceover]
+    emph_idx0 = cmd.count("-i")
+    for info in emph_infos:
+        cmd += ["-f", "concat", "-safe", "0", "-i", info["list"]]
     if music_path:
         if not Path(music_path).exists():
             raise RenderError(f"music file not found: {music_path}")
@@ -317,7 +374,11 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
         vlabel = f"v{i}"
         alabel = f"a{i}"
         in_idx = input_index  # this clip's asset input file index
-        if pc["asset"].kind == "photo":
+        if is_story:
+            has_audio = False
+            audio_idx = -1
+            input_index += 1
+        elif pc["asset"].kind == "photo":
             # photo loop input is video-only; anullsrc is the *next* input
             has_audio = False
             audio_idx = input_index + 1
@@ -339,8 +400,15 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
             f"scale={width}:{height}:force_original_aspect_ratio=increase"
             ":force_divisible_by=2")
         chain.append(f"crop={width}:{height}")
+        if fx:
+            # Slow push-in 1.00 -> 1.08 over the clip: scale up per frame, then
+            # centre-crop back; clip duration is untouched.
+            zoom = f"(1+0.08*min(t/{pc['dur']:.3f},1))"
+            chain.append(
+                f"scale=w='trunc(iw*{zoom}/2)*2':h='trunc(ih*{zoom}/2)*2':eval=frame")
+            chain.append(f"crop={width}:{height}")
         chain.append("setsar=1")
-        if captions and pc["clip"].caption:
+        if captions and pc["clip"].caption and not is_story:
             fontsize = max(18, height // 34)
             txt = _wrap_text(str(pc["clip"].caption).strip(),
                              width=_chars_per_line(width, fontsize))
@@ -359,6 +427,9 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
         vlabels.append(vlabel)
 
         # Audio chain.
+        if is_story:
+            alabels.append(alabel)
+            continue
         if has_audio:
             achain = (
                 f"[{audio_idx}:a]"
@@ -374,15 +445,20 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
         filters.append(achain)
         alabels.append(alabel)
 
+    if is_story:
+        input_index += 1 + len(emph_infos)  # voiceover + emphasis inputs
     # Music input (last input index).
     music_label: Optional[str] = None
     if music_path:
         music_label = f"m{input_index}"
         filters.append(f"[{input_index}:a]aresample=48000[{music_label}]")
 
-    # Video xfade chain.
+    # Video xfade chain (story: plain concat, no overlap).
     vout = vlabels[0]
-    if n > 1:
+    if is_story and n > 1:
+        filters.append("".join(f"[{v}]" for v in vlabels)
+                       + f"concat=n={n}:v=1:a=0[vout]")
+    elif n > 1:
         offset = per_clip[0]["dur"] - xfade
         for k in range(1, n):
             out = f"x{k}" if k < n - 1 else "vout"
@@ -396,7 +472,9 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
 
     # Audio chain: acrossfade between consecutive clips, then loudnorm.
     aout = alabels[0]
-    if n > 1:
+    if is_story:
+        filters.append(f"[{voice_idx}:a]aresample=48000[amix]")
+    elif n > 1:
         for k in range(1, n):
             out = f"ax{k}" if k < n - 1 else "amix"
             filters.append(
@@ -406,14 +484,17 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
         filters.append(f"[{alabels[0]}]anull[amix]")
 
     if music_path:
-        # Duck the music under the voice track, then mix.
+        # Duck the music under the voice track, then mix. The voice feeds both
+        # the sidechain and the mix, so it must be split (a filter label can
+        # only be consumed once).
         ducked = "duck"
+        filters.append("[amix]asplit=2[vox1][vox2]")
         filters.append(
-            f"[{music_label}][amix]sidechaincompress="
+            f"[{music_label}][vox1]sidechaincompress="
             "threshold=0.03:ratio=8:attack=20:release=250:makeup=1"
             f"[{ducked}]")
         filters.append(
-            f"[amix][{ducked}]amix=inputs=2:duration=first:normalize=0[aout]")
+            f"[vox2][{ducked}]amix=inputs=2:duration=first:normalize=0[aout]")
     else:
         filters.append(
             f"[amix]loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
@@ -425,13 +506,58 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
     else:
         amap = "aout"
 
+    vmap = "vout"
+    if is_kinetic:
+        cur = "vout"
+
+        def _chain(filt: str, label: str) -> None:
+            nonlocal cur
+            filters.append(f"[{cur}]{filt}[{label}]")
+            cur = label
+
+        if fx:
+            _chain("eq=contrast=1.08:saturation=1.15,"
+                   "colorbalance=rs=0.03:bs=-0.03:rm=0.02:bm=-0.02", "vgrade")
+            starts = [float(b["start"]) for b in (story.get("beats") or [])[1:]]
+            if starts:
+                flash = 3.0 / config.RENDER_FPS
+                shift = max(2, round(12 * min(width, height) / 1080))
+                enable = "+".join(f"between(t,{t0:.3f},{t0 + flash:.3f})" for t0 in starts)
+                _chain(f"rgbashift=rh={-shift}:bh={shift}:enable='{enable}'", "vglitch")
+        for k, (info, ev) in enumerate(zip(emph_infos, emph_events)):
+            src = f"em{k}"
+            filters.append(f"[{emph_idx0 + k}:v]fps={config.RENDER_FPS},format=rgba,"
+                           f"setpts=PTS+{ev['start']:.3f}/TB[{src}]")
+            filters.append(
+                f"[{cur}][{src}]overlay=x={info['x']}:y={info['y']}:eof_action=pass:"
+                f"enable='between(t,{ev['start']:.3f},{ev['end']:.3f})'[vo{k}]")
+            cur = f"vo{k}"
+        if ass_file is not None:
+            fd = f":fontsdir='{_escape_filter_path(str(kinetic.FONTS_DIR))}'" \
+                if kinetic.fonts_available() else ""
+            _chain(f"ass=filename='{_escape_filter_path(str(ass_file))}'{fd}", "vass")
+        vmap = cur
+        if cur == "vout":
+            vmap = "vout"
+    elif is_story and captions and srt_path:
+        fontsize = max(18, height // 28)
+        margin_v = max(30, height // 14)
+        style = (f"FontName=DejaVu Sans,Bold=1,FontSize={fontsize},"
+                 "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+                 "BackColour=&H80000000,BorderStyle=1,Outline=2.5,Shadow=1,"
+                 f"Alignment=2,MarginV={margin_v}")
+        filters.append(
+            f"[vout]subtitles=filename='{_escape_filter_path(srt_path)}'"
+            f":original_size={width}x{height}:force_style='{style}'[vsub]")
+        vmap = "vsub"
+
     out_dir = config.EXPORTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = out_dir / f"reel_{plan_id}_{ts}.mp4"
 
     cmd += ["-filter_complex", ";".join(filters),
-            "-map", "[vout]", "-map", f"[{amap}]",
+            "-map", f"[{vmap}]", "-map", f"[{amap}]",
             "-c:v", "libx264", "-preset", config.RENDER_PRESET,
             "-crf", str(config.RENDER_CRF), "-pix_fmt", "yuv420p",
             "-r", str(config.RENDER_FPS),
@@ -454,6 +580,11 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
         raise RenderError(f"ffmpeg failed to start: {exc}")
     finally:
         _cleanup_caption_files(plan_id)
+        if is_kinetic:
+            import shutil
+            shutil.rmtree(kin_dir, ignore_errors=True)
+            if ass_file is not None:
+                ass_file.unlink(missing_ok=True)
 
     if proc.returncode != 0:
         tail = (proc.stderr or "").strip().splitlines()[-30:]
@@ -463,6 +594,13 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
     if not out_path.exists() or out_path.stat().st_size == 0:
         raise RenderError("ffmpeg exited 0 but produced no output file")
 
+    if is_story and srt_path:
+        try:
+            import shutil
+            shutil.copyfile(srt_path, out_path.with_suffix(".srt"))
+        except OSError as exc:
+            log.warning("could not copy captions.srt next to render: %s", exc)
+
     progress(1.0, f"render complete: {out_path.name}")
     return str(out_path)
 
@@ -471,16 +609,18 @@ def render_plan(plan_id: str, ratio: str = "9:16", width: int = 1080,
 # Job-compatible async wrapper (used by main.py)
 # ---------------------------------------------------------------------------
 
-async def render_job(plan_id: str, ratio: str, width: int, height: int,
-                     captions: bool, music_path: Optional[str],
-                     progress, _cancel_flag) -> str:
+async def render_job(plan_id: str, ratio: Optional[str], width: Optional[int],
+                     height: Optional[int], captions: bool, music_path: Optional[str],
+                     progress, _cancel_flag, caption_style: Optional[str] = None,
+                     effects: bool = True) -> str:
     """Async entrypoint for jobs.run: renders in a thread, honours cancel."""
     import asyncio
 
     def _sync() -> str:
         return render_plan(plan_id, ratio=ratio, width=width, height=height,
                            captions=captions, music_path=music_path,
-                           job=progress)
+                           job=progress, caption_style=caption_style,
+                           effects=effects)
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _sync)

@@ -77,6 +77,12 @@ WATCHER_ENABLED = os.environ.get("MF_WATCHER", "1") == "1"
 MUSIC_DIR = os.environ.get("MF_MUSIC_DIR", "")
 USE_CLOUD_LLM = os.environ.get("USE_CLOUD_LLM", "false").lower() in ("1", "true", "yes")
 
+# ElevenLabs text-to-speech (story voiceover). The API key is read from the
+# environment only (systemd EnvironmentFile); it is never logged or persisted.
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "kMQD669ym1wk5czHQfyu")
+ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+
 # Supported media extensions -> kind
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 VIDEO_EXTS = {".mov", ".mp4", ".m4v", ".mkv", ".avi", ".webm", ".prores", ".mts", ".m2ts", ".wmv", ".flv", ".3gp"}
