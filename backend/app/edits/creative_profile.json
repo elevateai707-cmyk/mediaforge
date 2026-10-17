@@ -1,0 +1,36 @@
+{
+  "version": "2026-10-17",
+  "brand": "Build With DB",
+  "caption_preset": "kinetic-db",
+  "caption_note": "Build With DB: gold #D4AF37 on black or cream; original condensed uppercase kinetic captions, larger cream emphasis words, speech timing and a soft dark shadow; no boxed strips. Use openly licensed fonts.",
+  "hook_formulas": [
+    "[common advice] + [overlooked consequence] + [specific takeaway]",
+    "[topic] + [misconception] + [evidence-based correction]",
+    "[complex concept] + [everyday analogy] + [simple demonstration]",
+    "[unexpected observation] + [supporting evidence] + [audience relevance]",
+    "[measurable goal] + [time constraint] + [test] + [observed result]",
+    "[customer concern] + [acknowledgment] + [practical answer] + [demonstration]",
+    "[audience goal] + [recurring obstacle] + [credible mechanism] + [next step]",
+    "[business problem] + [original physical metaphor] + [process demonstration]",
+    "[decision scenario] + [option A] + [option B] + [comparison] + [takeaway]"
+  ],
+  "rules": [
+    "Create original wording, layouts, timing, and designs.",
+    "Reference recordings are analysis-only; never include their clips, audio, logos, watermarks, or distinctive wording in exports.",
+    "Use neutral technique names, never creator or agency names.",
+    "Use original or appropriately licensed footage, music, graphics and fonts.",
+    "Preserve the user's recorded voice; saved recordings are not a completed synthetic voice model.",
+    "Make meaningful differences in openings, visuals or story pacing when making platform variants.",
+    "Use evidence for factual claims; never invent performance figures or promised results."
+  ],
+  "techniques": [
+    "kinetic-word",
+    "chapter-card",
+    "monochrome-to-color",
+    "B-roll inset",
+    "punch-in",
+    "emphasis word",
+    "checklist",
+    "two-tone headline"
+  ]
+}

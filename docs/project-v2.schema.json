@@ -1,0 +1,997 @@
+{
+  "$defs": {
+    "Audio": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "volume": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Volume",
+          "type": "number"
+        },
+        "start": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "fade_in": {
+          "default": 0,
+          "maximum": 30,
+          "minimum": 0,
+          "title": "Fade In",
+          "type": "number"
+        },
+        "fade_out": {
+          "default": 0,
+          "maximum": 30,
+          "minimum": 0,
+          "title": "Fade Out",
+          "type": "number"
+        },
+        "gain_points": {
+          "items": {
+            "$ref": "#/$defs/GainPoint"
+          },
+          "maxItems": 200,
+          "title": "Gain Points",
+          "type": "array"
+        }
+      },
+      "title": "Audio",
+      "type": "object"
+    },
+    "Clip": {
+      "additionalProperties": false,
+      "properties": {
+        "uid": {
+          "title": "Uid",
+          "type": "string"
+        },
+        "asset_id": {
+          "exclusiveMinimum": 0,
+          "title": "Asset Id",
+          "type": "integer"
+        },
+        "start": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "speed": {
+          "default": 1,
+          "maximum": 4,
+          "minimum": 0.25,
+          "title": "Speed",
+          "type": "number"
+        },
+        "transition": {
+          "default": "crossfade",
+          "enum": [
+            "cut",
+            "crossfade"
+          ],
+          "title": "Transition",
+          "type": "string"
+        },
+        "mute": {
+          "default": false,
+          "title": "Mute",
+          "type": "boolean"
+        },
+        "look": {
+          "default": "color",
+          "enum": [
+            "color",
+            "bw"
+          ],
+          "title": "Look",
+          "type": "string"
+        },
+        "reveal_at": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reveal At"
+        },
+        "reveal_dur": {
+          "default": 0.4,
+          "maximum": 10,
+          "minimum": 0.04,
+          "title": "Reveal Dur",
+          "type": "number"
+        }
+      },
+      "required": [
+        "asset_id",
+        "end"
+      ],
+      "title": "Clip",
+      "type": "object"
+    },
+    "Cue": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 10000,
+          "title": "Text",
+          "type": "string"
+        },
+        "words": {
+          "items": {
+            "$ref": "#/$defs/Word"
+          },
+          "maxItems": 500,
+          "title": "Words",
+          "type": "array"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text"
+      ],
+      "title": "Cue",
+      "type": "object"
+    },
+    "Export": {
+      "additionalProperties": false,
+      "properties": {
+        "fit": {
+          "default": "contain",
+          "enum": [
+            "contain",
+            "cover"
+          ],
+          "title": "Fit",
+          "type": "string"
+        },
+        "ratio": {
+          "default": "9:16",
+          "enum": [
+            "9:16",
+            "1:1",
+            "16:9"
+          ],
+          "title": "Ratio",
+          "type": "string"
+        },
+        "width": {
+          "default": 1080,
+          "maximum": 3840,
+          "minimum": 160,
+          "multipleOf": 2,
+          "title": "Width",
+          "type": "integer"
+        },
+        "fps": {
+          "default": 0,
+          "maximum": 120,
+          "minimum": 0,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "codec": {
+          "default": "libx264",
+          "enum": [
+            "libx264",
+            "h264_nvenc"
+          ],
+          "title": "Codec",
+          "type": "string"
+        },
+        "clean_master": {
+          "default": false,
+          "title": "Clean Master",
+          "type": "boolean"
+        },
+        "sidecars": {
+          "items": {
+            "enum": [
+              "srt",
+              "vtt",
+              "ass"
+            ],
+            "type": "string"
+          },
+          "title": "Sidecars",
+          "type": "array"
+        },
+        "hdr": {
+          "default": "tonemap",
+          "enum": [
+            "tonemap",
+            "reject"
+          ],
+          "title": "Hdr",
+          "type": "string"
+        },
+        "limit": {
+          "default": 0.95,
+          "maximum": 1,
+          "minimum": 0.1,
+          "title": "Limit",
+          "type": "number"
+        },
+        "auto_level": {
+          "default": true,
+          "title": "Auto Level",
+          "type": "boolean"
+        }
+      },
+      "title": "Export",
+      "type": "object"
+    },
+    "GainPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "t": {
+          "maximum": 36000,
+          "minimum": 0,
+          "title": "T",
+          "type": "number"
+        },
+        "db": {
+          "maximum": 24,
+          "minimum": -80,
+          "title": "Db",
+          "type": "number"
+        }
+      },
+      "required": [
+        "t",
+        "db"
+      ],
+      "title": "GainPoint",
+      "type": "object"
+    },
+    "Inset": {
+      "additionalProperties": false,
+      "description": "Picture/clip tile composited under the text. Geometry is a fraction of the\nframe, top-left origin; `radius` is a fraction of the tile's shorter side.",
+      "properties": {
+        "x": {
+          "default": 0.05,
+          "maximum": 1,
+          "minimum": -0.5,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "default": 0.05,
+          "maximum": 1,
+          "minimum": -0.5,
+          "title": "Y",
+          "type": "number"
+        },
+        "w": {
+          "default": 0.4,
+          "exclusiveMinimum": 0.02,
+          "maximum": 1.5,
+          "title": "W",
+          "type": "number"
+        },
+        "h": {
+          "default": 0.25,
+          "exclusiveMinimum": 0.02,
+          "maximum": 1.5,
+          "title": "H",
+          "type": "number"
+        },
+        "radius": {
+          "default": 0.08,
+          "maximum": 0.5,
+          "minimum": 0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "src_start": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Src Start",
+          "type": "number"
+        },
+        "gray": {
+          "default": false,
+          "title": "Gray",
+          "type": "boolean"
+        },
+        "shadow": {
+          "default": true,
+          "title": "Shadow",
+          "type": "boolean"
+        },
+        "border": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Border"
+        },
+        "anim": {
+          "default": "fade",
+          "enum": [
+            "none",
+            "fade",
+            "slide-up",
+            "slide-down",
+            "pop"
+          ],
+          "title": "Anim",
+          "type": "string"
+        },
+        "anim_ms": {
+          "default": 250,
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Anim Ms",
+          "type": "integer"
+        }
+      },
+      "title": "Inset",
+      "type": "object"
+    },
+    "Overlay": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 10000,
+          "title": "Text",
+          "type": "string"
+        },
+        "words": {
+          "items": {
+            "$ref": "#/$defs/Word"
+          },
+          "maxItems": 500,
+          "title": "Words",
+          "type": "array"
+        },
+        "style": {
+          "$ref": "#/$defs/Style"
+        },
+        "kind": {
+          "default": "text",
+          "enum": [
+            "text",
+            "solid",
+            "checklist",
+            "inset"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "fill": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fill"
+        },
+        "items": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 12,
+          "title": "Items",
+          "type": "array"
+        },
+        "check_at": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 12,
+          "title": "Check At",
+          "type": "array"
+        },
+        "media": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Media"
+        },
+        "inset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Inset"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text"
+      ],
+      "title": "Overlay",
+      "type": "object"
+    },
+    "Style": {
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "default": "clean",
+          "enum": [
+            "clean",
+            "bold",
+            "active",
+            "kinetic-db",
+            "kinetic-teal",
+            "kinetic-word",
+            "title-heavy",
+            "script-accent",
+            "serif-card",
+            "serif-caption",
+            "chapter-script",
+            "chapter-sub",
+            "title-bar",
+            "gradient-word",
+            "headline-hollow",
+            "headline-accent",
+            "label-caps",
+            "hook-caption",
+            "checklist-text"
+          ],
+          "title": "Preset",
+          "type": "string"
+        },
+        "font": {
+          "default": "DejaVu Sans",
+          "enum": [
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Montserrat Light",
+            "Montserrat Medium",
+            "Montserrat SemiBold",
+            "Montserrat Bold",
+            "Montserrat ExtraBold",
+            "Montserrat Black",
+            "Montserrat Light Italic",
+            "Montserrat Bold Italic",
+            "Montserrat ExtraBold Italic",
+            "Montserrat Black Italic",
+            "Cormorant Garamond Medium",
+            "Cormorant Garamond SemiBold",
+            "Cormorant Garamond Bold",
+            "Cinzel SemiBold",
+            "Playfair Display SemiBold",
+            "Allura",
+            "Great Vibes",
+            "Parisienne",
+            "Anton",
+            "Archivo Black"
+          ],
+          "title": "Font",
+          "type": "string"
+        },
+        "size": {
+          "default": 52,
+          "maximum": 320,
+          "minimum": 12,
+          "title": "Size",
+          "type": "integer"
+        },
+        "color": {
+          "default": "#FFFFFF",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Color",
+          "type": "string"
+        },
+        "outline": {
+          "default": 2,
+          "maximum": 12,
+          "minimum": 0,
+          "title": "Outline",
+          "type": "integer"
+        },
+        "background": {
+          "default": false,
+          "title": "Background",
+          "type": "boolean"
+        },
+        "position": {
+          "default": "bottom",
+          "enum": [
+            "bottom",
+            "center",
+            "top"
+          ],
+          "title": "Position",
+          "type": "string"
+        },
+        "max_lines": {
+          "default": 2,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Max Lines",
+          "type": "integer"
+        },
+        "margin": {
+          "default": 0.08,
+          "maximum": 0.3,
+          "minimum": 0.02,
+          "title": "Margin",
+          "type": "number"
+        },
+        "bold": {
+          "default": false,
+          "title": "Bold",
+          "type": "boolean"
+        },
+        "highlight": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Highlight"
+        },
+        "glow": {
+          "default": 0,
+          "maximum": 60,
+          "minimum": 0,
+          "title": "Glow",
+          "type": "integer"
+        },
+        "y": {
+          "anyOf": [
+            {
+              "maximum": 0.95,
+              "minimum": 0.05,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Y"
+        },
+        "max_width": {
+          "default": 0.8,
+          "maximum": 1,
+          "minimum": 0.3,
+          "title": "Max Width",
+          "type": "number"
+        },
+        "line_spacing": {
+          "default": 0.95,
+          "maximum": 2,
+          "minimum": 0.6,
+          "title": "Line Spacing",
+          "type": "number"
+        },
+        "fade_in": {
+          "default": 0,
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Fade In",
+          "type": "integer"
+        },
+        "shade": {
+          "default": 0.625,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Shade",
+          "type": "number"
+        },
+        "spacing": {
+          "default": 0,
+          "maximum": 60,
+          "minimum": -10,
+          "title": "Spacing",
+          "type": "number"
+        },
+        "case": {
+          "default": "none",
+          "enum": [
+            "none",
+            "upper",
+            "lower"
+          ],
+          "title": "Case",
+          "type": "string"
+        },
+        "x": {
+          "anyOf": [
+            {
+              "maximum": 0.95,
+              "minimum": 0.05,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X"
+        },
+        "accent": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accent"
+        },
+        "gradient": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Gradient",
+          "type": "array"
+        },
+        "hollow": {
+          "default": false,
+          "title": "Hollow",
+          "type": "boolean"
+        },
+        "outline_color": {
+          "default": "#000000",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Outline Color",
+          "type": "string"
+        },
+        "entrance": {
+          "default": "none",
+          "enum": [
+            "none",
+            "fade",
+            "blur",
+            "rise",
+            "blur-rise",
+            "pop",
+            "split"
+          ],
+          "title": "Entrance",
+          "type": "string"
+        },
+        "entrance_ms": {
+          "default": 260,
+          "maximum": 2000,
+          "minimum": 40,
+          "title": "Entrance Ms",
+          "type": "integer"
+        },
+        "exit_ms": {
+          "default": 0,
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Exit Ms",
+          "type": "integer"
+        },
+        "word_mode": {
+          "default": "phrase",
+          "enum": [
+            "phrase",
+            "word"
+          ],
+          "title": "Word Mode",
+          "type": "string"
+        },
+        "words_per": {
+          "default": 1,
+          "maximum": 6,
+          "minimum": 1,
+          "title": "Words Per",
+          "type": "integer"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Keywords",
+          "type": "array"
+        },
+        "key_font": {
+          "anyOf": [
+            {
+              "enum": [
+                "DejaVu Sans",
+                "Liberation Sans",
+                "Montserrat Light",
+                "Montserrat Medium",
+                "Montserrat SemiBold",
+                "Montserrat Bold",
+                "Montserrat ExtraBold",
+                "Montserrat Black",
+                "Montserrat Light Italic",
+                "Montserrat Bold Italic",
+                "Montserrat ExtraBold Italic",
+                "Montserrat Black Italic",
+                "Cormorant Garamond Medium",
+                "Cormorant Garamond SemiBold",
+                "Cormorant Garamond Bold",
+                "Cinzel SemiBold",
+                "Playfair Display SemiBold",
+                "Allura",
+                "Great Vibes",
+                "Parisienne",
+                "Anton",
+                "Archivo Black"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Font"
+        },
+        "key_scale": {
+          "default": 1.0,
+          "maximum": 3,
+          "minimum": 0.5,
+          "title": "Key Scale",
+          "type": "number"
+        },
+        "key_color": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Color"
+        }
+      },
+      "title": "Style",
+      "type": "object"
+    },
+    "Word": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 10000,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "text"
+      ],
+      "title": "Word",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "default": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "revision": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "clips": {
+      "items": {
+        "$ref": "#/$defs/Clip"
+      },
+      "maxItems": 500,
+      "title": "Clips",
+      "type": "array"
+    },
+    "speech_captions": {
+      "default": false,
+      "title": "Speech Captions",
+      "type": "boolean"
+    },
+    "on_video_text": {
+      "default": false,
+      "title": "On Video Text",
+      "type": "boolean"
+    },
+    "captions": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/Cue"
+        },
+        "type": "array"
+      },
+      "title": "Captions",
+      "type": "object"
+    },
+    "narration_captions": {
+      "items": {
+        "$ref": "#/$defs/Cue"
+      },
+      "title": "Narration Captions",
+      "type": "array"
+    },
+    "caption_source": {
+      "default": "original",
+      "enum": [
+        "original",
+        "narration"
+      ],
+      "title": "Caption Source",
+      "type": "string"
+    },
+    "overlays": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/Overlay"
+        },
+        "type": "array"
+      },
+      "title": "Overlays",
+      "type": "object"
+    },
+    "timeline_overlays": {
+      "items": {
+        "$ref": "#/$defs/Overlay"
+      },
+      "maxItems": 500,
+      "title": "Timeline Overlays",
+      "type": "array"
+    },
+    "caption_style": {
+      "$ref": "#/$defs/Style"
+    },
+    "original_audio": {
+      "$ref": "#/$defs/Audio"
+    },
+    "voice_over": {
+      "$ref": "#/$defs/Audio"
+    },
+    "music": {
+      "$ref": "#/$defs/Audio"
+    },
+    "ducking": {
+      "default": true,
+      "title": "Ducking",
+      "type": "boolean"
+    },
+    "ducking_ratio": {
+      "default": 8,
+      "maximum": 20,
+      "minimum": 1,
+      "title": "Ducking Ratio",
+      "type": "number"
+    },
+    "post_title": {
+      "default": "",
+      "maxLength": 1000,
+      "title": "Post Title",
+      "type": "string"
+    },
+    "post_description": {
+      "default": "",
+      "maxLength": 20000,
+      "title": "Post Description",
+      "type": "string"
+    },
+    "hashtags": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Hashtags",
+      "type": "string"
+    },
+    "narration_script": {
+      "default": "",
+      "maxLength": 20000,
+      "title": "Narration Script",
+      "type": "string"
+    },
+    "generated_assets": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Generated Assets",
+      "type": "array"
+    },
+    "export": {
+      "$ref": "#/$defs/Export"
+    }
+  },
+  "title": "Project",
+  "type": "object"
+}

@@ -86,6 +86,27 @@ def init_db() -> None:
     """Create all tables (ORM + raw virtual tables) idempotently."""
     from . import models  # noqa: F401  (register mappers)
 
+    # Publish a backup only after SQLite finishes copying WAL and table data.
+    import os
+    import sqlite3
+    import tempfile
+
+    if config.DB_PATH.exists():
+        with sqlite3.connect(config.DB_PATH) as source:
+            tables = {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "edit_plans" in tables and "project_documents" not in tables:
+                backup = config.DB_PATH.with_name(config.DB_PATH.name + ".pre-editor-v2.bak")
+                if not backup.exists():
+                    fd, temporary = tempfile.mkstemp(prefix=".editor-backup-", dir=backup.parent)
+                    os.close(fd)  # mkstemp creates mode 0600.
+                    try:
+                        with sqlite3.connect(temporary) as target:
+                            source.backup(target)
+                        os.replace(temporary, backup)
+                    finally:
+                        if os.path.exists(temporary):
+                            os.unlink(temporary)
+
     models.Base.metadata.create_all(bind=_engine)
     with _engine.begin() as conn:
         conn.execute(text(

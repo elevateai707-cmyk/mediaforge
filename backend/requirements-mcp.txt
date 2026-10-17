@@ -1,0 +1,3 @@
+# Separate environment: do not upgrade the production media/ML environment.
+mcp>=1.26,<2
+httpx>=0.27,<1

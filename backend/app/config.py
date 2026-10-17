@@ -20,6 +20,11 @@ MF_ROOT = Path(
     os.environ.get("MF_ROOT") or Path(__file__).resolve().parents[2]
 ).resolve()
 
+# Read file defaults before deriving settings; explicit process environment wins.
+from dotenv import load_dotenv
+
+load_dotenv(MF_ROOT / ".env", override=False)
+
 # ---------------------------------------------------------------------------
 # Data directories (override for tests via env)
 # ---------------------------------------------------------------------------
@@ -32,8 +37,8 @@ TOUCHUP_DIR = Path(os.environ.get("MF_TOUCHUP_DIR", str(EXPORTS_DIR / "touchup")
 DB_PATH = Path(os.environ.get("MF_DB_PATH", str(DATA_DIR / "mediaforge.db"))).resolve()
 RENDER_TMP_DIR = Path(os.environ.get("MF_RENDER_TMP", str(DATA_DIR / "render_tmp"))).resolve()
 
-VERSION = "2.0.0"
-APP_HOST = os.environ.get("MF_HOST", "0.0.0.0")
+VERSION = "2.1.0"
+APP_HOST = os.environ.get("MF_HOST", "127.0.0.1")
 APP_PORT = int(os.environ.get("MF_PORT", "8420"))
 
 # ---------------------------------------------------------------------------
@@ -63,6 +68,20 @@ CAPTION_NUM_GPU = (int(os.environ["MF_CAPTION_NUM_GPU"])
 # Free VRAM (MB) wanted before a caption call; below it the torch models
 # (CLIP/whisper/faces) are released first.
 CAPTION_MIN_FREE_MB = int(os.environ.get("MF_CAPTION_MIN_FREE_MB", "2800"))
+# Edit planning is text-only. The vision model reserves ~7.8 GB of compute graph on a
+# 10 GB card and ends up mostly on CPU (60-100 s/plan); gemma4:e4b fits fully on GPU.
+PLAN_MODEL = os.environ.get("MF_PLAN_MODEL", "gemma4:e4b")
+PLAN_TIMEOUT = float(os.environ.get("MF_PLAN_TIMEOUT", "150"))
+# Cloud planning (Settings -> Cloud LLM). Key never leaves the backend.
+CLOUD_PLAN_MODEL = os.environ.get("MF_CLOUD_PLAN_MODEL", "deepseek/deepseek-v4.1-flash")
+CLOUD_PLAN_TIMEOUT = float(os.environ.get("MF_CLOUD_PLAN_TIMEOUT", "60"))
+CLOUD_PLAN_REASONING = os.environ.get("MF_CLOUD_PLAN_REASONING", "false").lower() in ("1", "true", "yes")
+OPENROUTER_KEY_FILE = os.environ.get("MF_OPENROUTER_KEY_FILE", str(Path.home() / ".openrouter-key"))
+# Cloud captions: qwen3-vl-32b reads on-screen text and names concrete objects,
+# at ~3 s and ~$0.00008 per frame (benchmarked 2026-09-17 against deepseek
+# vision, gemini 3.8/3.1-lite, glm-5.3 and claude haiku 4.5).
+CLOUD_CAPTION_MODEL = os.environ.get("MF_CLOUD_CAPTION_MODEL", "qwen/qwen3-vl-32b-instruct")
+CLOUD_CAPTION_TIMEOUT = float(os.environ.get("MF_CLOUD_CAPTION_TIMEOUT", "60"))
 # Alias used by app/ai/captions.py (kept in sync with OLLAMA_HOST).
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", OLLAMA_HOST)
 
@@ -104,7 +123,7 @@ WHISPER_COMPUTE = os.environ.get("MF_WHISPER_COMPUTE", "int8")
 FACE_MODEL = os.environ.get("MF_FACE_MODEL", "buffalo_sc")
 
 # Resolve scripting module (Linux install path)
-RESOLVE_MODULE_DIR = "/opt/resolve/apis/Scripting/Module"
+RESOLVE_MODULE_DIR = os.environ.get("RESOLVE_MODULE_DIR", "/opt/resolve/Developer/Scripting/Modules")
 RESOLVE_LIBS_DIR = "/opt/resolve/libs"
 
 # Render defaults

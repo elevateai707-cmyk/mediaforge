@@ -9,3 +9,9 @@ models/
 __pycache__/
 *.pyc
 .env
+
+# editor backups
+*.bak
+
+# Per-job working dirs (sources, renders, contact sheets) — large media, never committed.
+jobs/

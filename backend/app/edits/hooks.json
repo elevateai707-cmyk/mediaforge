@@ -1,0 +1,176 @@
+{
+  "version": 2,
+  "about": "Abstract planning components only. Replace bracketed placeholders with original wording and evidence before rendering. Source recordings are analysis-only.",
+  "hooks": [
+    {
+      "id": "contrast",
+      "name": "Contrast planning components",
+      "pattern": "Common advice vs the part nobody talks about",
+      "when_to_use": "Advice or how-to content where the real insight contradicts the popular line. Strong opener for talking-head clips.",
+      "lines": [
+        "*{common_advice}*",
+        "{hidden_part}"
+      ],
+      "slots": {
+        "common_advice": {
+          "label": "The popular advice",
+          "default": "[common advice]"
+        },
+        "hidden_part": {
+          "label": "What it leaves out",
+          "default": "[hidden part]"
+        }
+      },
+      "style": "hook-caption",
+      "duration": 3.0,
+      "stagger": 0.55,
+      "y": 0.3,
+      "insert": {
+        "at": 1.3,
+        "duration": 0.5,
+        "recommended": false,
+        "note": "Optional original or appropriately licensed production cutaway. Never use analysis-only reference footage."
+      }
+    },
+    {
+      "id": "quiet-chapter",
+      "name": "Quiet Chapter planning components",
+      "pattern": "Relatable, emotional: name the unglamorous stretch of a pursuit",
+      "when_to_use": "Founder / creator / tradesperson journey content; pairs with slow, reflective b-roll or a selfie.",
+      "lines": [
+        "*{quiet_part}*",
+        "{pursuit}"
+      ],
+      "slots": {
+        "quiet_part": {
+          "label": "The unglamorous stretch",
+          "default": "[quiet part]"
+        },
+        "pursuit": {
+          "label": "The pursuit",
+          "default": "[pursuit]"
+        }
+      },
+      "style": "hook-caption",
+      "duration": 3.0,
+      "stagger": 0.45,
+      "y": 0.3,
+      "insert": {
+        "at": 1.3,
+        "duration": 0.5,
+        "recommended": false,
+        "note": "Optional original or appropriately licensed production cutaway. Never use analysis-only reference footage."
+      }
+    },
+    {
+      "id": "straight-talk",
+      "name": "Straight Talk planning components",
+      "pattern": "Promise honesty, then name the topic",
+      "when_to_use": "Myth-busting, pricing, reality-check content; lets the topic land as the second beat.",
+      "lines": [
+        "*{topic}*"
+      ],
+      "slots": {
+        "topic": {
+          "label": "The topic",
+          "default": "[topic]"
+        }
+      },
+      "style": "hook-caption",
+      "duration": 2.6,
+      "stagger": 0.5,
+      "y": 0.3,
+      "insert": {
+        "at": 1.3,
+        "duration": 0.5,
+        "recommended": false,
+        "note": "Optional original or appropriately licensed production cutaway. Never use analysis-only reference footage."
+      }
+    },
+    {
+      "id": "explained-fast",
+      "name": "Explained Fast planning components",
+      "pattern": "[Topic] explained in N seconds",
+      "when_to_use": "Educational clips and carousels-turned-video; the number sets a promise the video must keep.",
+      "lines": [
+        "*{topic}*",
+        "{seconds}"
+      ],
+      "slots": {
+        "topic": {
+          "label": "The topic",
+          "default": "[topic]"
+        },
+        "seconds": {
+          "label": "Seconds promised",
+          "default": "[seconds]"
+        }
+      },
+      "style": "hook-caption",
+      "duration": 2.8,
+      "stagger": 0.4,
+      "y": 0.3,
+      "insert": {
+        "at": 1.3,
+        "duration": 0.5,
+        "recommended": false,
+        "note": "Optional original or appropriately licensed production cutaway. Never use analysis-only reference footage."
+      }
+    },
+    {
+      "id": "self-roast",
+      "name": "Self Roast planning components",
+      "pattern": "I do X for a living and still fail at Y",
+      "when_to_use": "Personality-led content; disarming humour that buys attention for the lesson that follows.",
+      "lines": [
+        "*{skill}*",
+        "{slip_up}"
+      ],
+      "slots": {
+        "skill": {
+          "label": "What you teach",
+          "default": "[skill]"
+        },
+        "slip_up": {
+          "label": "The ironic slip",
+          "default": "[slip up]"
+        }
+      },
+      "style": "hook-caption",
+      "duration": 3.0,
+      "stagger": 0.6,
+      "y": 0.3,
+      "insert": {
+        "at": 1.3,
+        "duration": 0.5,
+        "recommended": false,
+        "note": "Optional original or appropriately licensed production cutaway. Never use analysis-only reference footage."
+      }
+    },
+    {
+      "id": "pattern-interrupt",
+      "name": "Pattern Interrupt planning components",
+      "pattern": "Trend observation + a sudden cutaway image",
+      "when_to_use": "Trend or industry commentary. The cutaway (meme, screenshot, b-roll still) breaks the pattern around 1.2s to re-grab attention.",
+      "lines": [
+        "*{pattern}*"
+      ],
+      "slots": {
+        "pattern": {
+          "label": "The pattern",
+          "default": "[pattern]"
+        }
+      },
+      "style": "hook-caption",
+      "duration": 3.2,
+      "stagger": 0.55,
+      "y": 0.3,
+      "insert": {
+        "at": 1.2,
+        "duration": 0.55,
+        "note": "Optional original or appropriately licensed production cutaway. Never use analysis-only reference footage.",
+        "recommended": true
+      }
+    }
+  ]
+}

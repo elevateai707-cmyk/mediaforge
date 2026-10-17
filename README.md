@@ -1,5 +1,8 @@
 # MediaForge
 
+**Shared Creator/editor update (2.1):** see [keeping installations in sync](docs/INSTALL_SYNC.md) and [creative profile and styles](docs/CREATIVE_PROFILE.md). The Library supports repeat uploads; Settings saves watched folders. Compare the source fingerprint in Settings on both machines.
+
+
 Local-first AI media scanner, tagger, search and editor for Ubuntu 24.04.
 Point it at your photo/video folders; it indexes everything with local AI
 models (no cloud), lets you search by content, face, and spoken words, then
@@ -135,19 +138,13 @@ Edmonton / 9:16 / 30s and return only Edmonton clips.
 - **Setup left a stale pid** — run.sh removes dead pid files in
   `/tmp/mediaforge_*.pid` automatically.
 
-## Security note
+## Local access and optional cloud services
 
-MediaForge is **local-first**: everything runs on this machine, nothing
-leaves it unless you export files yourself. `run.sh` binds the backend to
-`0.0.0.0:8420` so you can browse from your phone/tablet on the LAN — that
-means anyone on your network can reach the API and read indexed content. If
-you are on an untrusted network, either browse only via
-`http://localhost:8420`, or firewall the port:
+The launcher binds to `127.0.0.1:8420`. Requests also pass local Host/Origin
+checks. Open localhost on the same computer, or use an authenticated SSH tunnel.
+Do not expose this local app directly to the internet.
 
-```bash
-sudo ufw allow 8420/tcp     # only if you want LAN access
-sudo ufw deny 8420/tcp      # revert to localhost-only
-```
-
-There is no auth layer yet — treat 0.0.0.0 exposure as deliberate and
-bounded to trusted networks.
+Local editing does not require cloud services. When cloud AI or generation is
+enabled, the selected provider receives the relevant text, sampled images or
+media and may charge usage. Provider keys stay on the backend. Library uploads
+copy files into the computer running MediaForge; they do not publish them.
