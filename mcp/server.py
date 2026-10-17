@@ -14,6 +14,9 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 BASE = os.environ.get("MEDIAFORGE_URL", "http://100.104.197.107:8420").rstrip("/")
+# Optional shared token for MediaForge deployments that enable API auth.  It is
+# deliberately only ever sent in an HTTP header, never in a URL or an error.
+API_TOKEN = os.environ.get("MF_API_TOKEN", "")
 # Plan creation can call an LLM, so allow a long read timeout.
 TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
@@ -23,9 +26,10 @@ mcp = FastMCP("mediaforge")
 async def _call(method: str, path: str, params: dict | None = None, body: Any = None) -> Any:
     """Call the API; raise RuntimeError with the server's message on any failure."""
     params = {k: v for k, v in (params or {}).items() if v is not None}
+    headers = {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else None
     try:
         async with httpx.AsyncClient(base_url=BASE, timeout=TIMEOUT) as c:
-            r = await c.request(method, path, params=params, json=body)
+            r = await c.request(method, path, params=params, json=body, headers=headers)
     except httpx.HTTPError as e:
         raise RuntimeError(f"MediaForge unreachable at {BASE}: {type(e).__name__}: {e}") from e
     if r.status_code >= 400:
@@ -126,22 +130,56 @@ async def mf_get_asset(asset_id: int, include_transcript: bool = False, include_
 
 @mcp.tool()
 async def mf_get_captions(
-    asset_id: int,
+    asset_id: Optional[int] = None,
     style: Literal["standard", "social_vertical", "accessibility"] = "standard",
+    plan_id: Optional[str] = None,
 ) -> Any:
-    """Get generated caption cues and QC for a transcript-bearing asset.
+    """Get generated caption cues, QC, and editable word timings for an asset.
 
     Calls GET /api/assets/{id}/captions and adds downloadable SRT, VTT, and ASS URLs
     for the selected style. Review the returned QC issues and limitations before using
     captions in a finished deliverable.
     """
+    if (asset_id is None) == (plan_id is None):
+        raise RuntimeError("provide exactly one of asset_id or plan_id")
+    if plan_id is not None:
+        return await _call("GET", f"/api/edits/plan/{quote(plan_id, safe='')}/caption-words")
     encoded_id = quote(str(asset_id), safe="")
     captions = await _call("GET", f"/api/assets/{encoded_id}/captions", {"style": style})
+    # Cue styling is useful for review, but edits must use the source word
+    # timings rather than reconstructing words from formatted cues.
+    caption_words = await _call("GET", f"/api/assets/{encoded_id}/caption-words")
+    captions["caption_words"] = caption_words
+    captions["words"] = caption_words.get("words", []) if isinstance(caption_words, dict) else []
     captions["downloads"] = {
         fmt: f"{BASE}/api/assets/{encoded_id}/captions/{fmt}?style={style}"
         for fmt in ("srt", "vtt", "ass")
     }
     return captions
+
+
+@mcp.tool()
+async def mf_update_captions(asset_id: Optional[int] = None, words: Optional[list[dict]] = None,
+                             plan_id: Optional[str] = None) -> Any:
+    """Replace reviewed caption words for one asset or story plan (PUT caption-words).
+    Provide exactly one source. Words are server-validated and must preserve usable timing."""
+    if (asset_id is None) == (plan_id is None):
+        raise RuntimeError("provide exactly one of asset_id or plan_id")
+    path = (f"/api/edits/plan/{quote(plan_id, safe='')}/caption-words" if plan_id is not None
+            else f"/api/assets/{asset_id}/caption-words")
+    return await _call("PUT", path, body={"words": words})
+
+
+@mcp.tool()
+async def mf_caption_qc(asset_id: Optional[int] = None,
+                        style: Literal["standard", "social_vertical", "accessibility"] = "standard",
+                        plan_id: Optional[str] = None) -> Any:
+    """Return caption review data. Asset results include server cue QC; story plans return
+    their editable word timings for review because their captions are generated from the plan."""
+    if plan_id is not None:
+        return await mf_get_captions(asset_id, style, plan_id)
+    captions = await mf_get_captions(asset_id, style, None)
+    return {"qc": captions.get("qc"), "limitations": captions.get("limitations", [])}
 
 
 @mcp.tool()
@@ -282,6 +320,39 @@ async def mf_update_edit_plan(plan_id: str, clips: list[dict]) -> Any:
 
 
 @mcp.tool()
+async def mf_plan_versions(plan_id: str) -> Any:
+    """List saved review revisions for an edit plan (GET /api/edits/plan/{id}/versions)."""
+    return await _call("GET", f"/api/edits/plan/{quote(plan_id, safe='')}/versions")
+
+
+@mcp.tool()
+async def mf_restore_plan(plan_id: str, version_id: str) -> Any:
+    """Restore an edit-plan revision into a new draft state (POST .../restore)."""
+    return await _call("POST", f"/api/edits/plan/{quote(plan_id, safe='')}/versions/{quote(str(version_id), safe='')}/restore")
+
+
+@mcp.tool()
+async def mf_swap_broll(plan_id: str, beat_index: int, asset_id: int) -> Any:
+    """Swap a story beat's B-roll while preserving its voiceover duration
+    (POST /api/edits/plan/{id}/swap-broll)."""
+    return await _call("POST", f"/api/edits/plan/{quote(plan_id, safe='')}/swap-broll",
+                       body={"beat_index": beat_index, "asset_id": asset_id})
+
+
+@mcp.tool()
+async def mf_tighten(asset_id: Optional[int] = None, plan_id: Optional[str] = None,
+                     silence_db: float = -35, min_silence_s: float = .4,
+                     remove_fillers: bool = True, padding_s: float = .08) -> Any:
+    """Create a new draft plan that removes detected silence and verified Whisper fillers.
+    Exactly one of asset_id or plan_id is required; source media remains unchanged."""
+    return await _call("POST", "/api/edits/tighten", body={
+        "asset_id": asset_id, "plan_id": plan_id, "silence_db": silence_db,
+        "min_silence_s": min_silence_s, "remove_fillers": remove_fillers,
+        "padding_s": padding_s,
+    })
+
+
+@mcp.tool()
 async def mf_approve_edit_plan(plan_id: str) -> Any:
     """Approve a plan (POST /api/edits/plan/{id}/approve). Required before render/export."""
     return await _call("POST", f"/api/edits/plan/{plan_id}/approve")
@@ -303,19 +374,27 @@ async def mf_render(
     height: Optional[int] = None,
     caption_style: Optional[Literal["kinetic", "classic"]] = None,
     effects: bool = True,
+    presets: list[str] | None = None,
+    reframe: str = "smart",
+    safe_zones: dict | None = None,
+    guide_overlay: bool = False,
+    music: Optional[str] = None,
 ) -> Any:
     """Start a render job for an approved plan (POST /api/render). Returns a job id;
     poll with mf_render_status. Leave ratio/width/height unset for the default: a story plan
     renders in its own ratio (1920x1080 for 16:9), other plans 9:16 at 1080x1920. If you set
     them, keep ratio and width/height consistent (e.g. 16:9 with 1920x1080).
-    music_path is a server-side file path (see the API's /api/music).
+    music_path is a server-side file path (see the API's /api/music). Leave music unset
+    to preserve the existing no-music behavior; pass music="auto" only to select a track.
     Story plans only: caption_style "kinetic" (default; one word at a time, gradient glitch
     emphasis words, from the user's kinetic caption style) or "classic" (lower-third SRT).
     effects (kinetic only, default true) adds a warm grade, slow push-in on each clip and RGB
     glitch cuts at beat boundaries. Both are ignored for non-story plans."""
     return await _call("POST", "/api/render", body=dict(
         plan_id=plan_id, ratio=ratio, music_path=music_path, captions=captions,
-        width=width, height=height, caption_style=caption_style, effects=effects))
+        width=width, height=height, caption_style=caption_style, effects=effects,
+        presets=presets, reframe=reframe, safe_zones=safe_zones,
+        guide_overlay=guide_overlay, music=music))
 
 
 @mcp.tool()
@@ -375,6 +454,24 @@ async def mf_import(path: str, copy: bool = True) -> Any:
             if "already inside the library" not in msg and "not a directory" not in msg:
                 raise
     return await _call("POST", "/api/scan", body={"paths": [path]})
+
+
+@mcp.tool()
+async def mf_list_pending_imports() -> Any:
+    """List removable-media imports awaiting explicit approval (GET /api/import/pending)."""
+    return await _call("GET", "/api/import/pending")
+
+
+@mcp.tool()
+async def mf_approve_import(import_id: str) -> Any:
+    """Approve one previously listed removable-media import (POST /api/import/pending/{id}/approve)."""
+    return await _call("POST", f"/api/import/pending/{quote(import_id, safe='')}/approve")
+
+
+@mcp.tool()
+async def mf_list_music() -> Any:
+    """List local music tracks and their lightweight analysis (GET /api/music)."""
+    return await _call("GET", "/api/music")
 
 
 @mcp.tool()
