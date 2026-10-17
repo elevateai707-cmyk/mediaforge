@@ -32,7 +32,7 @@ from . import auth, config, fsutil, models, persist, policy, schemas, touchup, t
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, package, plan_history, planner, render, resolve_export, story
+from .edits import capcut_export, edl_export, fcpxml_export, broll, package, plan_history, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
@@ -1000,6 +1000,30 @@ async def create_story(req: schemas.StoryRequest):
     job_id = jobs.run("story", _runner)
     ns["job_id"] = job_id
     return schemas.StoryJobOut(job_id=job_id)
+
+
+@app.post("/api/edits/broll", response_model=schemas.PlanOut)
+async def create_broll(req: schemas.BrollPlanRequest):
+    """Music-led drone B-roll plan: cuts on downbeats, whole bars, optional kinetic text line,
+    hook and brand end card. Fast (no TTS), so it returns the draft plan directly."""
+    flt = req.broll_filter.model_dump() if req.broll_filter else None
+    try:
+        return await asyncio.to_thread(
+            broll.create_broll_plan, music_path=req.music_path, music_start=req.music_start,
+            target_seconds=req.target_seconds, bars_per_cut=req.bars_per_cut,
+            text_line=req.text_line, brand=req.brand, broll_filter=flt, silent=req.silent,
+            asset_ids=req.asset_ids, hook_text=req.hook_text, ratio=req.ratio,
+            title=req.title, seed=req.seed)
+    except broll.BrollError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/edits/{plan_id}/broll")
+def get_plan_broll(plan_id: str):
+    data = broll.get_broll(plan_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"no B-roll sidecar for plan {plan_id!r}")
+    return data
 
 
 @app.get("/api/edits/{plan_id}/story")

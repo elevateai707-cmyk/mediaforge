@@ -196,6 +196,7 @@ class PlanOut(BaseModel):
     parsed_intent: Optional[dict[str, Any]] = None
     match_stats: Optional[dict[str, Any]] = None
     story: Optional[dict[str, Any]] = None
+    broll: Optional[dict[str, Any]] = None
 
 
 class BrollFilter(BaseModel):
@@ -224,6 +225,22 @@ class StoryRequest(BaseModel):
     beat_hints: Optional[list[str]] = Field(default=None, max_length=200)
     hook_text: Optional[str] = Field(default=None, max_length=90)
     brand: Optional[str] = Field(default=None, max_length=40)
+
+
+class BrollPlanRequest(BaseModel):
+    music_path: Optional[str] = Field(default=None, max_length=1024)
+    music_start: Optional[float] = Field(default=None, ge=0, le=36000)
+    target_seconds: float = Field(default=12.0, ge=4, le=90)
+    bars_per_cut: Literal[1, 2] = 1
+    text_line: str = Field(default="", max_length=90)
+    hook_text: Optional[str] = Field(default=None, max_length=90)
+    brand: Optional[str] = Field(default=None, max_length=40)
+    broll_filter: Optional[BrollFilter] = None
+    silent: bool = False
+    asset_ids: Optional[list[int]] = Field(default=None, max_length=5000)
+    ratio: Literal["9:16", "16:9", "4:5", "1:1"] = "9:16"
+    title: Optional[str] = Field(default=None, max_length=120)
+    seed: Optional[int] = None
 
 
 class StoryJobOut(BaseModel):

@@ -554,9 +554,15 @@ def _plan_dict(plan: models.EditPlan) -> dict:
         story = story_summary(plan.id) if extra.get("story") else None
     except Exception:  # noqa: BLE001 - story info is optional decoration
         story = None
+    try:
+        from .broll import broll_summary
+        broll = broll_summary(plan.id) if extra.get("broll") else None
+    except Exception:  # noqa: BLE001 - optional decoration
+        broll = None
     return {
         "plan_id": plan.id,
         "story": story,
+        "broll": broll,
         "status": plan.status,
         "summary": plan.summary,
         "clips": [_clip_dict(c) for c in plan.clips],

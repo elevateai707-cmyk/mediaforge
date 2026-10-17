@@ -142,3 +142,34 @@ lockfile has one high `source-map-js` advisory, GHSA-68fv-2mgg-jv7q (<1.2.2).
 A targeted 1.2.2 update was tested and cleared npm audit, then reverted to respect
 the no-auto-upgrade instruction. `pip-audit` and `syft` were not installed, so
 backend vulnerability auditing and SBOM generation are explicitly incomplete.
+
+## Content batch additions (`g15/content-batch`)
+
+Everything here is local rendering; the only paid call remains the existing
+consent-gated ElevenLabs story narration.
+
+- **B-roll source control** — `POST /api/edits/story` and `mf_create_story_plan` accept
+  `broll_filter` `{path_prefixes, require_aerial, exclude_faces, min_aesthetic, asset_ids,
+  exclude_asset_ids}` and `beat_hints` (one search query per beat). The filter limits the
+  candidate pool; search only ranks inside it. Drone footage is under
+  `/srv/iris/media/library/blue-drone-1o1/`. `GET /api/assets?path_prefix=` lists by folder.
+- **Beat maps** — `scripts/beatmap.py <files|dirs>` writes `<music dir>/.beats/<file>.json`
+  (librosa is optional and only needed by that script; use a separate venv, see its docstring).
+  The runtime only reads the JSON (`edits/beatmap.py`). A track without a map renders as before.
+- **Beat-synced story renders** — with a mapped track, `music_start` (default: best section on a
+  downbeat) positions the music, each internal cut moves onto the nearest beat within
+  +/-150 ms by adjusting neighbouring clip in/out points (timeline length and voice never
+  move), glitch flashes land on the downbeat nearest each beat boundary (within 0.75 s), and
+  music fades over the last 0.6 s. `music_start` is also on `POST /api/render` / `mf_render`.
+- **Music-led B-roll** — `POST /api/edits/broll` / `mf_create_broll_plan` (see its docstring):
+  cuts on downbeats, whole bars, drop clip, kinetic `text_line` on bar 2, optional `hook_text` and
+  `brand`, `silent=true` for a 1.6 s cadence with a silent AAC track. The plan's sidecar lives in
+  `exports/broll/<plan_id>/broll.json`; render reads music/start from it, ends with a 0.5 s fade,
+  and refuses plans whose clips no longer add up to the music timeline.
+- **Hook and brand end card** — `hook_text` (<= 90 chars): gradient glitch-in headline 0-1.4 s in
+  the upper safe zone (emphasis words that would start earlier fall back to body captions).
+  `brand`: ids in `config/brands.yaml`; a 1.8 s card (frozen blurred+darkened last frame, brand
+  name, CTA, url/handle) is appended at render time; voiceover/captions finish before it and the
+  music continues. Hook and card only appear in the kinetic style, and are not part of
+  exported NLE/caption packages.
+- Kinetic body captions are 5.5% of the (safe-zone) frame height on portrait output.

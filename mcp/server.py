@@ -294,6 +294,46 @@ async def mf_create_story_plan(
 
 
 @mcp.tool()
+async def mf_create_broll_plan(
+    music_path: Optional[str] = None,
+    music_start: Optional[float] = None,
+    target_seconds: float = 12.0,
+    bars_per_cut: Literal[1, 2] = 1,
+    text_line: str = "",
+    brand: Optional[str] = None,
+    broll_filter: Optional[dict] = None,
+    silent: bool = False,
+    asset_ids: Optional[list[int]] = None,
+    hook_text: Optional[str] = None,
+    ratio: Literal["9:16", "16:9", "4:5", "1:1"] = "9:16",
+    title: Optional[str] = None,
+    seed: Optional[int] = None,
+) -> Any:
+    """Music-led drone B-roll plan (POST /api/edits/broll): no narration, no paid calls.
+    Cuts land exactly on the music's downbeats (needs a beat map in <music dir>/.beats/, made by
+    scripts/beatmap.py); the length is the whole number of bars nearest target_seconds
+    (bars_per_cut 1 or 2 bars per shot). music_path omitted = a random mapped track from the
+    music folder (seed makes it repeatable); music_start omitted = the track's best section,
+    moved onto a downbeat. If the track's drop falls inside the window, the highest-aesthetic
+    clip starts on it. Clips are never reused while unused ones exist, are >= 2 s long and start
+    >= 1 s in (no takeoff wobble). text_line is a kinetic one-word-per-beat caption appearing on
+    the downbeat of bar 2 (mark emphasis with *asterisks*); hook_text is a 0-1.4 s gradient
+    headline; brand ("albertaweb" / "buildwithdb", config/brands.yaml) adds a 1.8 s end card.
+    broll_filter = {path_prefixes, require_aerial, exclude_faces, min_aesthetic, asset_ids,
+    exclude_asset_ids} picks the footage (drone library: /srv/iris/media/library/blue-drone-1o1/);
+    asset_ids also sets priority order. silent=true skips music: a cut every ~1.6 s, length =
+    target_seconds, and the render carries a silent AAC track for platform compatibility.
+    Returns the draft plan (with a `broll` summary). Workflow: review -> mf_approve_edit_plan ->
+    mf_render(plan_id) (the plan's own ratio and music are used; captions/effects/reframe options
+    apply as for story renders) -> repeat with different music_path/seed/footage for a batch."""
+    return await _call("POST", "/api/edits/broll", body={
+        "music_path": music_path, "music_start": music_start, "target_seconds": target_seconds,
+        "bars_per_cut": bars_per_cut, "text_line": text_line, "brand": brand,
+        "broll_filter": broll_filter, "silent": silent, "asset_ids": asset_ids,
+        "hook_text": hook_text, "ratio": ratio, "title": title, "seed": seed})
+
+
+@mcp.tool()
 async def mf_get_story(plan_id: str) -> Any:
     """Get a story plan's sidecar (GET /api/edits/{id}/story): beats with text, audio
     durations, word timings and chosen clips, voice_id, voiceover/SRT paths."""

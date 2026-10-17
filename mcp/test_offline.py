@@ -124,6 +124,30 @@ class MediaForgeMcpOfflineTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["guide_overlay"])
         self.assertEqual(body["music"], "auto")
 
+    async def test_broll_and_story_content_batch_tools(self):
+        self.fake_call([{"plan_id": "b1"}, {"job_id": "s1"}, {"status": "done", "meta": {"plan_id": "s"}},
+                        {"plan_id": "s"}])
+        await server.mf_create_broll_plan(music_path="/m/a.mp3", target_seconds=16, bars_per_cut=2,
+                                          text_line="Build *more*", brand="albertaweb",
+                                          broll_filter={"path_prefixes": ["/srv/x/"]}, seed=3)
+        method, path, _p, body = self.calls[0]
+        self.assertEqual((method, path), ("POST", "/api/edits/broll"))
+        self.assertEqual(body["bars_per_cut"], 2)
+        self.assertEqual(body["broll_filter"], {"path_prefixes": ["/srv/x/"]})
+        self.assertEqual((body["silent"], body["ratio"], body["seed"]), (False, "9:16", 3))
+        await server.mf_create_story_plan(
+            "Hello world.", cloud_approved=True, voice_consent=True,
+            broll_filter={"require_aerial": True, "exclude_faces": True}, beat_hints=["aerial city"],
+            hook_text="Stop scrolling", brand="buildwithdb")
+        body = self.calls[1][3]
+        self.assertEqual(body["beat_hints"], ["aerial city"])
+        self.assertEqual((body["hook_text"], body["brand"]), ("Stop scrolling", "buildwithdb"))
+        self.assertTrue(body["broll_filter"]["exclude_faces"])
+        self.calls.clear()
+        self.fake_call([{"job_id": "r"}])
+        await server.mf_render("p", music_start=12.5)
+        self.assertEqual(self.calls[0][3]["music_start"], 12.5)
+
     async def test_render_legacy_default_does_not_enable_auto_music(self):
         self.fake_call([{"job_id": "render-legacy"}])
         await server.mf_render("plan-1")

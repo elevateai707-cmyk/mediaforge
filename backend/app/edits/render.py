@@ -284,10 +284,29 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             planner.validate_story_sync(plan, story)
         except ValueError as exc:
             raise RenderError(str(exc)) from None
+    # Music-led B-roll plans carry their own sidecar (music, text, brand).
+    from . import broll as broll_mod
+    try:
+        broll_marked = bool(json.loads(plan.parsed_json or "{}").get("broll"))
+    except (TypeError, json.JSONDecodeError):
+        broll_marked = False
+    broll = None if story else broll_mod.get_broll(plan_id)
+    if broll_marked and broll is None:
+        raise RenderError(f"B-roll sidecar missing or invalid for plan {plan_id!r}")
+    if broll is not None:
+        drift = abs(sum(float(c.end) - float(c.start) for c, _a in resolved)
+                    - float(broll["duration"]))
+        if drift > 0.05:
+            raise RenderError("B-roll clips no longer match the music timeline; create a new plan")
+        if broll.get("music") and not broll.get("silent"):
+            music_path = broll["music"]["path"]
+            music_start = broll["music"]["start"]
+        else:
+            music_path, music_start = None, None
 
     if ratio is None:
-        ratio = (story or {}).get("ratio") or "9:16"
-        if width is None and height is None and ratio == "16:9" and story:
+        ratio = (story or broll or {}).get("ratio") or "9:16"
+        if width is None and height is None and ratio == "16:9" and (story or broll):
             width = 1920
     width = 1080 if width is None else width
     height = 1920 if height is None else height
@@ -317,8 +336,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     srt_path = story.get("srt") if story else None
     if srt_path and not Path(srt_path).is_file():
         srt_path = None
-    is_story = bool(voiceover)
-    style = (caption_style or (story or {}).get("caption_style") or "kinetic") \
+    is_broll = broll is not None
+    is_story = bool(voiceover) or is_broll
+    style = (caption_style or (story or broll or {}).get("caption_style") or "kinetic") \
         if is_story else "classic"
     is_kinetic = is_story and style == "kinetic"
     kinetic_zones = reframe_mod.normalize_safe_zones(safe_zones) if height > width else None
@@ -326,7 +346,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     kin_dir = config.RENDER_TMP_DIR / f"emph_{plan_id}"
     overlays: list[dict] = []      # PNG sequences / images composited by ffmpeg
     ass_file: Optional[Path] = None
-    side = story or {}
+    side = story or broll or {}
     hook_text = side.get("hook_text") if is_kinetic else None
     brand = side.get("brand") if is_kinetic else None
     card_s = brands_mod.END_CARD_SECONDS if brand else 0.0
@@ -375,7 +395,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     # first start and last end never move, so the timeline length and the
     # voiceover alignment are unchanged.
     music_ss: Optional[float] = music_start
-    beat_bm = beatmap_mod.load(music_path) if (is_story and music_path) else None
+    beat_bm = beatmap_mod.load(music_path) if (is_story and not is_broll and music_path) else None
     snap_info: Optional[dict] = None
     if beat_bm is not None:
         if music_ss is None:
@@ -411,7 +431,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             overlays.append({"info": info, "start": 0.0, "end": hook_end})
         layout: list[dict] = []
         if captions:
-            events = kinetic.plan_events(side.get("beats") or [], hook_end=hook_end)
+            events = kinetic.plan_events(
+                (side.get("caption_beats") if is_broll else side.get("beats")) or [],
+                hook_end=hook_end)
             for k, ev in enumerate(events["emphasis"]):
                 info = kinetic.render_emphasis_images(ev["text"], width, height, kin_dir,
                                                       f"e{k}", seed=k, safe_zones=kinetic_zones)
@@ -460,7 +482,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             cmd += ["-f", "lavfi", "-t", f"{pc['dur']:.3f}",
                     "-i", "anullsrc=r=48000:cl=stereo"]
     voice_idx: Optional[int] = None
-    if is_story:
+    if voiceover:
         voice_idx = cmd.count("-i")
         cmd += ["-i", voiceover]
     emph_idx0 = cmd.count("-i")
@@ -470,6 +492,10 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         else:
             cmd += ["-loop", "1", "-framerate", str(config.RENDER_FPS),
                     "-t", f"{o['end'] - o['start']:.3f}", "-i", o["image"]]
+    silent_idx: Optional[int] = None
+    if is_broll and not music_path:
+        silent_idx = cmd.count("-i")
+        cmd += ["-f", "lavfi", "-t", f"{timeline_total:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
     if music_path:
         if not Path(music_path).exists():
             raise RenderError(f"music file not found: {music_path}")
@@ -574,12 +600,12 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         alabels.append(alabel)
 
     if is_story:
-        input_index += 1 + len(overlays)  # voiceover + overlay inputs
+        input_index += (1 if voiceover else 0) + len(overlays)  # voiceover + overlay inputs
     # Music input (last input index).
     music_label: Optional[str] = None
     if music_path:
         music_label = f"m{input_index}"
-        fade_duration = min(0.6 if is_story else 1.0, max(0.05, timeline_total))
+        fade_duration = min((0.5 if is_broll else 0.6) if is_story else 1.0, max(0.05, timeline_total))
         fade_start = max(0.0, timeline_total - fade_duration)
         filters.append(
             f"[{input_index}:a]aresample=48000,atrim=end={timeline_total:.3f},"
@@ -617,7 +643,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     # samples), so each pre-trimmed clip is independently faded and delayed
     # to its video start before a single sample-rate-normalized mix.
     aout = alabels[0]
-    if is_story:
+    if is_broll:
+        pass  # no voice: music (or silence) is the whole soundtrack, built below
+    elif is_story:
         filters.append(f"[{voice_idx}:a]aresample=48000"
                        + (f",apad=whole_dur={timeline_total:.3f}" if card_s else "") + "[amix]")
     elif n > 1:
@@ -668,7 +696,12 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     else:
         filters.append(f"[{alabels[0]}]anull[amix]")
 
-    if music_path:
+    if is_broll:
+        if music_path:
+            filters.append(f"[{music_label}]loudnorm=I=-14:TP=-1.5:LRA=11[afinal]")
+        else:
+            filters.append(f"[{silent_idx}:a]aresample=48000[afinal]")
+    elif music_path:
         # Duck the music under the voice track, then mix. The voice feeds both
         # the sidechain and the mix, so it must be split (a filter label can
         # only be consumed once).
@@ -685,7 +718,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             f"[amix]loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
 
     # Final loudnorm when music is present (after mixing).
-    if music_path:
+    if is_broll:
+        amap = "afinal"
+    elif music_path:
         filters.append("[aout]loudnorm=I=-14:TP=-1.5:LRA=11[afinal]")
         amap = "afinal"
     else:
@@ -706,7 +741,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         if fx:
             _chain("eq=contrast=1.08:saturation=1.15,"
                    "colorbalance=rs=0.03:bs=-0.03:rm=0.02:bm=-0.02", "vgrade")
-            starts = [float(b["start"]) for b in (story.get("beats") or [])[1:]]
+            starts = [float(b["start"]) for b in (story.get("beats") or [])[1:]] if story else []
             if snap_info is not None:
                 cuts, snapped = snap_info["cuts"], snap_info["snapped"]
                 downs = beatmap_mod.rel(beat_bm.downbeats, music_ss, timeline)
@@ -745,9 +780,10 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             fd = f":fontsdir='{_escape_filter_path(str(kinetic.FONTS_DIR))}'" \
                 if kinetic.fonts_available() else ""
             _chain(f"ass=filename='{_escape_filter_path(str(ass_file))}'{fd}", "vass")
+        if is_broll and broll.get("fade_out_s"):
+            fade = min(float(broll["fade_out_s"]), timeline_total)
+            _chain(f"fade=t=out:st={max(0.0, timeline_total - fade):.3f}:d={fade:.3f}", "vfade")
         vmap = cur
-        if cur == "vout":
-            vmap = "vout"
     elif is_story and captions and srt_path:
         fontsize = max(18, height // 28)
         story_zones = reframe_mod.normalize_safe_zones(safe_zones)
