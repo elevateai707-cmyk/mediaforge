@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- System -----------------------------------------------------------------
@@ -198,6 +198,17 @@ class PlanOut(BaseModel):
     story: Optional[dict[str, Any]] = None
 
 
+class BrollFilter(BaseModel):
+    """Restrict which library videos story/B-roll plans may use."""
+    model_config = ConfigDict(extra="forbid")
+    path_prefixes: list[str] = Field(default_factory=list, max_length=20)
+    require_aerial: bool = False
+    exclude_faces: bool = False
+    min_aesthetic: Optional[float] = Field(default=None, ge=0, le=10)
+    asset_ids: list[int] = Field(default_factory=list, max_length=5000)
+    exclude_asset_ids: list[int] = Field(default_factory=list, max_length=5000)
+
+
 class StoryRequest(BaseModel):
     script: str = Field(min_length=1, max_length=50000)
     voice_id: Optional[str] = None
@@ -208,6 +219,11 @@ class StoryRequest(BaseModel):
     cloud_approved: bool = False
     voice_consent: bool = False
     max_characters: int = Field(default=5000, ge=1, le=50000)
+    broll_filter: Optional[BrollFilter] = None
+    # One search query per beat (replaces the beat text when matching footage).
+    beat_hints: Optional[list[str]] = Field(default=None, max_length=200)
+    hook_text: Optional[str] = Field(default=None, max_length=90)
+    brand: Optional[str] = Field(default=None, max_length=40)
 
 
 class StoryJobOut(BaseModel):

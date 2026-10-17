@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import httpx
+from sqlalchemy import or_
 
 from .. import config, models
 from . import kinetic
@@ -292,7 +293,7 @@ def allocate_clips(need: float, candidates: list[dict], used: set[int]) -> list[
     candidate supplies the rest. Mutates ``used``.
     """
     if not candidates:
-        raise StoryError("no video footage in the library matches this story")
+        raise StoryError("no video footage matches this story (check broll_filter / trip_id)")
     fresh = [c for c in candidates if c["asset_id"] not in used]
     order = fresh + [c for c in candidates if c["asset_id"] in used]
     clips: list[dict] = []
@@ -331,9 +332,40 @@ def _default_search(db, q: str, limit: int) -> list[int]:
     return main._hybrid_search(db, q, limit=limit)
 
 
+def filtered_video_assets(db, trip_ids: Optional[set[int]] = None,
+                          broll_filter: Optional[dict] = None) -> dict[int, "models.Asset"]:
+    """Usable video assets (known duration) restricted by trip and ``broll_filter``.
+
+    broll_filter keys (all optional): path_prefixes, require_aerial,
+    exclude_faces, min_aesthetic, asset_ids, exclude_asset_ids. A missing key
+    means "no restriction"; assets with a null aesthetic score fail min_aesthetic.
+    """
+    flt = broll_filter or {}
+    q = db.query(models.Asset).filter(models.Asset.kind == "video",
+                                      models.Asset.duration.isnot(None),
+                                      models.Asset.duration > 0)
+    if trip_ids is not None:
+        q = q.filter(models.Asset.id.in_(trip_ids or {-1}))
+    prefixes = [p for p in (flt.get("path_prefixes") or []) if p]
+    if prefixes:
+        q = q.filter(or_(*[models.Asset.path.startswith(p, autoescape=True) for p in prefixes]))
+    if flt.get("asset_ids"):
+        q = q.filter(models.Asset.id.in_(list(flt["asset_ids"])))
+    if flt.get("exclude_asset_ids"):
+        q = q.filter(~models.Asset.id.in_(list(flt["exclude_asset_ids"])))
+    if flt.get("min_aesthetic") is not None:
+        q = q.filter(models.Asset.aesthetic_score >= float(flt["min_aesthetic"]))
+    if flt.get("exclude_faces"):
+        q = q.filter(~models.Asset.id.in_(db.query(models.FaceDetection.asset_id)))
+    rows = {a.id: a for a in q.all()}
+    if flt.get("require_aerial"):
+        rows = {i: a for i, a in rows.items() if is_aerial(a.path, a.caption)}
+    return rows
+
+
 def beat_candidates(db, text: str, search_fn: Callable, trip_ids: Optional[set[int]],
-                    limit: int = 40) -> list[dict]:
-    """Ranked video candidates for one beat (aerial boosted, trip restricted)."""
+                    limit: int = 40, broll_filter: Optional[dict] = None) -> list[dict]:
+    """Ranked video candidates for one beat (aerial boosted, trip/filter restricted)."""
     try:
         ids = list(search_fn(db, text, limit))
     except Exception as exc:  # noqa: BLE001 - search must never kill the pipeline
@@ -341,12 +373,7 @@ def beat_candidates(db, text: str, search_fn: Callable, trip_ids: Optional[set[i
         ids = []
     scored: dict[int, float] = {aid: 1.0 - i / max(1, limit) for i, aid in enumerate(ids)}
 
-    q = db.query(models.Asset).filter(models.Asset.kind == "video",
-                                      models.Asset.duration.isnot(None),
-                                      models.Asset.duration > 0)
-    if trip_ids is not None:
-        q = q.filter(models.Asset.id.in_(trip_ids or {-1}))
-    rows = {a.id: a for a in q.all()}
+    rows = filtered_video_assets(db, trip_ids, broll_filter)
     # Backfill from the library so a CLIP-less / sparse search still has a pool.
     for a in rows.values():
         scored.setdefault(a.id, 0.0)
@@ -439,8 +466,17 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
                       cloud_approved: bool = False, voice_consent: bool = False,
                       max_characters: int = 5000,
                       progress: Optional[Callable[[float, str], None]] = None,
-                      search_fn: Optional[Callable] = None) -> dict:
-    """Generate narration only after per-job consent and a character cap."""
+                      search_fn: Optional[Callable] = None,
+                      broll_filter: Optional[dict] = None,
+                      beat_hints: Optional[list[str]] = None,
+                      hook_text: Optional[str] = None,
+                      brand: Optional[str] = None) -> dict:
+    """Generate narration only after per-job consent and a character cap.
+
+    ``broll_filter`` restricts B-roll sources, ``beat_hints`` replaces the beat
+    text as the per-beat search query, ``hook_text`` adds a 0-1.4 s headline and
+    ``brand`` an end card (see render.py). All are validated before any paid call.
+    """
     from .. import policy
     from . import planner
 
@@ -448,13 +484,14 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
     approval = policy.story_approval(
         script, selected_voice, cloud_approved=cloud_approved,
         voice_consent=voice_consent, max_characters=max_characters)
+    options = validate_story_options(script, broll_filter, beat_hints, hook_text, brand)
     plan_id = planner._new_plan_id()
     policy.record_story_event(plan_id, "approved", approval)
     try:
         result = _create_story_plan(
             script, voice_id=selected_voice, trip_id=trip_id, ratio=ratio,
             title=title, caption_style=caption_style, progress=progress,
-            search_fn=search_fn, plan_id=plan_id, approval=approval)
+            search_fn=search_fn, plan_id=plan_id, approval=approval, options=options)
     except Exception:
         policy.record_story_event(plan_id, "failed", approval)
         raise
@@ -462,10 +499,68 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
     return result
 
 
+def validate_story_options(script: str, broll_filter: Optional[dict],
+                           beat_hints: Optional[list[str]], hook_text: Optional[str],
+                           brand: Optional[str]) -> dict:
+    """Normalise optional story controls; raises StoryError (HTTP 422) on bad input."""
+    from . import brands
+
+    beats = [b for b in (kinetic.parse_emphasis(x)[0] for x in split_beats(script)) if b]
+    hints = [str(h).strip() for h in (beat_hints or [])]
+    if len(hints) > len(beats):
+        raise StoryError(f"beat_hints has {len(hints)} entries but the script has only {len(beats)} beats")
+    if any(len(h) > 300 for h in hints):
+        raise StoryError("each beat hint must be at most 300 characters")
+    hook = " ".join((hook_text or "").replace("*", " ").split()) or None
+    if hook and len(hook) > 90:
+        raise StoryError("hook_text must be at most 90 characters")
+    try:
+        brand_row = brands.get_brand(brand)
+    except brands.BrandError as exc:
+        raise StoryError(str(exc)) from None
+    return {"broll_filter": clean_broll_filter(broll_filter), "beat_hints": hints,
+            "hook_text": hook, "brand": brand_row}
+
+
+def clean_broll_filter(raw: Optional[dict]) -> Optional[dict]:
+    """Validate a broll_filter mapping; returns None when it restricts nothing."""
+    if not raw:
+        return None
+    if not isinstance(raw, dict):
+        raise StoryError("broll_filter must be an object")
+    known = {"path_prefixes", "require_aerial", "exclude_faces", "min_aesthetic",
+             "asset_ids", "exclude_asset_ids"}
+    extra = set(raw) - known
+    if extra:
+        raise StoryError(f"unknown broll_filter key(s): {', '.join(sorted(extra))}")
+    out: dict[str, Any] = {}
+    prefixes = [str(p).strip() for p in (raw.get("path_prefixes") or []) if str(p).strip()]
+    for p in prefixes:
+        if not p.startswith("/") or ".." in Path(p).parts or len(p) > 1024:
+            raise StoryError("broll_filter.path_prefixes must be absolute paths without '..'")
+    if prefixes:
+        out["path_prefixes"] = prefixes[:20]
+    for key in ("require_aerial", "exclude_faces"):
+        if raw.get(key):
+            out[key] = True
+    if raw.get("min_aesthetic") is not None:
+        try:
+            out["min_aesthetic"] = float(raw["min_aesthetic"])
+        except (TypeError, ValueError):
+            raise StoryError("broll_filter.min_aesthetic must be a number") from None
+    for key in ("asset_ids", "exclude_asset_ids"):
+        if raw.get(key):
+            try:
+                out[key] = sorted({int(i) for i in raw[key]})[:5000]
+            except (TypeError, ValueError):
+                raise StoryError(f"broll_filter.{key} must be a list of integers") from None
+    return out or None
+
+
 def _create_story_plan(script: str, *, voice_id: str, trip_id: Optional[int],
                        ratio: str, title: Optional[str], caption_style: str,
                        progress: Optional[Callable], search_fn: Optional[Callable],
-                       plan_id: str, approval: dict) -> dict:
+                       plan_id: str, approval: dict, options: Optional[dict] = None) -> dict:
     from . import planner
     from ..ingest.trips import trip_asset_ids
 
@@ -529,12 +624,16 @@ def _create_story_plan(script: str, *, voice_id: str, trip_id: Optional[int],
 
     # 3. B-roll
     report(0.75, "matching footage")
+    options = options or {}
+    hints = options.get("beat_hints") or []
     clip_rows: list[dict] = []
     with SessionLocal() as db:
         trip_ids = set(trip_asset_ids(db, trip_id)) if trip_id else None
         used: set[int] = set()
         for b in beat_rows:
-            cands = beat_candidates(db, b["text"], search_fn, trip_ids)
+            hint = hints[b["index"] - 1] if b["index"] - 1 < len(hints) else None
+            cands = beat_candidates(db, hint or b["text"], search_fn, trip_ids,
+                                    broll_filter=options.get("broll_filter"))
             clips = allocate_clips(b["slot"], cands, used)
             by_id = {c["asset_id"]: c for c in cands}
             b["clips"] = []
@@ -566,6 +665,8 @@ def _create_story_plan(script: str, *, voice_id: str, trip_id: Optional[int],
         "model": config.ELEVENLABS_MODEL, "ratio": ratio, "trip_id": trip_id,
         "voiceover": str(voiceover), "srt": str(srt_path),
         "ass": str(ass_path), "caption_style": caption_style,
+        "broll_filter": options.get("broll_filter"), "beat_hints": hints or None,
+        "hook_text": options.get("hook_text"), "brand": options.get("brand"),
         "beat_count": n, "duration": total, "gap": BEAT_GAP,
         "beats": [{k: b[k] for k in ("index", "text", "audio", "audio_duration",
                                      "slot", "start", "words", "clips", "emphasis",

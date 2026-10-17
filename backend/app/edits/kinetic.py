@@ -32,6 +32,7 @@ HOLD_PAD = 0.4            # words linger this long past their end (cap)
 BODY_Y = 0.50
 EMPH_Y = 0.22
 EMPH_SCALE = 2.7
+PORTRAIT_BODY = 0.055     # body caption size as a fraction of frame height
 
 STOPWORDS = {
     "about", "above", "after", "again", "against", "because", "before", "being",
@@ -72,9 +73,9 @@ def _safe_rect(w: int, h: int, safe_zones: Optional[Mapping[str, float]] = None)
 
 
 def body_size(w: int, h: int, safe_zones: Optional[Mapping[str, float]] = None) -> int:
-    """~4.5% of frame height on 9:16; landscape gets a larger share so it reads."""
+    """~5.5% of frame height on 9:16; landscape gets a larger share so it reads."""
     _, _, _inner_w, inner_h = _safe_rect(w, h, safe_zones)
-    return int(round(inner_h * (0.045 if h >= w else 0.06)))
+    return int(round(inner_h * (PORTRAIT_BODY if h >= w else 0.06)))
 
 
 # ---------------------------------------------------------------------------

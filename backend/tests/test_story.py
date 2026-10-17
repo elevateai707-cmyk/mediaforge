@@ -483,7 +483,7 @@ def test_build_ass_scaling(w, h):
     size = kinetic.body_size(w, h)
     assert f"Style: Body,Montserrat Medium,{size}," in ass
     assert any(",Connector," in l for l in dialogues)
-    assert kinetic.body_size(1080, 1920) == round(1920 * 0.045)
+    assert kinetic.body_size(1080, 1920) == round(1920 * 0.055)
 
 
 def test_ass_time_format():
@@ -563,3 +563,98 @@ def test_render_api_ratio_default_and_style(client, wait_job, fake_tts, story_as
     assert job["status"] == "done", job
     bad = client.post("/api/render", json={"plan_id": plan["plan_id"], "caption_style": "x"})
     assert bad.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# B-roll source filter, beat hints, readability
+# ---------------------------------------------------------------------------
+def test_broll_filter_restricts_pool_and_hints_drive_search(client, fake_tts, video_library):
+    from sqlalchemy import select
+    files = {}
+    with SessionLocal() as db:
+        for name, aes in (("drone/DJI_0001.mp4", 8.0), ("drone/DJI_0002.mp4", 3.0),
+                          ("street/parade.mp4", 9.0)):
+            dst = video_library / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(video_library / "render_a.mp4", dst)
+            a = models.Asset(path=str(dst), hash=hashlib.md5(str(dst).encode()).hexdigest(),
+                             kind="video", width=320, height=180, duration=2.0,
+                             aesthetic_score=aes, status="indexed")
+            db.add(a)
+            db.flush()
+            files[name] = a.id
+        # a face on the better drone clip
+        db.execute(models.FaceDetection.__table__.insert().values(asset_id=files["drone/DJI_0001.mp4"]))
+        db.commit()
+    prefix = str(video_library / "drone") + "/"
+    with SessionLocal() as db:
+        pool = story.filtered_video_assets(db, None, {"path_prefixes": [prefix]})
+        assert set(pool) == {files["drone/DJI_0001.mp4"], files["drone/DJI_0002.mp4"]}
+        assert set(story.filtered_video_assets(db, None, {"path_prefixes": [prefix], "exclude_faces": True})) \
+            == {files["drone/DJI_0002.mp4"]}
+        assert set(story.filtered_video_assets(db, None, {"path_prefixes": [prefix], "min_aesthetic": 5})) \
+            == {files["drone/DJI_0001.mp4"]}
+        assert story.filtered_video_assets(db, None, {"asset_ids": [files["street/parade.mp4"]],
+                                                      "exclude_asset_ids": [files["street/parade.mp4"]]}) == {}
+        aerial = story.filtered_video_assets(db, None, {"require_aerial": True,
+                                                        "path_prefixes": [str(video_library) + "/"]})
+        assert files["street/parade.mp4"] not in aerial and files["drone/DJI_0001.mp4"] in aerial
+
+    searched = []
+
+    def search(db, q, limit):
+        searched.append(q)
+        return [files["street/parade.mp4"]]      # search prefers the parade; the filter must win
+
+    plan = story.create_story_plan(
+        SCRIPT, search_fn=search, cloud_approved=True, voice_consent=True,
+        broll_filter={"path_prefixes": [prefix], "exclude_faces": True},
+        beat_hints=["aerial valley at dawn"])
+    assert searched[0] == "aerial valley at dawn" and searched[1].startswith("The river")
+    used = {c["asset_id"] for c in plan["clips"]}
+    assert used == {files["drone/DJI_0002.mp4"]}
+    sc = story.get_story(plan["plan_id"])
+    assert sc["broll_filter"]["exclude_faces"] and sc["beat_hints"] == ["aerial valley at dawn"]
+
+    # empty pool -> clear error before the plan is created
+    with pytest.raises(story.StoryError, match="broll_filter"):
+        story.create_story_plan(SCRIPT, search_fn=search, cloud_approved=True, voice_consent=True,
+                                broll_filter={"asset_ids": [999999]})
+
+
+def test_story_options_validation():
+    ok = story.validate_story_options(SCRIPT, {"path_prefixes": ["/srv/x/"]}, ["a"], "Stop *scrolling*", "albertaweb")
+    assert ok["hook_text"] == "Stop scrolling" and ok["brand"]["id"] == "albertaweb"
+    for bad in ({"path_prefixes": ["relative"]}, {"path_prefixes": ["/a/../b"]},
+                {"min_aesthetic": "x"}, {"bogus": 1}):
+        with pytest.raises(story.StoryError):
+            story.validate_story_options(SCRIPT, bad, None, None, None)
+    with pytest.raises(story.StoryError, match="beat_hints"):
+        story.validate_story_options(SCRIPT, None, ["a", "b", "c"], None, None)
+    with pytest.raises(story.StoryError, match="unknown brand"):
+        story.validate_story_options(SCRIPT, None, None, None, "nope")
+    with pytest.raises(story.StoryError, match="hook_text"):
+        story.validate_story_options(SCRIPT, None, None, "x" * 91, None)
+
+
+def test_story_route_rejects_bad_options(client, monkeypatch):
+    monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "x")
+    body = {"script": SCRIPT, "cloud_approved": True, "voice_consent": True}
+    assert client.post("/api/edits/story", json={**body, "brand": "nope"}).status_code == 422
+    assert client.post("/api/edits/story", json={**body, "broll_filter": {"path_prefixes": ["rel"]}}).status_code == 422
+    assert client.post("/api/edits/story", json={**body, "broll_filter": {"nope": 1}}).status_code == 422
+    assert client.post("/api/edits/story", json={**body, "beat_hints": ["a", "b", "c"]}).status_code == 422
+
+
+def test_assets_path_prefix_filter(client, video_library):
+    with SessionLocal() as db:
+        for sub in ("pfx_a", "pfx_b"):
+            dst = video_library / sub / "c.mp4"
+            dst.parent.mkdir(exist_ok=True)
+            shutil.copyfile(video_library / "render_a.mp4", dst)
+            db.add(models.Asset(path=str(dst), hash=hashlib.md5(str(dst).encode()).hexdigest(),
+                                kind="video", duration=2.0, status="indexed"))
+        db.commit()
+    r = client.get("/api/assets", params={"path_prefix": str(video_library / "pfx_a") + "/"})
+    assert r.status_code == 200
+    assert [i["path"] for i in r.json()["items"]] == [str(video_library / "pfx_a" / "c.mp4")]

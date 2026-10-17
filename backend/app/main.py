@@ -484,9 +484,13 @@ def list_assets(
     city: Optional[str] = Query(None),
     trip_id: Optional[int] = Query(None),
     min_aesthetic: Optional[float] = Query(None),
+    path_prefix: Optional[str] = Query(None, max_length=1024),
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Asset)
+
+    if path_prefix:
+        query = query.filter(models.Asset.path.startswith(path_prefix, autoescape=True))
 
     if kind in ("photo", "video"):
         query = query.filter(models.Asset.kind == kind)
@@ -964,6 +968,11 @@ async def create_story(req: schemas.StoryRequest):
         raise HTTPException(status_code=422, detail="script is empty")
     if not config.ELEVENLABS_API_KEY:
         raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is not configured")
+    flt = req.broll_filter.model_dump() if req.broll_filter else None
+    try:
+        story.validate_story_options(req.script, flt, req.beat_hints, req.hook_text, req.brand)
+    except story.StoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         policy.story_approval(req.script, req.voice_id or config.ELEVENLABS_VOICE_ID,
                               cloud_approved=req.cloud_approved, voice_consent=req.voice_consent,
@@ -979,7 +988,9 @@ async def create_story(req: schemas.StoryRequest):
                 ratio=req.ratio, title=req.title,
                 cloud_approved=req.cloud_approved, voice_consent=req.voice_consent,
                 max_characters=req.max_characters,
-                caption_style=req.caption_style, progress=progress)
+                caption_style=req.caption_style, progress=progress,
+                broll_filter=flt, beat_hints=req.beat_hints,
+                hook_text=req.hook_text, brand=req.brand)
 
         plan = await asyncio.get_event_loop().run_in_executor(None, _sync)
         jobs._update_row(ns["job_id"], meta={"plan_id": plan["plan_id"],

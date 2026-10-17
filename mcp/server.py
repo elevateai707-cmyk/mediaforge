@@ -233,6 +233,10 @@ async def mf_create_story_plan(
     cloud_approved: bool = False,
     voice_consent: bool = False,
     max_characters: int = 5000,
+    broll_filter: Optional[dict] = None,
+    beat_hints: Optional[list[str]] = None,
+    hook_text: Optional[str] = None,
+    brand: Optional[str] = None,
 ) -> Any:
     """Story voiceover: turn a narration script into a draft edit plan (POST /api/edits/story).
     The script is transmitted to ElevenLabs for synthesis and spends ElevenLabs character quota.
@@ -250,7 +254,15 @@ async def mf_create_story_plan(
     1-2 per beat become big gradient headline words in the kinetic caption style, and the
     asterisks are stripped before the text is spoken. With no markup one word per beat is
     auto-picked. 9:16 is the kinetic style's native format. voice_id defaults to the configured
-    voice; trip_id restricts footage to one trip. max_characters is a per-job cap (1-50,000)."""
+    voice; trip_id restricts footage to one trip. max_characters is a per-job cap (1-50,000).
+    B-roll source control: broll_filter = {path_prefixes: [abs path prefixes], require_aerial: bool,
+    exclude_faces: bool, min_aesthetic: float 0-10, asset_ids: [ids], exclude_asset_ids: [ids]}
+    restricts which library videos can be used (drone footage lives under
+    /srv/iris/media/library/blue-drone-1o1/; use path_prefixes + require_aerial + exclude_faces
+    to avoid selfies/street footage). beat_hints = one search query per beat (shorter lists fall back
+    to the beat text) used instead of the beat text when matching footage. hook_text (<=90 chars)
+    is a big gradient headline shown 0-1.4 s in the upper safe zone; brand ("albertaweb" or
+    "buildwithdb", see config/brands.yaml) appends a 1.8 s end card at render time."""
     if not cloud_approved:
         raise RuntimeError("Story creation requires cloud_approved=True for this job before sending the script to ElevenLabs")
     if not voice_consent:
@@ -263,7 +275,8 @@ async def mf_create_story_plan(
         "script": script, "voice_id": voice_id, "trip_id": trip_id,
         "ratio": ratio, "title": title, "caption_style": caption_style,
         "cloud_approved": cloud_approved, "voice_consent": voice_consent,
-        "max_characters": max_characters})
+        "max_characters": max_characters, "broll_filter": broll_filter,
+        "beat_hints": beat_hints, "hook_text": hook_text, "brand": brand})
     job_id = started["job_id"]
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
