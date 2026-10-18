@@ -143,3 +143,18 @@ Asset JSON shape:
   plan review → approve → render/export), Touch-up, Settings/Scan.
 - Dark neon: deep charcoal bg (#0b0c10 family), purple (#a855f7) / pink (#ec4899)
   / red (#ef4444) accents, glassmorphism cards, framer-motion.
+# Caption and handoff additions (17 October 2026)
+
+- `GET /api/assets/{id}/captions?style=standard|social_vertical|accessibility`
+  returns `{style, cues: [{start,end,text}], qc: {cue_count,issue_count,issues,
+  timing_source?,limitations?}}`. Cue issue indexes are zero-based. Times use source
+  media seconds. Missing asset is 404; no transcript is 409; invalid style is 422.
+- `GET /api/assets/{id}/captions/{format}?style=...` downloads `srt`, `vtt` or `ass`.
+- `GET /api/edits/plan/{id}/package` downloads a ZIP handoff snapshot. It requires an
+  approved plan (409 otherwise), returns 404 for a missing plan, and rejects missing
+  or invalid story sidecars. Source media and rendered audio/video are not bundled.
+- `POST /api/edits/story` additionally accepts `cloud_approved: bool = false`,
+  `voice_consent: bool = false`, `max_characters: int = 5000` (1–50,000).
+  Missing consent is 403, over-cap script is 422. The limit is input characters,
+  not currency. The successful response still returns a background job id;
+  `GET /api/jobs/{id}` exposes its completed `meta.plan_id`.

@@ -1,9 +1,9 @@
 """Pydantic request/response schemas matching the API contract exactly."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- System -----------------------------------------------------------------
@@ -15,6 +15,8 @@ class HealthOut(BaseModel):
     version: str
     models: dict[str, Any] = {}
     warnings: list[str] = []
+    # watcher per dir, scan queue, last catch-up scan, AI worker queue
+    ingest: Optional[dict[str, Any]] = None
 
 
 class ConfigOut(BaseModel):
@@ -193,10 +195,66 @@ class PlanOut(BaseModel):
     created_at: Optional[str] = None
     parsed_intent: Optional[dict[str, Any]] = None
     match_stats: Optional[dict[str, Any]] = None
+    story: Optional[dict[str, Any]] = None
+    broll: Optional[dict[str, Any]] = None
+
+
+class BrollFilter(BaseModel):
+    """Restrict which library videos story/B-roll plans may use."""
+    model_config = ConfigDict(extra="forbid")
+    path_prefixes: list[str] = Field(default_factory=list, max_length=20)
+    require_aerial: bool = False
+    exclude_faces: bool = False
+    min_aesthetic: Optional[float] = Field(default=None, ge=0, le=10)
+    asset_ids: list[int] = Field(default_factory=list, max_length=5000)
+    exclude_asset_ids: list[int] = Field(default_factory=list, max_length=5000)
+
+
+class StoryRequest(BaseModel):
+    script: str = Field(min_length=1, max_length=50000)
+    voice_id: Optional[str] = None
+    trip_id: Optional[int] = None
+    ratio: str = "16:9"
+    title: Optional[str] = None
+    caption_style: str = "kinetic"
+    cloud_approved: bool = False
+    voice_consent: bool = False
+    max_characters: int = Field(default=5000, ge=1, le=50000)
+    broll_filter: Optional[BrollFilter] = None
+    # One search query per beat (replaces the beat text when matching footage).
+    beat_hints: Optional[list[str]] = Field(default=None, max_length=200)
+    hook_text: Optional[str] = Field(default=None, max_length=90)
+    brand: Optional[str] = Field(default=None, max_length=40)
+
+
+class BrollPlanRequest(BaseModel):
+    music_path: Optional[str] = Field(default=None, max_length=1024)
+    music_start: Optional[float] = Field(default=None, ge=0, le=36000)
+    target_seconds: float = Field(default=12.0, ge=4, le=90)
+    bars_per_cut: Literal[1, 2] = 1
+    text_line: str = Field(default="", max_length=90)
+    hook_text: Optional[str] = Field(default=None, max_length=90)
+    brand: Optional[str] = Field(default=None, max_length=40)
+    broll_filter: Optional[BrollFilter] = None
+    silent: bool = False
+    asset_ids: Optional[list[int]] = Field(default=None, max_length=5000)
+    ratio: Literal["9:16", "16:9", "4:5", "1:1"] = "9:16"
+    title: Optional[str] = Field(default=None, max_length=120)
+    seed: Optional[int] = None
+
+
+class StoryJobOut(BaseModel):
+    job_id: str
+    kind: str = "story"
 
 
 class PlanUpdateRequest(BaseModel):
     clips: list[ClipOut] = Field(default_factory=list)
+
+
+class SwapBrollRequest(BaseModel):
+    beat_index: int = Field(ge=1)
+    asset_id: int = Field(ge=1)
 
 
 class ApproveOut(BaseModel):
@@ -207,11 +265,25 @@ class ApproveOut(BaseModel):
 # --- Render ------------------------------------------------------------------
 class RenderRequest(BaseModel):
     plan_id: str
-    ratio: str = "9:16"
+    # None = the story's own ratio for story plans, else 9:16 (1080x1920).
+    ratio: Optional[str] = None
     music_path: Optional[str] = None
     captions: bool = True
-    width: int = 1080
-    height: int = 1920
+    width: Optional[int] = None
+    height: Optional[int] = None
+    # Story plans only: "kinetic" (default) or "classic" lower-third SRT.
+    caption_style: Optional[str] = None
+    # Kinetic grade, slow push-in and glitch cuts at beat boundaries.
+    effects: bool = True
+    presets: Optional[list[Literal["9:16", "4:5", "1:1", "16:9"]]] = Field(default=None, min_length=1, max_length=4)
+    reframe: Literal["smart", "center"] = "smart"
+    safe_zones: Optional[dict[str, float]] = None
+    guide_overlay: bool = False
+    music: Optional[Literal["auto"]] = None
+    music_auto: bool = False
+    # Story/B-roll renders with a beat-mapped track: where in the track the video
+    # starts (seconds). Default: the track's best section on a downbeat.
+    music_start: Optional[float] = Field(default=None, ge=0, le=36000)
 
 
 class RenderJobOut(BaseModel):
@@ -224,6 +296,7 @@ class RenderStatusOut(BaseModel):
     status: str
     output_path: Optional[str] = None
     progress: float = 0.0
+    output_paths: dict[str, str] = Field(default_factory=dict)
 
 
 # --- Exports -----------------------------------------------------------------
@@ -231,15 +304,50 @@ class ExportRequest(BaseModel):
     plan_id: str
 
 
+# --- Media import / export ---------------------------------------------------
+class UploadOut(BaseModel):
+    ok: bool = True
+    path: str
+    name: str
+    size: int
+    folder: str
+
+
+class ImportFolderRequest(BaseModel):
+    path: str
+
+
+class ImportFolderOut(JobRefOut):
+    src: str
+    dest: str
+    files: int
+    bytes: int
+    skipped: int = 0
+
+
+class MediaCopyRequest(BaseModel):
+    asset_ids: list[int] = Field(min_length=1)
+    dest: Optional[str] = None
+    include_sidecars: bool = True
+
+
+class MediaCopyOut(JobRefOut):
+    dest: str
+    files: int
+    bytes: int
+
+
 class ExportPathOut(BaseModel):
     ok: bool = True
     path: str
+    story_files: Optional[dict[str, str]] = None
 
 
 class ResolveExportOut(BaseModel):
     ok: bool = True
     resolve: str
     project: str
+    story: Optional[dict[str, Any]] = None
 
 
 # --- Touchup -----------------------------------------------------------------
@@ -256,6 +364,16 @@ class TouchupOut(BaseModel):
 
 
 # --- Jobs --------------------------------------------------------------------
+class JobCleanupRequest(BaseModel):
+    older_than_minutes: float = 0.0
+    delete_finished_older_than_days: Optional[float] = None
+
+
+class JobCleanupOut(BaseModel):
+    interrupted: int = 0
+    deleted: int = 0
+
+
 class JobOut(BaseModel):
     id: str
     kind: str
@@ -264,6 +382,7 @@ class JobOut(BaseModel):
     message: Optional[str] = None
     created_at: Optional[str] = None
     finished_at: Optional[str] = None
+    meta: Optional[dict[str, Any]] = None
 
 
 class PlaceOut(BaseModel):
@@ -317,3 +436,7 @@ class MusicTrackOut(BaseModel):
     name: str
     path: str
     ext: str = ""
+    duration: Optional[float] = None
+    loudness: Optional[float] = None
+    rough_bpm: Optional[float] = None
+    mood_tags: list[str] = Field(default_factory=list)

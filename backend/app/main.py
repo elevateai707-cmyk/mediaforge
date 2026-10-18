@@ -23,19 +23,21 @@ from typing import Any, Optional
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from . import config, fsutil, models, persist, schemas, touchup
+from . import auth, config, fsutil, models, persist, policy, schemas, touchup, transfer
 from .ai import clip
 from .ai import gpu
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, planner, render, resolve_export
+from .edits import capcut_export, edl_export, fcpxml_export, broll, package, plan_history, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
+from .ingest.removable import removable_imports
+from .ingest.scanqueue import scan_queue
 from .ingest.trips import cluster_trips, trip_asset_ids, trip_for_asset
 from .jobs import jobs
 from .ws import manager as ws_manager
@@ -61,8 +63,21 @@ _RENDER_OUTPUTS: dict[str, str] = {}
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    auth.startup_notice()
     ws_manager.bind_loop(asyncio.get_running_loop())
     init_db()
+    try:
+        if persist.music_dir():
+            Path(persist.music_dir()).mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.warning("music folder unavailable: %s", exc)
+    # Anything still running/queued belongs to a previous process: mark it
+    # interrupted so it cannot sit in the job list as a hung job forever.
+    try:
+        jobs.reconcile_startup()
+    except Exception as exc:
+        log.warning("startup job reconciliation failed: %s", exc)
+    scan_queue.bind_loop(asyncio.get_running_loop())
     try:
         with SessionLocal() as db:
             n_assets = db.query(models.Asset).count()
@@ -72,7 +87,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("startup trip cluster skipped: %s", exc)
     try:
-        folder_watcher.start()
+        if folder_watcher.start(asyncio.get_running_loop()):
+            # One catch-up scan for files added while the service was down. The
+            # scanner skips known paths without hashing, so this is cheap.
+            scan_queue.note_catchup()
+            scan_queue.enqueue(persist.media_dirs(), settle=True, source="startup")
     except Exception as exc:
         log.warning("folder watcher not started: %s", exc)
     try:
@@ -85,11 +104,22 @@ async def lifespan(app: FastAPI):
         ws_manager.set_gpu(gpu.gpu_payload())
     except Exception as exc:  # pragma: no cover
         log.warning("gpu payload failed: %s", exc)
+    removable_imports.start()
     yield
+    removable_imports.stop()
     folder_watcher.stop()
 
 
 app = FastAPI(title="MediaForge", version=config.VERSION, lifespan=lifespan)
+app.add_middleware(auth.AuthMiddleware)
+app.include_router(auth.router)
+
+from .caption_routes import router as caption_router
+app.include_router(caption_router)
+from .import_routes import router as import_router
+from .tighten_routes import router as tighten_router
+app.include_router(import_router)
+app.include_router(tighten_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -301,7 +331,9 @@ def _hybrid_search(db: Session, q: str, limit: int = 50) -> list[int]:
 # system
 # ---------------------------------------------------------------------------
 @app.get("/api/health", response_model=schemas.HealthOut)
-def health():
+def health(request: Request):
+    if config.API_TOKEN and not auth.authorized(request):
+        return schemas.HealthOut(status="ok", gpu="unknown", version=config.VERSION)
     try:
         mode = gpu.device()
         name = gpu.gpu_name()
@@ -311,9 +343,21 @@ def health():
     except Exception as exc:  # pragma: no cover
         log.warning("health gpu probe failed: %s", exc)
         mode, name, vram, warnings, models_status = "cpu", "", 0, [], {}
+    try:
+        from .ai import pipeline as ai_pipeline
+        ingest = {
+            "watcher": folder_watcher.status(),
+            "scan_queue": scan_queue.state(),
+            "last_catchup": scan_queue.last_catchup,
+            "ai_worker": ai_pipeline.worker_status(),
+        }
+    except Exception as exc:  # pragma: no cover
+        log.warning("health ingest probe failed: %s", exc)
+        ingest = None
     return schemas.HealthOut(
         status="ok", gpu=mode, gpu_name=name, vram_mb=vram,
         version=config.VERSION, models=models_status, warnings=warnings,
+        ingest=ingest,
     )
 
 
@@ -367,9 +411,7 @@ async def scan(req: schemas.ScanRequest):
         paths = persist.persisted_media_dirs()
     if not paths:
         raise HTTPException(status_code=422, detail="paths must not be empty")
-    job_id = jobs.run(
-        "scan", _background(scanner.scan_paths, paths, rescan=False)
-    )
+    job_id = scan_queue.enqueue(paths, rescan=False, source="api")
     return schemas.JobRefOut(job_id=job_id, kind="scan")
 
 
@@ -380,9 +422,7 @@ async def rescan(req: schemas.ScanRequest):
         paths = persist.persisted_media_dirs()
     if not paths:
         raise HTTPException(status_code=422, detail="paths must not be empty")
-    job_id = jobs.run(
-        "scan", _background(scanner.scan_paths, paths, rescan=True)
-    )
+    job_id = scan_queue.enqueue(paths, rescan=True, source="api")
     return schemas.JobRefOut(job_id=job_id, kind="scan")
 
 
@@ -444,9 +484,13 @@ def list_assets(
     city: Optional[str] = Query(None),
     trip_id: Optional[int] = Query(None),
     min_aesthetic: Optional[float] = Query(None),
+    path_prefix: Optional[str] = Query(None, max_length=1024),
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Asset)
+
+    if path_prefix:
+        query = query.filter(models.Asset.path.startswith(path_prefix, autoescape=True))
 
     if kind in ("photo", "video"):
         query = query.filter(models.Asset.kind == kind)
@@ -834,7 +878,10 @@ def get_plan(plan_id: str):
 @app.put("/api/edits/plan/{plan_id}", response_model=schemas.PlanOut)
 def update_plan(plan_id: str, req: schemas.PlanUpdateRequest):
     clips = [c.model_dump() for c in req.clips]
-    plan = planner.update_plan(plan_id, clips)
+    try:
+        plan = planner.update_plan(plan_id, clips)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if plan is None:
         raise HTTPException(status_code=404, detail=f"plan {plan_id!r} not found")
     return plan
@@ -856,6 +903,137 @@ def list_plans(limit: int = Query(50, ge=1, le=200)):
     return planner.list_plans(limit=limit)
 
 
+@app.get("/api/edits/plan/{plan_id}/versions")
+def plan_versions(plan_id: str):
+    try:
+        return {"versions": plan_history.list_versions(plan_id)}
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/edits/plan/{plan_id}/versions/{version}/restore", response_model=schemas.PlanOut)
+def restore_plan(plan_id: str, version: int):
+    try:
+        return plan_history.restore(plan_id, version)
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/edits/plan/{plan_id}/swap-broll", response_model=schemas.PlanOut)
+def swap_broll(plan_id: str, req: schemas.SwapBrollRequest):
+    try:
+        return planner.swap_broll(plan_id, req.beat_index, req.asset_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/edits/plan/{plan_id}/reframe-preview")
+def reframe_preview(plan_id: str, mode: str = "smart"):
+    from .edits import reframe
+    if mode not in ("smart", "center"):
+        raise HTTPException(422, "mode must be smart or center")
+    try:
+        plan_history.validate_id(plan_id)
+        plan, resolved = render._load_plan(plan_id)
+    except (ValueError, render.RenderError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    output_dir = config.EXPORTS_DIR / "previews" / plan_id
+    clips = []
+    for index, (clip_row, asset) in enumerate(resolved):
+        analysis = reframe.analyze_reframe(asset.path, asset_id=asset.id,
+            start=clip_row.start, end=clip_row.end, mode=mode)
+        images = reframe.generate_preview_stills(asset.path, analysis, output_dir, prefix=f"clip-{index}")
+        clips.append({"clip_index": index, "asset_id": asset.id, "analysis": analysis,
+                      "images": ["/exports/" + str(Path(p).relative_to(config.EXPORTS_DIR)) for p in images]})
+    return {"plan_id": plan_id, "clips": clips}
+
+
+# ---------------------------------------------------------------------------
+# story voiceover
+# ---------------------------------------------------------------------------
+@app.post("/api/edits/story", response_model=schemas.StoryJobOut)
+async def create_story(req: schemas.StoryRequest):
+    """Script -> ElevenLabs voiceover + matched B-roll draft plan (runs as a job).
+
+    Poll GET /api/jobs/{job_id}; on done, ``meta.plan_id`` names the new plan.
+    """
+    if req.ratio not in ("9:16", "16:9", "1:1"):
+        raise HTTPException(status_code=422, detail="ratio must be one of 9:16, 16:9, 1:1")
+    if req.caption_style not in ("kinetic", "classic"):
+        raise HTTPException(status_code=422,
+                            detail="caption_style must be 'kinetic' or 'classic'")
+    if not story.split_beats(req.script):
+        raise HTTPException(status_code=422, detail="script is empty")
+    if not config.ELEVENLABS_API_KEY:
+        raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is not configured")
+    flt = req.broll_filter.model_dump() if req.broll_filter else None
+    try:
+        story.validate_story_options(req.script, flt, req.beat_hints, req.hook_text, req.brand)
+    except story.StoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        policy.story_approval(req.script, req.voice_id or config.ELEVENLABS_VOICE_ID,
+                              cloud_approved=req.cloud_approved, voice_consent=req.voice_consent,
+                              max_characters=req.max_characters)
+    except policy.PolicyError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    ns: dict[str, Any] = {}
+
+    async def _runner(progress, _flag):
+        def _sync():
+            return story.create_story_plan(
+                req.script, voice_id=req.voice_id, trip_id=req.trip_id,
+                ratio=req.ratio, title=req.title,
+                cloud_approved=req.cloud_approved, voice_consent=req.voice_consent,
+                max_characters=req.max_characters,
+                caption_style=req.caption_style, progress=progress,
+                broll_filter=flt, beat_hints=req.beat_hints,
+                hook_text=req.hook_text, brand=req.brand)
+
+        plan = await asyncio.get_event_loop().run_in_executor(None, _sync)
+        jobs._update_row(ns["job_id"], meta={"plan_id": plan["plan_id"],
+                                             "story": plan.get("story")})
+        return plan
+
+    job_id = jobs.run("story", _runner)
+    ns["job_id"] = job_id
+    return schemas.StoryJobOut(job_id=job_id)
+
+
+@app.post("/api/edits/broll", response_model=schemas.PlanOut)
+async def create_broll(req: schemas.BrollPlanRequest):
+    """Music-led drone B-roll plan: cuts on downbeats, whole bars, optional kinetic text line,
+    hook and brand end card. Fast (no TTS), so it returns the draft plan directly."""
+    flt = req.broll_filter.model_dump() if req.broll_filter else None
+    try:
+        return await asyncio.to_thread(
+            broll.create_broll_plan, music_path=req.music_path, music_start=req.music_start,
+            target_seconds=req.target_seconds, bars_per_cut=req.bars_per_cut,
+            text_line=req.text_line, brand=req.brand, broll_filter=flt, silent=req.silent,
+            asset_ids=req.asset_ids, hook_text=req.hook_text, ratio=req.ratio,
+            title=req.title, seed=req.seed)
+    except broll.BrollError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/edits/{plan_id}/broll")
+def get_plan_broll(plan_id: str):
+    data = broll.get_broll(plan_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"no B-roll sidecar for plan {plan_id!r}")
+    return data
+
+
+@app.get("/api/edits/{plan_id}/story")
+def get_plan_story(plan_id: str):
+    data = story.get_story(plan_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"no story for plan {plan_id!r}")
+    return data
+
+
 # ---------------------------------------------------------------------------
 # render
 # ---------------------------------------------------------------------------
@@ -870,20 +1048,46 @@ async def start_render(req: schemas.RenderRequest):
             detail="plan not approved; approve it first "
                    "(POST /api/edits/plan/{id}/approve)",
         )
-    if req.ratio not in ("9:16", "16:9", "1:1"):
+    if req.ratio is not None and req.ratio not in ("9:16", "4:5", "16:9", "1:1"):
         raise HTTPException(
-            status_code=422, detail="ratio must be one of 9:16, 16:9, 1:1"
+            status_code=422, detail="ratio must be one of 9:16, 4:5, 16:9, 1:1"
+        )
+    if req.caption_style not in (None, "kinetic", "classic"):
+        raise HTTPException(
+            status_code=422, detail="caption_style must be 'kinetic' or 'classic'"
         )
 
+    if req.safe_zones is not None:
+        if any(k not in ("top", "bottom", "left", "right") or not math.isfinite(v) or not 0 <= v <= .45 for k, v in req.safe_zones.items()):
+            raise HTTPException(422, "safe_zones must contain top/bottom/left/right margins between 0 and 0.45")
+    selected_music = req.music_path
+    if req.music == "auto" or req.music_auto:
+        track = await asyncio.to_thread(music.select_track, persist.music_dir(), plan.get("intent") or "", plan["total_duration"])
+        if track is None:
+            raise HTTPException(409, "No usable music tracks. Add licensed audio to the music folder or render without auto music.")
+        selected_music = track["path"]
     ns: dict[str, Any] = {}
 
     async def _render_runner(progress, _flag):
-        out = await render.render_job(
-            req.plan_id, req.ratio, req.width, req.height,
-            req.captions, req.music_path, progress, _flag,
-        )
+        if req.presets:
+            outputs = await asyncio.to_thread(render.render_batch, req.plan_id,
+                presets=list(dict.fromkeys(req.presets)), captions=req.captions,
+                music_path=selected_music, job=progress, caption_style=req.caption_style,
+                effects=req.effects, reframe=req.reframe, safe_zones=req.safe_zones,
+                guide_overlay=req.guide_overlay, cancel_flag=_flag,
+                music_start=req.music_start)
+            out = next(iter(outputs.values()), None)
+        else:
+            out = await render.render_job(
+                req.plan_id, req.ratio, req.width, req.height,
+                req.captions, selected_music, progress, _flag,
+                caption_style=req.caption_style, effects=req.effects,
+                reframe=req.reframe, safe_zones=req.safe_zones, guide_overlay=req.guide_overlay,
+                music_start=req.music_start)
+            outputs = {req.ratio or plan["target_ratio"]: out} if out else {}
         if out:
             _RENDER_OUTPUTS[ns["job_id"]] = out
+        jobs._update_row(ns["job_id"], meta={"plan_id": req.plan_id, "output_paths": outputs})
         return out
 
     job_id = jobs.run("render", _render_runner)
@@ -896,15 +1100,27 @@ def render_status(job_id: str):
     job = jobs.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id!r} not found")
-    output_path = _RENDER_OUTPUTS.get(job_id) if job["status"] == "done" else None
+    outputs = (job.get("meta") or {}).get("output_paths", {}) if job["status"] == "done" else {}
+    output_path = (_RENDER_OUTPUTS.get(job_id) or next(iter(outputs.values()), None)) if job["status"] == "done" else None
     return schemas.RenderStatusOut(
         status=job["status"], output_path=output_path, progress=job["progress"],
+        output_paths=outputs,
     )
 
 
 # ---------------------------------------------------------------------------
 # exports
 # ---------------------------------------------------------------------------
+@app.get("/api/edits/plan/{plan_id}/package")
+def download_handoff_package(plan_id: str):
+    try:
+        content = package.build_package(plan_id)
+    except package.PackageError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    return Response(content=content, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="mediaforge-{plan_id}.zip"'})
+
+
 def _export_file(plan_id: str, exporter) -> schemas.ExportPathOut:
     try:
         path = exporter(plan_id)
@@ -912,7 +1128,8 @@ def _export_file(plan_id: str, exporter) -> schemas.ExportPathOut:
         raise HTTPException(status_code=404, detail=str(exc))
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"export file not found: {path}")
-    return schemas.ExportPathOut(ok=True, path=path)
+    files = story.export_companions(plan_id, path)
+    return schemas.ExportPathOut(ok=True, path=path, story_files=files or None)
 
 
 @app.post("/api/export/fcpxml", response_model=schemas.ExportPathOut)
@@ -977,11 +1194,157 @@ def touchup_preview(asset_id: int = Query(...), preset: str = Query(...)):
 
 
 # ---------------------------------------------------------------------------
+# import (upload / server folder) and media export
+# ---------------------------------------------------------------------------
+def _transfer_http(exc: transfer.TransferError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+@app.post("/api/import/upload", response_model=schemas.UploadOut)
+async def import_upload(request: Request, filename: str = Query(..., min_length=1)):
+    """Stream one raw request body to <library>/imports/<date>/<filename>.
+
+    The client sends each file as its own request (body = file bytes) so the
+    server never buffers a whole file; chunks go straight to a .part file.
+    """
+    try:
+        length = int(request.headers.get("content-length") or 0) or None
+    except ValueError:
+        length = None
+    try:
+        final, part = await asyncio.get_running_loop().run_in_executor(
+            None, transfer.prepare_upload, filename, length)
+    except transfer.TransferError as exc:
+        raise _transfer_http(exc)
+    size = 0
+    try:
+        with open(part, "wb") as fh:
+            async for chunk in request.stream():
+                if chunk:
+                    fh.write(chunk)
+                    size += len(chunk)
+        if size == 0:
+            raise HTTPException(status_code=422, detail="empty upload")
+        final = transfer.commit_upload(part, final)
+    except BaseException:
+        try:
+            part.unlink()
+        except OSError:
+            pass
+        raise
+    if final.suffix.lower() in config.SUPPORTED_EXTS:
+        scan_queue.enqueue([str(final)], source="upload")
+    return schemas.UploadOut(path=str(final), name=final.name, size=size,
+                             folder=str(final.parent))
+
+
+@app.post("/api/import/folder", response_model=schemas.ImportFolderOut)
+async def import_folder(req: schemas.ImportFolderRequest):
+    """Copy a server-side folder into the library as a background job, then scan it."""
+    loop = asyncio.get_running_loop()
+    try:
+        plan = await loop.run_in_executor(None, transfer.plan_folder_import, req.path)
+    except transfer.TransferError as exc:
+        raise _transfer_http(exc)
+
+    async def _run(progress, flag):
+        def _copy():
+            transfer.copy_tree(plan["files"], plan["src"], plan["dest"],
+                               progress=lambda f, m: progress(f * 0.95, m),
+                               cancelled=lambda: flag.cancelled)
+        await asyncio.get_running_loop().run_in_executor(None, _copy)
+        if flag.cancelled:
+            return
+        progress(0.95, "copy complete, starting scan")
+        scan_queue.enqueue([str(plan["dest"])], source="import")
+
+    job_id = jobs.run("import", _run)
+    return schemas.ImportFolderOut(
+        job_id=job_id, kind="import", src=str(plan["src"]), dest=str(plan["dest"]),
+        files=len(plan["files"]), bytes=plan["bytes"], skipped=plan["skipped"])
+
+
+def _parse_ids(raw: str) -> list[int]:
+    try:
+        ids = [int(x) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="ids must be comma-separated integers")
+    if not ids:
+        raise HTTPException(status_code=422, detail="ids must not be empty")
+    if len(ids) > 5000:
+        raise HTTPException(status_code=422, detail="too many ids (max 5000)")
+    return list(dict.fromkeys(ids))
+
+
+def _asset_paths(db: Session, ids: list[int]) -> list[str]:
+    rows = db.query(models.Asset).filter(models.Asset.id.in_(ids)).all()
+    by_id = {a.id: a.path for a in rows if a.path}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def _download_name(name: str) -> str:
+    return name.replace('"', "'")
+
+
+@app.get("/api/assets/{asset_id}/download")
+def asset_download(asset_id: int, db: Session = Depends(get_db)):
+    asset = _get_asset(db, asset_id)
+    if not asset.path or not os.path.isfile(asset.path):
+        raise HTTPException(status_code=404, detail="file missing on disk")
+    return FileResponse(asset.path, filename=os.path.basename(asset.path),
+                        media_type=asset.mime or "application/octet-stream")
+
+
+@app.get("/api/export/media/zip")
+def export_media_zip(ids: str = Query(..., description="comma-separated asset ids"),
+                     sidecars: bool = True, db: Session = Depends(get_db)):
+    paths = _asset_paths(db, _parse_ids(ids))
+    files = transfer.export_file_list(paths, include_sidecars=sidecars)
+    if not files:
+        raise HTTPException(status_code=404, detail="none of the selected files exist on disk")
+    name = f"mediaforge-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    return StreamingResponse(
+        transfer.stream_zip(files), media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{_download_name(name)}"'})
+
+
+@app.post("/api/export/media/copy", response_model=schemas.MediaCopyOut)
+async def export_media_copy(req: schemas.MediaCopyRequest, db: Session = Depends(get_db)):
+    paths = _asset_paths(db, list(dict.fromkeys(req.asset_ids)))
+    if not paths:
+        raise HTTPException(status_code=404, detail="no matching assets")
+    loop = asyncio.get_running_loop()
+    try:
+        plan = await loop.run_in_executor(
+            None, transfer.plan_folder_export, paths, req.dest, req.include_sidecars)
+    except transfer.TransferError as exc:
+        raise _transfer_http(exc)
+
+    async def _run(progress, flag):
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: transfer.copy_export(
+                plan["files"], plan["dest"], progress=progress,
+                cancelled=lambda: flag.cancelled))
+
+    job_id = jobs.run("export", _run)
+    return schemas.MediaCopyOut(job_id=job_id, kind="export", dest=str(plan["dest"]),
+                                files=len(plan["files"]), bytes=plan["bytes"])
+
+
+# ---------------------------------------------------------------------------
 # jobs
 # ---------------------------------------------------------------------------
 @app.get("/api/jobs", response_model=list[schemas.JobOut])
 def list_jobs(limit: int = Query(20, ge=1, le=200)):
     return jobs.list_jobs(limit=limit)
+
+
+@app.post("/api/jobs/cleanup", response_model=schemas.JobCleanupOut)
+def cleanup_jobs(req: schemas.JobCleanupRequest):
+    """Mark ghost jobs (running/queued with no live task) interrupted; optionally
+    delete finished jobs older than N days."""
+    return jobs.cleanup(older_than_minutes=req.older_than_minutes,
+                        delete_finished_older_than_days=req.delete_finished_older_than_days)
 
 
 @app.get("/api/jobs/{job_id}", response_model=schemas.JobOut)
@@ -1000,8 +1363,16 @@ async def websocket_endpoint(ws: WebSocket):
     await ws_manager.connect(ws)
     try:
         while True:
-            await ws.receive_text()
+            if not auth.authorized(ws):
+                await ws.close(code=4401)
+                break
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=auth.WS_RECHECK_SECONDS)
+            except asyncio.TimeoutError:
+                continue
     except WebSocketDisconnect:
+        pass
+    finally:
         await ws_manager.disconnect(ws)
 
 

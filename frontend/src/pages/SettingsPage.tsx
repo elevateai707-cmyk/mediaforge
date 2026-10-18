@@ -37,6 +37,8 @@ const KIND_LABEL: Record<string, string> = {
   ai: 'AI analysis',
   render: 'Render',
   touchup: 'Touch-up',
+  import: 'Import',
+  export: 'Export',
 }
 
 export function SettingsPage() {

@@ -1,6 +1,9 @@
 import type {
   AppConfig,
   Asset,
+  AssetCaptionsResponse,
+  CaptionFormat,
+  CaptionStyle,
   AssetListResponse,
   Clip,
   EditPlan,
@@ -19,6 +22,7 @@ import type {
   ScenesResponse,
   SearchResponse,
   StartJobResponse,
+  StoryJobResponse,
   TranscriptResponse,
   Trip,
 } from './types'
@@ -40,6 +44,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
     res = await fetch(API_BASE + path, {
+      credentials: 'include',
       ...init,
       headers: {
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
@@ -50,6 +55,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, `Cannot reach backend at ${API_BASE || '/api'} — is it running on :8420?`)
   }
   if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new Event('mf-auth-required'))
     let message = `${res.status} ${res.statusText}`
     let detail: unknown
     try {
@@ -92,6 +98,87 @@ export const rescanPaths = (paths: string[]) =>
 export const cancelScan = (job_id: string) =>
   request<{ ok: boolean }>('/api/scan/cancel', { method: 'POST', body: JSON.stringify({ job_id }) })
 
+// ---------- Import / export media ----------
+
+export interface UploadResult {
+  ok: boolean
+  path: string
+  name: string
+  size: number
+  folder: string
+}
+
+export interface ImportFolderResponse extends StartJobResponse {
+  src: string
+  dest: string
+  files: number
+  bytes: number
+}
+
+export interface MediaCopyResponse extends StartJobResponse {
+  dest: string
+  files: number
+  bytes: number
+}
+
+/** Stream one file as a raw request body (no multipart buffering on the server). */
+export function uploadFile(
+  file: File,
+  onProgress?: (loaded: number, total: number) => void,
+): { promise: Promise<UploadResult>; abort: () => void } {
+  const xhr = new XMLHttpRequest()
+  const promise = new Promise<UploadResult>((resolve, reject) => {
+    xhr.open('POST', `${API_BASE}/api/import/upload${buildQuery({ filename: file.name })}`)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total)
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'Upload failed — cannot reach backend'))
+    xhr.onabort = () => reject(new ApiError(0, 'Upload cancelled'))
+    xhr.onload = () => {
+      if (xhr.status === 401) window.dispatchEvent(new Event('mf-auth-required'))
+      let body: { detail?: unknown } & Partial<UploadResult> = {}
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // non-JSON body
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(body as UploadResult)
+      const msg = typeof body.detail === 'string' ? body.detail : `${xhr.status} ${xhr.statusText}`
+      reject(new ApiError(xhr.status, msg, body.detail))
+    }
+    xhr.send(file)
+  })
+  return { promise, abort: () => xhr.abort() }
+}
+
+export const importFolder = (path: string) =>
+  request<ImportFolderResponse>('/api/import/folder', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  })
+
+export const exportMediaCopy = (asset_ids: number[], dest: string | null, include_sidecars: boolean) =>
+  request<MediaCopyResponse>('/api/export/media/copy', {
+    method: 'POST',
+    body: JSON.stringify({ asset_ids, dest: dest || null, include_sidecars }),
+  })
+
+export const downloadUrl = (id: number) => `${API_BASE}/api/assets/${id}/download`
+export const zipExportUrl = (ids: number[], sidecars = true) =>
+  `${API_BASE}/api/export/media/zip${buildQuery({ ids: ids.join(','), sidecars })}`
+
+/** Trigger a browser download for a URL that answers with Content-Disposition: attachment. */
+export function triggerDownload(url: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.rel = 'noreferrer'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 // ---------- Assets ----------
 
 export interface AssetQueryParams {
@@ -115,6 +202,10 @@ export const listAssets = (params: AssetQueryParams = {}) =>
 export const getAsset = (id: number) => request<Asset>(`/api/assets/${id}`)
 export const getTranscript = (id: number) =>
   request<TranscriptResponse>(`/api/assets/${id}/transcript`)
+export const getAssetCaptions = (id: number, style: CaptionStyle) =>
+  request<AssetCaptionsResponse>(`/api/assets/${id}/captions${buildQuery({ style })}`)
+export const captionDownloadUrl = (id: number, format: CaptionFormat, style: CaptionStyle) =>
+  `${API_BASE}/api/assets/${id}/captions/${format}${buildQuery({ style })}`
 export const getScenes = (id: number) =>
   request<ScenesResponse>(`/api/assets/${id}/scenes`).then((r) => r.scenes as SceneInfo[])
 
@@ -155,6 +246,22 @@ export const updatePlan = (planId: string, clips: Clip[]) =>
   })
 export const approvePlan = (planId: string) =>
   request<{ ok: boolean; status: string }>(`/api/edits/plan/${planId}/approve`, { method: 'POST' })
+export const planPackageUrl = (planId: string) => `${API_BASE}/api/edits/plan/${planId}/package`
+
+export interface CreateStoryRequest {
+  script: string
+  voice_id?: string | null
+  trip_id?: number | null
+  ratio?: RenderRatio
+  title?: string | null
+  caption_style?: 'kinetic' | 'classic'
+  cloud_approved: boolean
+  voice_consent: boolean
+  max_characters: number
+}
+
+export const createStory = (body: CreateStoryRequest) =>
+  request<StoryJobResponse>('/api/edits/story', { method: 'POST', body: JSON.stringify(body) })
 
 // ---------- Render ----------
 
@@ -165,6 +272,12 @@ export const startRender = (body: {
   captions: boolean
   width: number
   height: number
+  presets?: RenderRatio[]
+  reframe?: 'smart' | 'center'
+  safe_zones?: { top?: number; bottom?: number; right?: number }
+  guide_overlay?: boolean
+  music?: 'auto'
+  music_auto?: boolean
 }) => request<StartJobResponse>('/api/render', { method: 'POST', body: JSON.stringify(body) })
 
 export const getRenderStatus = (jobId: string) => request<RenderStatus>(`/api/render/${jobId}`)
@@ -223,7 +336,7 @@ export const getJob = (jobId: string) => request<Job>(`/api/jobs/${jobId}`)
 // The backend writes these under its exports dir; they are served statically at /exports/... .
 export function exportedFileUrl(serverPath: string | null | undefined): string | null {
   if (!serverPath) return null
-  const filename = serverPath.split('/').pop()
-  if (!filename) return null
-  return `${API_BASE}/exports/${encodeURIComponent(filename)}`
+  const relative = serverPath.includes('/exports/') ? serverPath.split('/exports/').slice(1).join('/exports/') : serverPath.split('/').pop()
+  if (!relative || relative.split('/').some((part) => part === '..')) return null
+  return `${API_BASE}/exports/${relative.split('/').map(encodeURIComponent).join('/')}`
 }

@@ -130,9 +130,14 @@ export function connectWs(): void {
     }
   }
 
-  socket.onclose = () => {
+  socket.onclose = (event) => {
     useWsStore.getState().setConnected(false)
     socket = null
+    if (event.code === 4401) {
+      manuallyClosed = true
+      window.dispatchEvent(new Event('mf-auth-required'))
+      return
+    }
     if (!manuallyClosed) scheduleReconnect()
   }
 

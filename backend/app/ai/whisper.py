@@ -170,17 +170,18 @@ def _run(path: str) -> Optional[dict]:
     segments: list[dict] = []
     words: list[dict] = []
     for seg in segments_iter:
+        segment_words = [{
+            "start": round(float(w.start), 3),
+            "end": round(float(w.end), 3),
+            "word": (w.word or "").strip(),
+        } for w in (seg.words or [])]
         segments.append({
             "start": round(float(seg.start), 3),
             "end": round(float(seg.end), 3),
             "text": (seg.text or "").strip(),
+            "words": segment_words,
         })
-        for w in (seg.words or []):
-            words.append({
-                "start": round(float(w.start), 3),
-                "end": round(float(w.end), 3),
-                "word": (w.word or "").strip(),
-            })
+        words.extend(segment_words)
     if not segments:
         return None
     return {"segments": segments, "words": words}

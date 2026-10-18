@@ -141,12 +141,24 @@ class Job(Base):
 
     id = Column(String, primary_key=True)
     kind = Column(String, nullable=False, index=True)  # scan|ai|render|touchup
-    status = Column(String, default="running")          # running|done|error|cancelled
+    status = Column(String, default="running")          # queued|running|done|error|cancelled|interrupted
     progress = Column(Float, default=0.0)
     message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     finished_at = Column(DateTime, nullable=True)
     meta = Column(Text, nullable=True)  # JSON
+
+
+class ScanSkip(Base):
+    """Files the scanner already examined and deliberately skipped (a byte-identical
+    duplicate of another asset). Lets later scans skip them by path+size+mtime
+    instead of re-hashing the whole file every time."""
+    __tablename__ = "scan_skips"
+
+    path = Column(String, primary_key=True)
+    size = Column(Integer, nullable=False)
+    mtime_ns = Column(Integer, nullable=False)
+    reason = Column(String, nullable=True)
 
 
 class SystemSetting(Base):

@@ -1,0 +1,1658 @@
+{
+  "api": "http://100.104.197.107:8420",
+  "drone_prefix": "/srv/iris/media/library/blue-drone-1o1/",
+  "music_dir": "/srv/iris/media/music/suno",
+  "videos": [
+    {
+      "id": "AW01",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Does ChatGPT know you exist?",
+      "hook": "Does AI know your business exists?",
+      "hints": [
+        "aerial Calgary skyline",
+        "suburban neighborhood",
+        "highway"
+      ],
+      "paragraphs": [
+        "When someone asks ChatGPT who to call in Calgary, does it know *you* exist?",
+        "More people are skipping Google and asking AI *directly*.",
+        "If your website isn't built so machines can read it, you're *invisible* to them.",
+        "We build sites that Google, Maps, and AI can *verify*.",
+        "Run the live scan at albertaweb dot design and see where you stand."
+      ],
+      "post": "Your next customer might never see your website. They'll ask AI instead. Is your business on its list? 🔎 Live scan at albertaweb.design #calgarybusiness #albertabusiness #localseo #aisearch #smallbusinesscanada",
+      "slug": "does-chatgpt-know-you-exist",
+      "music": {
+        "track": "beyond_the_final_peak.mp3",
+        "section": "default"
+      },
+      "post_text": "Your next customer might never see your website. They'll ask AI instead. Is your business on its list? 🔎 Live scan at albertaweb.design",
+      "hashtags": [
+        "#calgarybusiness",
+        "#albertabusiness",
+        "#localseo",
+        "#aisearch",
+        "#smallbusinesscanada"
+      ],
+      "script": "When someone asks ChatGPT who to call in Calgary, does it know *you* exist?\n\nMore people are skipping Google and asking AI *directly*.\n\nIf your website isn't built so machines can read it, you're *invisible* to them.\n\nWe build sites that Google, Maps, and AI can *verify*.\n\nRun the live scan at albertaweb dot design and see where you stand."
+    },
+    {
+      "id": "AW02",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Own it, don't rent it",
+      "hook": "Are you renting your website?",
+      "hints": [
+        "aerial house construction",
+        "residential neighborhood"
+      ],
+      "paragraphs": [
+        "Most small business websites are *rented*.",
+        "Locked into a template platform, paying every month, and you own *nothing*.",
+        "We custom code lightweight sites, and the code is *yours*.",
+        "Faster, cleaner, and built to turn visitors into *leads*.",
+        "Book a consult at albertaweb dot design."
+      ],
+      "post": "Templates are rent. Custom code is equity. 🏗️ #webdesign #albertabusiness #contractors #ownyourwebsite #calgary",
+      "slug": "own-it-don-t-rent-it",
+      "music": {
+        "track": "saturday_street_slide.mp3",
+        "section": "default"
+      },
+      "post_text": "Templates are rent. Custom code is equity. 🏗️",
+      "hashtags": [
+        "#webdesign",
+        "#albertabusiness",
+        "#contractors",
+        "#ownyourwebsite",
+        "#calgary"
+      ],
+      "script": "Most small business websites are *rented*.\n\nLocked into a template platform, paying every month, and you own *nothing*.\n\nWe custom code lightweight sites, and the code is *yours*.\n\nFaster, cleaner, and built to turn visitors into *leads*.\n\nBook a consult at albertaweb dot design."
+    },
+    {
+      "id": "AW03",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Your website is your truck",
+      "hook": "Trades: read this before your next job",
+      "hints": [
+        "construction site aerial",
+        "suburban houses",
+        "road"
+      ],
+      "paragraphs": [
+        "You'd never show up to a job in a *broken* truck.",
+        "So why is your website slow, dated, and missing your phone number?",
+        "For trades, your website is the *first* site visit.",
+        "We build fast, mobile-first sites made to get you the *call*.",
+        "albertaweb dot design. Call or book a consult today."
+      ],
+      "post": "First impressions happen online now. 🛠️ #tradesbusiness #contractorlife #calgarytrades #edmontontrades #webdesign",
+      "slug": "your-website-is-your-truck",
+      "music": {
+        "track": "Grief and Glory.m4a",
+        "section": "default"
+      },
+      "post_text": "First impressions happen online now. 🛠️",
+      "hashtags": [
+        "#tradesbusiness",
+        "#contractorlife",
+        "#calgarytrades",
+        "#edmontontrades",
+        "#webdesign"
+      ],
+      "script": "You'd never show up to a job in a *broken* truck.\n\nSo why is your website slow, dated, and missing your phone number?\n\nFor trades, your website is the *first* site visit.\n\nWe build fast, mobile-first sites made to get you the *call*.\n\nalbertaweb dot design. Call or book a consult today."
+    },
+    {
+      "id": "AW04",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "ORG",
+      "name": "Every roof is a business",
+      "hook": "Look at all these roofs…",
+      "hints": [
+        "aerial suburban neighborhood",
+        "houses snow",
+        "rooftops"
+      ],
+      "paragraphs": [
+        "From up here, every roof is a *customer* waiting.",
+        "Somewhere down there, someone needs a roofer, a plumber, an electrician, *today*.",
+        "They'll grab their phone and search.",
+        "The only question is whether your business *shows up*.",
+        "That's the job we do. Follow for more."
+      ],
+      "post": "Somewhere down there, someone needs you right now. 🏠 #calgary #dronefootage #smallbusiness #localbusiness #albertaweb",
+      "slug": "every-roof-is-a-business",
+      "music": null,
+      "post_text": "Somewhere down there, someone needs you right now. 🏠",
+      "hashtags": [
+        "#calgary",
+        "#dronefootage",
+        "#smallbusiness",
+        "#localbusiness",
+        "#albertaweb"
+      ],
+      "script": "From up here, every roof is a *customer* waiting.\n\nSomewhere down there, someone needs a roofer, a plumber, an electrician, *today*.\n\nThey'll grab their phone and search.\n\nThe only question is whether your business *shows up*.\n\nThat's the job we do. Follow for more."
+    },
+    {
+      "id": "AW05",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "$299 AI visibility audit",
+      "hook": "$299 could save your leads",
+      "hints": [
+        "aerial city skyline",
+        "highway",
+        "cityscape"
+      ],
+      "paragraphs": [
+        "For two hundred ninety nine dollars, we'll tell you exactly how *visible* you are.",
+        "To Google. To Maps. And to the AI assistants your customers are *already* using.",
+        "No fluff, no mystery twelve thousand dollar PDF.",
+        "Just a clear list of what's *broken* and how to fix it.",
+        "Book your AI visibility audit at albertaweb dot design."
+      ],
+      "post": "Know exactly where you stand. 📋 #seoaudit #aivisibility #albertabusiness #calgarybusiness #edmontonbusiness",
+      "slug": "299-ai-visibility-audit",
+      "music": {
+        "track": "432 Hz Rooftop.m4a",
+        "section": "default"
+      },
+      "post_text": "Know exactly where you stand. 📋",
+      "hashtags": [
+        "#seoaudit",
+        "#aivisibility",
+        "#albertabusiness",
+        "#calgarybusiness",
+        "#edmontonbusiness"
+      ],
+      "script": "For two hundred ninety nine dollars, we'll tell you exactly how *visible* you are.\n\nTo Google. To Maps. And to the AI assistants your customers are *already* using.\n\nNo fluff, no mystery twelve thousand dollar PDF.\n\nJust a clear list of what's *broken* and how to fix it.\n\nBook your AI visibility audit at albertaweb dot design."
+    },
+    {
+      "id": "AW06",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Three seconds",
+      "hook": "You have 3 seconds",
+      "hints": [
+        "fast highway aerial",
+        "cars",
+        "night city"
+      ],
+      "paragraphs": [
+        "Three *seconds*.",
+        "That's how long people wait for your site before they hit back and call your *competitor*.",
+        "Slow websites don't just look bad. They lose *jobs*.",
+        "Every site we build is fast by default, with Core Web Vitals as standard.",
+        "See how fast yours is. Live scan at albertaweb dot design."
+      ],
+      "post": "Speed is a sales feature. ⚡ #websitespeed #corewebvitals #webdesign #albertabusiness #leadgeneration",
+      "slug": "three-seconds",
+      "music": {
+        "track": "the_three_second_reset.mp3",
+        "section": "default"
+      },
+      "post_text": "Speed is a sales feature. ⚡",
+      "hashtags": [
+        "#websitespeed",
+        "#corewebvitals",
+        "#webdesign",
+        "#albertabusiness",
+        "#leadgeneration"
+      ],
+      "script": "Three *seconds*.\n\nThat's how long people wait for your site before they hit back and call your *competitor*.\n\nSlow websites don't just look bad. They lose *jobs*.\n\nEvery site we build is fast by default, with Core Web Vitals as standard.\n\nSee how fast yours is. Live scan at albertaweb dot design."
+    },
+    {
+      "id": "AW07",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "ORG",
+      "name": "What Google Maps actually reads",
+      "hook": "Google Maps reads more than you think",
+      "hints": [
+        "aerial roads intersections",
+        "city grid",
+        "neighborhood"
+      ],
+      "paragraphs": [
+        "Google Maps doesn't just look at your *pin*.",
+        "It checks your name, address, hours, and services against your *website*.",
+        "If they don't match, it trusts you *less*.",
+        "Fix the details and you rank *higher* for free.",
+        "Follow for more local search tips from Alberta."
+      ],
+      "post": "Free local SEO fix most businesses miss. 📍 #googlemaps #localseo #googlebusinessprofile #smallbusinesstips #calgary",
+      "slug": "what-google-maps-actually-reads",
+      "music": null,
+      "post_text": "Free local SEO fix most businesses miss. 📍",
+      "hashtags": [
+        "#googlemaps",
+        "#localseo",
+        "#googlebusinessprofile",
+        "#smallbusinesstips",
+        "#calgary"
+      ],
+      "script": "Google Maps doesn't just look at your *pin*.\n\nIt checks your name, address, hours, and services against your *website*.\n\nIf they don't match, it trusts you *less*.\n\nFix the details and you rank *higher* for free.\n\nFollow for more local search tips from Alberta."
+    },
+    {
+      "id": "AW08",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "No mystery PDF",
+      "hook": "Website quotes shouldn't be a mystery",
+      "hints": [
+        "aerial construction site",
+        "building",
+        "skyline"
+      ],
+      "paragraphs": [
+        "Ever asked for a website quote and got a *mystery* number?",
+        "We publish our pricing. Custom sites from sixty five hundred to twelve thousand five hundred.",
+        "You know what you get, and you *own* the code.",
+        "And if your project isn't a fit, we'll tell you *plainly*.",
+        "albertaweb dot design. Book a consult."
+      ],
+      "post": "Transparent pricing. Honest fit. 🤝 #webdesignpricing #albertabusiness #customwebsite #calgary #edmonton",
+      "slug": "no-mystery-pdf",
+      "music": {
+        "track": "ten_minute_reset.mp3",
+        "section": "default"
+      },
+      "post_text": "Transparent pricing. Honest fit. 🤝",
+      "hashtags": [
+        "#webdesignpricing",
+        "#albertabusiness",
+        "#customwebsite",
+        "#calgary",
+        "#edmonton"
+      ],
+      "script": "Ever asked for a website quote and got a *mystery* number?\n\nWe publish our pricing. Custom sites from sixty five hundred to twelve thousand five hundred.\n\nYou know what you get, and you *own* the code.\n\nAnd if your project isn't a fit, we'll tell you *plainly*.\n\nalbertaweb dot design. Book a consult."
+    },
+    {
+      "id": "AW09",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "ORG",
+      "name": "Calgary, Edmonton, Red Deer",
+      "hook": "Alberta businesses, this is for you",
+      "hints": [
+        "Calgary skyline aerial",
+        "Edmonton aerial",
+        "highway between cities"
+      ],
+      "paragraphs": [
+        "Calgary. Edmonton. *Red Deer*.",
+        "Thousands of great local businesses, and most are *invisible* online.",
+        "Not because they're bad at what they do.",
+        "Because their website was never built to be *found*.",
+        "We're changing that, one Alberta business at a time."
+      ],
+      "post": "Built in Alberta, for Alberta. 🇨🇦 #alberta #calgary #edmonton #reddeer #shoplocal",
+      "slug": "calgary-edmonton-red-deer",
+      "music": null,
+      "post_text": "Built in Alberta, for Alberta. 🇨🇦",
+      "hashtags": [
+        "#alberta",
+        "#calgary",
+        "#edmonton",
+        "#reddeer",
+        "#shoplocal"
+      ],
+      "script": "Calgary. Edmonton. *Red Deer*.\n\nThousands of great local businesses, and most are *invisible* online.\n\nNot because they're bad at what they do.\n\nBecause their website was never built to be *found*.\n\nWe're changing that, one Alberta business at a time."
+    },
+    {
+      "id": "AW10",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Missed calls at night",
+      "hook": "Who answers your leads at 11pm?",
+      "hints": [
+        "night city aerial",
+        "illuminated highway"
+      ],
+      "paragraphs": [
+        "It's eleven at night and a customer just found your *website*.",
+        "Nobody answers. By morning, they've booked someone *else*.",
+        "Our lead automation captures them, replies *instantly*, and books the job.",
+        "Your business keeps working while you *sleep*.",
+        "Lead automation from albertaweb dot design."
+      ],
+      "post": "Leads don't keep business hours. 🌙 #leadautomation #smallbusiness #contractors #aiautomation #albertabusiness",
+      "slug": "missed-calls-at-night",
+      "music": {
+        "track": "Sombra do Crime.m4a",
+        "section": "default"
+      },
+      "post_text": "Leads don't keep business hours. 🌙",
+      "hashtags": [
+        "#leadautomation",
+        "#smallbusiness",
+        "#contractors",
+        "#aiautomation",
+        "#albertabusiness"
+      ],
+      "script": "It's eleven at night and a customer just found your *website*.\n\nNobody answers. By morning, they've booked someone *else*.\n\nOur lead automation captures them, replies *instantly*, and books the job.\n\nYour business keeps working while you *sleep*.\n\nLead automation from albertaweb dot design."
+    },
+    {
+      "id": "AW11",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "ORG",
+      "name": "3 signs your website costs you jobs",
+      "hook": "3 signs your website is costing you jobs",
+      "hints": [
+        "aerial neighborhood",
+        "road",
+        "houses"
+      ],
+      "paragraphs": [
+        "Three signs your website is *costing* you jobs.",
+        "One. Your phone number isn't tappable on *mobile*.",
+        "Two. It takes more than three seconds to *load*.",
+        "Three. It doesn't say what city you *serve*.",
+        "Fix those today. Follow for part two."
+      ],
+      "post": "Check yours right now 👀 #websitetips #smallbusinesstips #webdesign #trades #calgarybusiness",
+      "slug": "3-signs-your-website-costs-you-jobs",
+      "music": null,
+      "post_text": "Check yours right now 👀",
+      "hashtags": [
+        "#websitetips",
+        "#smallbusinesstips",
+        "#webdesign",
+        "#trades",
+        "#calgarybusiness"
+      ],
+      "script": "Three signs your website is *costing* you jobs.\n\nOne. Your phone number isn't tappable on *mobile*.\n\nTwo. It takes more than three seconds to *load*.\n\nThree. It doesn't say what city you *serve*.\n\nFix those today. Follow for part two."
+    },
+    {
+      "id": "AW12",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Retrofit, don't rebuild",
+      "hook": "You might not need a new website",
+      "hints": [
+        "construction site aerial",
+        "building frame",
+        "crane"
+      ],
+      "paragraphs": [
+        "You might not need a whole new *website*.",
+        "Our knowledge layer retrofit makes your *existing* site readable to Google and AI.",
+        "Structured data, clear services, verified details, added to what you *already* have.",
+        "Fifteen hundred to thirty five hundred, *done*.",
+        "Ask about a retrofit at albertaweb dot design."
+      ],
+      "post": "Upgrade, don't start over. 🔧 #websiteupgrade #structureddata #aisearch #albertabusiness #seo",
+      "slug": "retrofit-don-t-rebuild",
+      "music": {
+        "track": "beyond_the_final_peak.mp3",
+        "section": "later"
+      },
+      "post_text": "Upgrade, don't start over. 🔧",
+      "hashtags": [
+        "#websiteupgrade",
+        "#structureddata",
+        "#aisearch",
+        "#albertabusiness",
+        "#seo"
+      ],
+      "script": "You might not need a whole new *website*.\n\nOur knowledge layer retrofit makes your *existing* site readable to Google and AI.\n\nStructured data, clear services, verified details, added to what you *already* have.\n\nFifteen hundred to thirty five hundred, *done*.\n\nAsk about a retrofit at albertaweb dot design."
+    },
+    {
+      "id": "AW13",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "ORG",
+      "name": "Built for the people who build",
+      "hook": "Respect to the trades",
+      "hints": [
+        "construction site aerial",
+        "house under construction",
+        "residential"
+      ],
+      "paragraphs": [
+        "Every house down there was built by someone who *shows up*.",
+        "Early mornings. Cold sites. Real *work*.",
+        "Those businesses deserve websites that work as hard as *they* do.",
+        "That's who we build for.",
+        "Tag a tradesperson who deserves more *calls*."
+      ],
+      "post": "Built for the people who build Alberta. 🏗️ #trades #construction #alberta #contractors #respectthetrades",
+      "slug": "built-for-the-people-who-build",
+      "music": null,
+      "post_text": "Built for the people who build Alberta. 🏗️",
+      "hashtags": [
+        "#trades",
+        "#construction",
+        "#alberta",
+        "#contractors",
+        "#respectthetrades"
+      ],
+      "script": "Every house down there was built by someone who *shows up*.\n\nEarly mornings. Cold sites. Real *work*.\n\nThose businesses deserve websites that work as hard as *they* do.\n\nThat's who we build for.\n\nTag a tradesperson who deserves more *calls*."
+    },
+    {
+      "id": "AW14",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Agent-ready",
+      "hook": "Is your website agent-ready?",
+      "hints": [
+        "aerial highway interchange",
+        "city",
+        "night skyline"
+      ],
+      "paragraphs": [
+        "AI agents are starting to *book* services for people.",
+        "They read your website, check your details, and *choose*.",
+        "If your site is a pretty picture with no *structure*, they skip you.",
+        "We build agent-ready sites that machines can understand and *trust*.",
+        "Build an agent-ready site at albertaweb dot design."
+      ],
+      "post": "The next customer might be an AI agent. 🤖 #aiagents #futureofsearch #webdesign #albertabusiness #techcanada",
+      "slug": "agent-ready",
+      "music": {
+        "track": "432 Hz Rooftop.m4a",
+        "section": "drop"
+      },
+      "post_text": "The next customer might be an AI agent. 🤖",
+      "hashtags": [
+        "#aiagents",
+        "#futureofsearch",
+        "#webdesign",
+        "#albertabusiness",
+        "#techcanada"
+      ],
+      "script": "AI agents are starting to *book* services for people.\n\nThey read your website, check your details, and *choose*.\n\nIf your site is a pretty picture with no *structure*, they skip you.\n\nWe build agent-ready sites that machines can understand and *trust*.\n\nBuild an agent-ready site at albertaweb dot design."
+    },
+    {
+      "id": "AW15",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "ORG",
+      "name": "Honest fit",
+      "hook": "We turn down projects. Here's why.",
+      "hints": [
+        "calm aerial suburb",
+        "sunset",
+        "trees"
+      ],
+      "paragraphs": [
+        "We turn down *projects*.",
+        "If a website won't actually get you more leads, we'll say so *plainly*.",
+        "Sometimes you need a retrofit. Sometimes a Google profile fix. Sometimes *nothing*.",
+        "Honest advice builds *trust*. And trust builds business.",
+        "Follow for straight answers about your website."
+      ],
+      "post": "Straight answers only. 💬 #honestbusiness #webdesign #smallbusinessadvice #alberta #calgary",
+      "slug": "honest-fit",
+      "music": null,
+      "post_text": "Straight answers only. 💬",
+      "hashtags": [
+        "#honestbusiness",
+        "#webdesign",
+        "#smallbusinessadvice",
+        "#alberta",
+        "#calgary"
+      ],
+      "script": "We turn down *projects*.\n\nIf a website won't actually get you more leads, we'll say so *plainly*.\n\nSometimes you need a retrofit. Sometimes a Google profile fix. Sometimes *nothing*.\n\nHonest advice builds *trust*. And trust builds business.\n\nFollow for straight answers about your website."
+    },
+    {
+      "id": "DB01",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "Systems create freedom",
+      "hook": "Discipline → Systems → Freedom",
+      "hints": [
+        "night highway aerial",
+        "city lights flowing"
+      ],
+      "paragraphs": [
+        "Discipline builds *systems*.",
+        "Systems build *freedom*.",
+        "Every hour you spend on busy work is an hour you're not *building*.",
+        "Automate it once, and it runs *forever*.",
+        "Systems create freedom. Follow if you're building."
+      ],
+      "post": "Systems create freedom. ⚙️ #buildwithdb #systemscreatefreedom #entrepreneur #automation #discipline",
+      "slug": "systems-create-freedom",
+      "music": null,
+      "post_text": "Systems create freedom. ⚙️",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#automation",
+        "#discipline"
+      ],
+      "script": "Discipline builds *systems*.\n\nSystems build *freedom*.\n\nEvery hour you spend on busy work is an hour you're not *building*.\n\nAutomate it once, and it runs *forever*.\n\nSystems create freedom. Follow if you're building."
+    },
+    {
+      "id": "DB02",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "20 years in the field",
+      "hook": "From the job site to AI",
+      "hints": [
+        "construction site aerial",
+        "industrial",
+        "highway"
+      ],
+      "paragraphs": [
+        "I spent over twenty years in the *field*.",
+        "Red Seal Master Electrician. HVAC technician. Early starts, hard *jobs*.",
+        "I learned that every great job site runs on *systems*.",
+        "Now I build those systems with *AI*, for people like me.",
+        "This is Build With DB. Follow the journey."
+      ],
+      "post": "From the field to the code. ⚡ #redseal #electrician #tradestotech #buildwithdb #entrepreneurjourney",
+      "slug": "20-years-in-the-field",
+      "music": null,
+      "post_text": "From the field to the code. ⚡",
+      "hashtags": [
+        "#redseal",
+        "#electrician",
+        "#tradestotech",
+        "#buildwithdb",
+        "#entrepreneurjourney"
+      ],
+      "script": "I spent over twenty years in the *field*.\n\nRed Seal Master Electrician. HVAC technician. Early starts, hard *jobs*.\n\nI learned that every great job site runs on *systems*.\n\nNow I build those systems with *AI*, for people like me.\n\nThis is Build With DB. Follow the journey."
+    },
+    {
+      "id": "DB03",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "Ignite Gig: free tax tracker",
+      "hook": "Gig workers: tax season hits different",
+      "hints": [
+        "highway cars aerial",
+        "city streets",
+        "night roads"
+      ],
+      "paragraphs": [
+        "Driving, delivering, freelancing? Tax season sneaks up *fast*.",
+        "Ignite Gig is a *free* app that tracks your gig income and expenses.",
+        "Built for Canada and the US, so you're not *scrambling* in April.",
+        "Know your numbers *all* year.",
+        "Get Ignite Gig free at buildwithdb dot ca."
+      ],
+      "post": "Track it now, thank yourself later. 🚗 #gigworker #ubereats #doordashdriver #taxtips #igniteGig",
+      "slug": "ignite-gig-free-tax-tracker",
+      "music": {
+        "track": "Keep building (short).m4a",
+        "section": "default"
+      },
+      "post_text": "Track it now, thank yourself later. 🚗",
+      "hashtags": [
+        "#gigworker",
+        "#ubereats",
+        "#doordashdriver",
+        "#taxtips",
+        "#igniteGig"
+      ],
+      "script": "Driving, delivering, freelancing? Tax season sneaks up *fast*.\n\nIgnite Gig is a *free* app that tracks your gig income and expenses.\n\nBuilt for Canada and the US, so you're not *scrambling* in April.\n\nKnow your numbers *all* year.\n\nGet Ignite Gig free at buildwithdb dot ca."
+    },
+    {
+      "id": "DB04",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "Your website at 2am",
+      "hook": "Your website should talk back",
+      "hints": [
+        "night city aerial",
+        "lit highway"
+      ],
+      "paragraphs": [
+        "It's two in the morning and someone lands on your *website*.",
+        "My AI concierge greets them, answers questions, and *captures* the lead.",
+        "No forms they'll ignore. A real *conversation*.",
+        "You wake up to booked jobs.",
+        "Request a build at buildwithdb dot ca and try the live demo."
+      ],
+      "post": "Try the live AI concierge on the homepage. 🤖 #aiconcierge #chatbot #leadgeneration #smallbusiness #buildwithdb",
+      "slug": "your-website-at-2am",
+      "music": {
+        "track": "Sombra do Crime.m4a",
+        "section": "default"
+      },
+      "post_text": "Try the live AI concierge on the homepage. 🤖",
+      "hashtags": [
+        "#aiconcierge",
+        "#chatbot",
+        "#leadgeneration",
+        "#smallbusiness",
+        "#buildwithdb"
+      ],
+      "script": "It's two in the morning and someone lands on your *website*.\n\nMy AI concierge greets them, answers questions, and *captures* the lead.\n\nNo forms they'll ignore. A real *conversation*.\n\nYou wake up to booked jobs.\n\nRequest a build at buildwithdb dot ca and try the live demo."
+    },
+    {
+      "id": "DB05",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "Busy work is a tax",
+      "hook": "You're paying a tax you don't see",
+      "hints": [
+        "traffic aerial",
+        "roads",
+        "suburb"
+      ],
+      "paragraphs": [
+        "Busy work is a *tax* on your time.",
+        "Copying data. Chasing invoices. Answering the same five *questions*.",
+        "You pay it every day, and it never shows up on a *receipt*.",
+        "Automation is how you stop *paying*.",
+        "Follow for systems that buy back your time."
+      ],
+      "post": "Stop paying the busy-work tax. ⏳ #automation #productivity #smallbusiness #timefreedom #buildwithdb",
+      "slug": "busy-work-is-a-tax",
+      "music": null,
+      "post_text": "Stop paying the busy-work tax. ⏳",
+      "hashtags": [
+        "#automation",
+        "#productivity",
+        "#smallbusiness",
+        "#timefreedom",
+        "#buildwithdb"
+      ],
+      "script": "Busy work is a *tax* on your time.\n\nCopying data. Chasing invoices. Answering the same five *questions*.\n\nYou pay it every day, and it never shows up on a *receipt*.\n\nAutomation is how you stop *paying*.\n\nFollow for systems that buy back your time."
+    },
+    {
+      "id": "DB06",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "Lead capture funnel",
+      "hook": "Traffic means nothing without this",
+      "hints": [
+        "highway funnel interchange",
+        "roads merging"
+      ],
+      "paragraphs": [
+        "Traffic means *nothing* if it doesn't turn into leads.",
+        "I build lead capture funnels that *catch* every visitor worth catching.",
+        "Then they follow up *automatically*, until the job is booked.",
+        "Your marketing finally *pays*.",
+        "Request a build at buildwithdb dot ca."
+      ],
+      "post": "Turn traffic into booked jobs. 🎯 #salesfunnel #leadgeneration #marketingautomation #contractors #buildwithdb",
+      "slug": "lead-capture-funnel",
+      "music": {
+        "track": "Dark Gold Grind.m4a",
+        "section": "default"
+      },
+      "post_text": "Turn traffic into booked jobs. 🎯",
+      "hashtags": [
+        "#salesfunnel",
+        "#leadgeneration",
+        "#marketingautomation",
+        "#contractors",
+        "#buildwithdb"
+      ],
+      "script": "Traffic means *nothing* if it doesn't turn into leads.\n\nI build lead capture funnels that *catch* every visitor worth catching.\n\nThen they follow up *automatically*, until the job is booked.\n\nYour marketing finally *pays*.\n\nRequest a build at buildwithdb dot ca."
+    },
+    {
+      "id": "DB07",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "From the field to the code",
+      "hook": "Tradespeople make great builders",
+      "hints": [
+        "construction site",
+        "houses being built",
+        "aerial"
+      ],
+      "paragraphs": [
+        "People think tech is for *coders*.",
+        "But tradespeople already think in *systems*. Wiring, flow, load, *control*.",
+        "AI just gives us new tools to build *with*.",
+        "If you can wire a panel, you can build an automation.",
+        "Follow if you're a tradesperson building something new."
+      ],
+      "post": "Trades minds are systems minds. 🔌 #trades #ai #tradestotech #electrician #buildwithdb",
+      "slug": "from-the-field-to-the-code",
+      "music": null,
+      "post_text": "Trades minds are systems minds. 🔌",
+      "hashtags": [
+        "#trades",
+        "#ai",
+        "#tradestotech",
+        "#electrician",
+        "#buildwithdb"
+      ],
+      "script": "People think tech is for *coders*.\n\nBut tradespeople already think in *systems*. Wiring, flow, load, *control*.\n\nAI just gives us new tools to build *with*.\n\nIf you can wire a panel, you can build an automation.\n\nFollow if you're a tradesperson building something new."
+    },
+    {
+      "id": "DB08",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "Never miss a call",
+      "hook": "Every missed call is a lost job",
+      "hints": [
+        "busy roads aerial",
+        "city",
+        "highway"
+      ],
+      "paragraphs": [
+        "Every missed call is a job going to your *competitor*.",
+        "I build AI voice agents that answer, qualify, and *book*, around the clock.",
+        "They sound natural and they never take a *day* off.",
+        "You focus on the work. The system handles the *phone*.",
+        "Request a build at buildwithdb dot ca."
+      ],
+      "post": "Your phone, handled 24/7. 📞 #aivoiceagent #callautomation #smallbusiness #contractors #buildwithdb",
+      "slug": "never-miss-a-call",
+      "music": {
+        "track": "Buildremix.m4a",
+        "section": "default"
+      },
+      "post_text": "Your phone, handled 24/7. 📞",
+      "hashtags": [
+        "#aivoiceagent",
+        "#callautomation",
+        "#smallbusiness",
+        "#contractors",
+        "#buildwithdb"
+      ],
+      "script": "Every missed call is a job going to your *competitor*.\n\nI build AI voice agents that answer, qualify, and *book*, around the clock.\n\nThey sound natural and they never take a *day* off.\n\nYou focus on the work. The system handles the *phone*.\n\nRequest a build at buildwithdb dot ca."
+    },
+    {
+      "id": "DB09",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "Six principles",
+      "hook": "The 6 principles I build by",
+      "hints": [
+        "varied aerials",
+        "city",
+        "nature",
+        "night"
+      ],
+      "paragraphs": [
+        "Six principles I *build* by.",
+        "*Automate*. *Create*.",
+        "*Grow*. *Protect*.",
+        "*Innovate*. And *live*.",
+        "Which one are you working on? Comment below."
+      ],
+      "post": "Which one are you on right now? 👇 #buildwithdb #principles #entrepreneurmindset #systemscreatefreedom #growth",
+      "slug": "six-principles",
+      "music": null,
+      "post_text": "Which one are you on right now? 👇",
+      "hashtags": [
+        "#buildwithdb",
+        "#principles",
+        "#entrepreneurmindset",
+        "#systemscreatefreedom",
+        "#growth"
+      ],
+      "script": "Six principles I *build* by.\n\n*Automate*. *Create*.\n\n*Grow*. *Protect*.\n\n*Innovate*. And *live*.\n\nWhich one are you working on? Comment below."
+    },
+    {
+      "id": "DB10",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "CRM that follows up for you",
+      "hook": "The money is in the follow-up",
+      "hints": [
+        "highway loops",
+        "roads",
+        "neighborhood"
+      ],
+      "paragraphs": [
+        "The money is in the *follow up*.",
+        "But nobody has time to text every lead *three* times.",
+        "I automate your CRM, so every lead gets the right message at the right *time*.",
+        "No one falls through the *cracks*.",
+        "Request a build at buildwithdb dot ca."
+      ],
+      "post": "Follow-up on autopilot. 🔁 #crmautomation #salesfollowup #smallbusiness #automation #buildwithdb",
+      "slug": "crm-that-follows-up-for-you",
+      "music": {
+        "track": "Dark Gold Grind.m4a",
+        "section": "later"
+      },
+      "post_text": "Follow-up on autopilot. 🔁",
+      "hashtags": [
+        "#crmautomation",
+        "#salesfollowup",
+        "#smallbusiness",
+        "#automation",
+        "#buildwithdb"
+      ],
+      "script": "The money is in the *follow up*.\n\nBut nobody has time to text every lead *three* times.\n\nI automate your CRM, so every lead gets the right message at the right *time*.\n\nNo one falls through the *cracks*.\n\nRequest a build at buildwithdb dot ca."
+    },
+    {
+      "id": "DB11",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "Discipline",
+      "hook": "Nobody's coming to save you",
+      "hints": [
+        "early morning aerial",
+        "empty roads",
+        "sunrise"
+      ],
+      "paragraphs": [
+        "Nobody is coming to *build* it for you.",
+        "Motivation fades. *Discipline* stays.",
+        "Show up, build one system at a time, and let it *compound*.",
+        "A year from now, you'll be *free*.",
+        "Systems create freedom."
+      ],
+      "post": "One system at a time. 💪 #discipline #motivation #entrepreneur #buildwithdb #systemscreatefreedom",
+      "slug": "discipline",
+      "music": null,
+      "post_text": "One system at a time. 💪",
+      "hashtags": [
+        "#discipline",
+        "#motivation",
+        "#entrepreneur",
+        "#buildwithdb",
+        "#systemscreatefreedom"
+      ],
+      "script": "Nobody is coming to *build* it for you.\n\nMotivation fades. *Discipline* stays.\n\nShow up, build one system at a time, and let it *compound*.\n\nA year from now, you'll be *free*.\n\nSystems create freedom."
+    },
+    {
+      "id": "DB12",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "Start building",
+      "hook": "Want to build your own systems?",
+      "hints": [
+        "city skyline aerial",
+        "construction",
+        "highway"
+      ],
+      "paragraphs": [
+        "Want to build your own *systems*?",
+        "I teach what I use, from business basics to *automation*.",
+        "Courses built by a tradesman, for people who'd rather *build* than talk.",
+        "Start where you are and level *up*.",
+        "Press start building at buildwithdb dot ca."
+      ],
+      "post": "Learn to build systems that work for you. 📚 #onlinecourse #entrepreneur #automation #sidehustle #buildwithdb",
+      "slug": "start-building",
+      "music": {
+        "track": "Grief and Glory.m4a",
+        "section": "default"
+      },
+      "post_text": "Learn to build systems that work for you. 📚",
+      "hashtags": [
+        "#onlinecourse",
+        "#entrepreneur",
+        "#automation",
+        "#sidehustle",
+        "#buildwithdb"
+      ],
+      "script": "Want to build your own *systems*?\n\nI teach what I use, from business basics to *automation*.\n\nCourses built by a tradesman, for people who'd rather *build* than talk.\n\nStart where you are and level *up*.\n\nPress start building at buildwithdb dot ca."
+    },
+    {
+      "id": "DB13",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "Systems run while you sleep",
+      "hook": "The city never stops. Neither should your business.",
+      "hints": [
+        "night highway aerial",
+        "illuminated city"
+      ],
+      "paragraphs": [
+        "The city never *stops*.",
+        "Lights change, traffic flows, and nobody is *pushing* it.",
+        "That's a *system*.",
+        "Your business can run the *same* way.",
+        "Follow to learn how to build it."
+      ],
+      "post": "Build it once. Let it run. 🌃 #automation #passiveincome #systems #buildwithdb #nightdrone",
+      "slug": "systems-run-while-you-sleep",
+      "music": null,
+      "post_text": "Build it once. Let it run. 🌃",
+      "hashtags": [
+        "#automation",
+        "#passiveincome",
+        "#systems",
+        "#buildwithdb",
+        "#nightdrone"
+      ],
+      "script": "The city never *stops*.\n\nLights change, traffic flows, and nobody is *pushing* it.\n\nThat's a *system*.\n\nYour business can run the *same* way.\n\nFollow to learn how to build it."
+    },
+    {
+      "id": "DB14",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "This video was made by a system",
+      "hook": "This entire video was made by AI",
+      "hints": [
+        "aerial city",
+        "drone",
+        "highway"
+      ],
+      "paragraphs": [
+        "This video was made by a *system*.",
+        "My voice, cloned. Captions, *automatic*. The drone footage picked by AI.",
+        "I didn't edit a *thing*.",
+        "I build content systems like this for *businesses*.",
+        "Request a build at buildwithdb dot ca."
+      ],
+      "post": "Yes, really. Content on autopilot. 🎬 #aicontent #contentcreation #automation #aivideo #buildwithdb",
+      "slug": "this-video-was-made-by-a-system",
+      "music": {
+        "track": "the_three_second_reset.mp3",
+        "section": "default"
+      },
+      "post_text": "Yes, really. Content on autopilot. 🎬",
+      "hashtags": [
+        "#aicontent",
+        "#contentcreation",
+        "#automation",
+        "#aivideo",
+        "#buildwithdb"
+      ],
+      "script": "This video was made by a *system*.\n\nMy voice, cloned. Captions, *automatic*. The drone footage picked by AI.\n\nI didn't edit a *thing*.\n\nI build content systems like this for *businesses*.\n\nRequest a build at buildwithdb dot ca."
+    },
+    {
+      "id": "DB15",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "Wear the mindset",
+      "hook": "Systems Create Freedom",
+      "hints": [
+        "aerial skyline",
+        "night city",
+        "road"
+      ],
+      "paragraphs": [
+        "It's not just a *slogan*.",
+        "It's a reminder, every morning, that the *work* you do now buys your freedom later.",
+        "Black hoodie. Black snapback. *Built* for builders.",
+        "Wear the *mindset*.",
+        "Merch at buildwithdb dot ca."
+      ],
+      "post": "For the builders. 🖤 #buildwithdb #merch #systemscreatefreedom #entrepreneurstyle #madeincanada",
+      "slug": "wear-the-mindset",
+      "music": null,
+      "post_text": "For the builders. 🖤",
+      "hashtags": [
+        "#buildwithdb",
+        "#merch",
+        "#systemscreatefreedom",
+        "#entrepreneurstyle",
+        "#madeincanada"
+      ],
+      "script": "It's not just a *slogan*.\n\nIt's a reminder, every morning, that the *work* you do now buys your freedom later.\n\nBlack hoodie. Black snapback. *Built* for builders.\n\nWear the *mindset*.\n\nMerch at buildwithdb dot ca."
+    },
+    {
+      "id": "AW-B01",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Built for Alberta businesses",
+      "slug": "built-for-alberta-businesses",
+      "silent": false,
+      "music": {
+        "track": "heat_on_the_north-side.mp3",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "Built for Alberta *businesses*",
+      "hook": null,
+      "post_text": "Built for Alberta businesses 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B02",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Be found. Be chosen.",
+      "slug": "be-found-be-chosen",
+      "silent": false,
+      "music": {
+        "track": "heat_on_the_north-side.mp3",
+        "section": "later"
+      },
+      "target_seconds": 12,
+      "text_line": "Be found. Be *chosen*.",
+      "hook": null,
+      "post_text": "Be found. Be chosen. 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B03",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Calgary from above",
+      "slug": "calgary-from-above",
+      "silent": false,
+      "music": {
+        "track": "stone_and_steam.mp3",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "*Calgary* from above",
+      "hook": null,
+      "post_text": "Calgary from above 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B04",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Your customers are searching",
+      "slug": "your-customers-are-searching",
+      "silent": false,
+      "music": {
+        "track": "stone_and_steam.mp3",
+        "section": "later"
+      },
+      "target_seconds": 12,
+      "text_line": "Your *customers* are searching",
+      "hook": null,
+      "post_text": "Your customers are searching 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B05",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Fast sites win jobs",
+      "slug": "fast-sites-win-jobs",
+      "silent": false,
+      "music": {
+        "track": "beyond_the_final_peak.mp3",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "Fast *sites* win jobs",
+      "hook": null,
+      "post_text": "Fast sites win jobs 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B06",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Every roof is a customer",
+      "slug": "every-roof-is-a-customer",
+      "silent": false,
+      "music": {
+        "track": "saturday_street_slide.mp3",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "Every roof is a *customer*",
+      "hook": null,
+      "post_text": "Every roof is a customer 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B07",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Own your website",
+      "slug": "own-your-website",
+      "silent": false,
+      "music": {
+        "track": "Golden hour.mp3",
+        "section": "default"
+      },
+      "target_seconds": 9,
+      "text_line": "Own your *website*",
+      "hook": null,
+      "post_text": "Own your website 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B08",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Seen by Google, Maps & AI",
+      "slug": "seen-by-google-maps-ai",
+      "silent": false,
+      "music": {
+        "track": "432 Hz Rooftop.m4a",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "Seen by *Google*, Maps & AI",
+      "hook": null,
+      "post_text": "Seen by Google, Maps & AI 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B09",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Edmonton. Calgary. Red Deer.",
+      "slug": "edmonton-calgary-red-deer",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "*Edmonton*. Calgary. Red Deer.",
+      "hook": null,
+      "post_text": "Edmonton. Calgary. Red Deer. 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B10",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Built for the trades",
+      "slug": "built-for-the-trades",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "Built for the *trades*",
+      "hook": null,
+      "post_text": "Built for the trades 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B11",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Leads while you sleep",
+      "slug": "leads-while-you-sleep",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "*Leads* while you sleep",
+      "hook": null,
+      "post_text": "Leads while you sleep 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B12",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "No templates. Real code.",
+      "slug": "no-templates-real-code",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "No *templates*. Real code.",
+      "hook": null,
+      "post_text": "No templates. Real code. 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B13",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Local search starts here",
+      "slug": "local-search-starts-here",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "Local *search* starts here",
+      "hook": null,
+      "post_text": "Local search starts here 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B14",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Agent-ready websites",
+      "slug": "agent-ready-websites",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "*Agent-ready* websites",
+      "hook": null,
+      "post_text": "Agent-ready websites 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "AW-B15",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "albertaweb.design",
+      "slug": "albertaweb-design",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "*albertaweb.design*",
+      "hook": null,
+      "post_text": "albertaweb.design 🚁 albertaweb.design",
+      "hashtags": [
+        "#calgary",
+        "#albertabusiness",
+        "#dronefootage",
+        "#localseo",
+        "#webdesign"
+      ]
+    },
+    {
+      "id": "DB-B01",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Systems create freedom",
+      "slug": "systems-create-freedom",
+      "silent": false,
+      "music": {
+        "track": "Keep Building.mp3",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "*Systems* create freedom",
+      "hook": null,
+      "post_text": "Systems create freedom 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B02",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Discipline builds systems",
+      "slug": "discipline-builds-systems",
+      "silent": false,
+      "music": {
+        "track": "Keep Building.mp3",
+        "section": "later"
+      },
+      "target_seconds": 12,
+      "text_line": "*Discipline* builds systems",
+      "hook": null,
+      "post_text": "Discipline builds systems 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B03",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Build once. Let it run.",
+      "slug": "build-once-let-it-run",
+      "silent": false,
+      "music": {
+        "track": "Build it R&B.m4a",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "*Build* once. Let it run.",
+      "hook": null,
+      "post_text": "Build once. Let it run. 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B04",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "The city runs on systems",
+      "slug": "the-city-runs-on-systems",
+      "silent": false,
+      "music": {
+        "track": "Build it R&B.m4a",
+        "section": "later"
+      },
+      "target_seconds": 12,
+      "text_line": "The city runs on *systems*",
+      "hook": null,
+      "post_text": "The city runs on systems 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B05",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Automate the busy work",
+      "slug": "automate-the-busy-work",
+      "silent": false,
+      "music": {
+        "track": "Buildremix.m4a",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "*Automate* the busy work",
+      "hook": null,
+      "post_text": "Automate the busy work 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B06",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "From the field to the code",
+      "slug": "from-the-field-to-the-code",
+      "silent": false,
+      "music": {
+        "track": "Dark Gold Grind.m4a",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "From the *field* to the code",
+      "hook": null,
+      "post_text": "From the field to the code 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B07",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Night shift: handled by AI",
+      "slug": "night-shift-handled-by-ai",
+      "silent": false,
+      "music": {
+        "track": "Keep building (short).m4a",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "Night shift: *handled* by AI",
+      "hook": null,
+      "post_text": "Night shift: handled by AI 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B08",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Freedom is engineered",
+      "slug": "freedom-is-engineered",
+      "silent": false,
+      "music": {
+        "track": "Sombra do Crime.m4a",
+        "section": "default"
+      },
+      "target_seconds": 12,
+      "text_line": "Freedom is *engineered*",
+      "hook": null,
+      "post_text": "Freedom is engineered 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B09",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Build like a tradesman",
+      "slug": "build-like-a-tradesman",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "Build like a *tradesman*",
+      "hook": null,
+      "post_text": "Build like a tradesman 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B10",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Quiet work. Loud results.",
+      "slug": "quiet-work-loud-results",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "Quiet work. Loud *results*.",
+      "hook": null,
+      "post_text": "Quiet work. Loud results. 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B11",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Your time is the asset",
+      "slug": "your-time-is-the-asset",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "Your time is the *asset*",
+      "hook": null,
+      "post_text": "Your time is the asset 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B12",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Systems > hustle",
+      "slug": "systems-hustle",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "*Systems* > hustle",
+      "hook": null,
+      "post_text": "Systems > hustle 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B13",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Made in Canada",
+      "slug": "made-in-canada",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "Made in *Canada*",
+      "hook": null,
+      "post_text": "Made in Canada 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B14",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Press start building",
+      "slug": "press-start-building",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "Press start *building*",
+      "hook": null,
+      "post_text": "Press start building 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    },
+    {
+      "id": "DB-B15",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "buildwithdb.ca",
+      "slug": "buildwithdb-ca",
+      "silent": true,
+      "music": null,
+      "target_seconds": 12,
+      "text_line": "*buildwithdb.ca*",
+      "hook": null,
+      "post_text": "buildwithdb.ca 🚁 @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#entrepreneur",
+        "#dronefootage",
+        "#automation"
+      ]
+    }
+  ]
+}

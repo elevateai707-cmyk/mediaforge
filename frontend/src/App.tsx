@@ -8,10 +8,11 @@ import { EditStudioPage } from '@/pages/EditStudioPage'
 import { TouchUpPage } from '@/pages/TouchUpPage'
 import { DedupePage } from '@/pages/DedupePage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { AuthGate } from '@/components/AuthGate'
 
 export default function App() {
   return (
-    <Routes>
+    <AuthGate><Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<LibraryPage />} />
         <Route path="/search" element={<SearchPage />} />
@@ -23,6 +24,6 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
-    </Routes>
+    </Routes></AuthGate>
   )
 }

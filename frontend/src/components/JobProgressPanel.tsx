@@ -12,6 +12,8 @@ const KIND_LABEL: Record<string, string> = {
   ai: 'AI analysis',
   render: 'Rendering',
   touchup: 'Touch-up',
+  import: 'Importing',
+  export: 'Exporting',
 }
 
 export function JobProgressPanel() {

@@ -1,0 +1,18 @@
+# Brand end cards for story / B-roll plans (`brand: <id>` on POST /api/edits/story
+# and POST /api/edits/broll). Colors are #RRGGBB; the first two form the gradient
+# of the brand name. logo_path (optional) is a local PNG shown above the name.
+albertaweb:
+  name: "AlbertaWeb.Design"
+  handle: "albertaweb.design"
+  url: "albertaweb.design"
+  cta: "Run the live scan"
+  colors: ["#19C6E6", "#3A6CF4"]
+  logo_path: null
+
+buildwithdb:
+  name: "Build With DB"
+  handle: "@buildwithdb"
+  url: "buildwithdb.ca"
+  cta: "Systems Create Freedom"
+  colors: ["#C9A227", "#111111"]
+  logo_path: null

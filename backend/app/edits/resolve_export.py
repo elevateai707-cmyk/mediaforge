@@ -154,6 +154,60 @@ def _load_plan(plan_id: str) -> tuple[dict, list[tuple[models.EditClip, models.A
         }, rows
 
 
+def _story_to_resolve(plan_id: str, mp: Any, timeline: Any, fps: float) -> Optional[dict]:
+    """Import voiceover.mp3 onto an audio track at t=0 and captions.srt as
+    subtitles. Every step is guarded; the returned dict says what happened.
+    None for non-story plans. The Resolve scripting API has no documented
+    SRT-to-subtitle-track call, so subtitles use ImportMedia + AppendToTimeline
+    and may need a manual Timeline > Import > Subtitle in some versions.
+    """
+    from . import story as story_mod
+
+    story = story_mod.get_story(plan_id)
+    if not story:
+        return None
+    report: dict = {"voiceover": story.get("voiceover"), "srt": story.get("srt"),
+                    "voiceover_status": "not attempted", "subtitles_status": "not attempted"}
+    # Audio.
+    try:
+        added = mp.ImportMedia([story["voiceover"]])
+        if not added:
+            raise RuntimeError("ImportMedia returned nothing")
+        try:
+            timeline.AddTrack("audio")
+        except Exception:  # noqa: BLE001 - track may already exist
+            pass
+        try:
+            n_audio = int(timeline.GetTrackCount("audio") or 1)
+        except Exception:  # noqa: BLE001
+            n_audio = 1
+        ok = mp.AppendToTimeline([{
+            "mediaPoolItem": added[0], "mediaType": 2,
+            "trackIndex": max(1, n_audio), "recordFrame": 0,
+        }])
+        report["voiceover_status"] = "added on audio track" if ok else \
+            "imported to media pool; append failed (drag it to A1 manually)"
+    except Exception as exc:  # noqa: BLE001
+        report["voiceover_status"] = f"failed: {type(exc).__name__}: {exc}"
+    # Subtitles.
+    try:
+        added = mp.ImportMedia([story["srt"]])
+        if not added:
+            raise RuntimeError("ImportMedia returned nothing for the SRT")
+        try:
+            track = int(timeline.AddTrack("subtitle") and timeline.GetTrackCount("subtitle") or 1)
+        except Exception:  # noqa: BLE001
+            track = 1
+        ok = mp.AppendToTimeline([{
+            "mediaPoolItem": added[0], "trackIndex": track, "recordFrame": 0,
+        }])
+        report["subtitles_status"] = "added on subtitle track" if ok else \
+            "SRT imported to media pool; add via Timeline > Import > Subtitle"
+    except Exception as exc:  # noqa: BLE001
+        report["subtitles_status"] = f"failed: {type(exc).__name__}: {exc}"
+    return report
+
+
 def export_to_resolve(plan_id: str) -> dict:
     """Import media + build the timeline in the live Resolve project.
 
@@ -279,8 +333,13 @@ def export_to_resolve(plan_id: str) -> dict:
                 except Exception as exc:  # noqa: BLE001
                     log.debug("SetClipColor failed: %s", exc)
 
+            # -- story voiceover + word-timed subtitles (best effort) --------
+            story_report = _story_to_resolve(plan_id, mp, timeline, fps)
+
             # -- subtitle track with captions (guarded) ----------------------
             try:
+                if story_report is not None:
+                    raise RuntimeError("story captions come from captions.srt")
                 track_idx = timeline.AddSubtitleTrack("MediaForge Captions")
                 if not track_idx:
                     track_idx = 1
@@ -311,6 +370,9 @@ def export_to_resolve(plan_id: str) -> dict:
 
             log.info("resolve export ok: project=%s version=%s clips=%d",
                      project_name, version, len(rows))
-            return {"ok": True, "resolve": version, "project": project_name}
+            result = {"ok": True, "resolve": version, "project": project_name}
+            if story_report is not None:
+                result["story"] = story_report
+            return result
         finally:
             pass  # lock released by `with`

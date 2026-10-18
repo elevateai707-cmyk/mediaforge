@@ -60,3 +60,6 @@ export function toPercent(p: number | null | undefined): number {
 export function clipDuration(clip: { start: number; end: number }): number {
   return Math.max(0, clip.end - clip.start)
 }
+
+/** Window event that opens the global Import dialog (see AppShell). */
+export const IMPORT_OPEN_EVENT = 'mf-import'

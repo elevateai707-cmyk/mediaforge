@@ -22,12 +22,17 @@ import {
 import {
   ApiError,
   approvePlan,
+  createStory,
   exportPlan,
   exportedFileUrl,
   getRenderStatus,
+  getJob,
+  getPlan,
   planEdit,
+  planPackageUrl,
   startRender,
   thumbUrl,
+  triggerDownload,
   proxyUrl,
   updatePlan,
 } from '@/lib/api'
@@ -36,6 +41,8 @@ import { RENDER_RATIOS, ratioDimensions } from '@/lib/types'
 import { onJobEvent, useWsStore } from '@/lib/ws'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
+import { CaptionWordEditor } from '@/components/CaptionWordEditor'
+import { PlanTools } from '@/components/PlanTools'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -297,6 +304,12 @@ export function EditStudioPage() {
   const [height, setHeight] = useState(1920)
   const [captions, setCaptions] = useState(true)
   const [musicPath, setMusicPath] = useState('')
+  const [musicAuto, setMusicAuto] = useState(true)
+  const [renderPresets, setRenderPresets] = useState<RenderRatio[]>(['9:16'])
+  const [reframe, setReframe] = useState<'smart' | 'center'>('smart')
+  const [guideOverlay, setGuideOverlay] = useState(false)
+  const [safeTop, setSafeTop] = useState(0.1)
+  const [safeBottom, setSafeBottom] = useState(0.16)
   const [approved, setApproved] = useState(false)
 
   // ---- save ----
@@ -316,6 +329,17 @@ export function EditStudioPage() {
   const [exportErrors, setExportErrors] = useState<Partial<Record<ExportFormat, string>>>({})
   const [resolveInfo, setResolveInfo] = useState<{ resolve?: string; project?: string } | null>(null)
   const [exportDialog, setExportDialog] = useState<{ format: ExportFormat; message: string } | null>(null)
+
+  // ---- ElevenLabs story voiceover ----
+  const [storyScript, setStoryScript] = useState('')
+  const [storyVoiceId, setStoryVoiceId] = useState('')
+  const [storyCap, setStoryCap] = useState(5000)
+  const [storyCloudApproved, setStoryCloudApproved] = useState(false)
+  const [storyVoiceConsent, setStoryVoiceConsent] = useState(false)
+  const [storyBusy, setStoryBusy] = useState(false)
+  const [storyError, setStoryError] = useState<string | null>(null)
+  const [storyJobId, setStoryJobId] = useState<string | null>(null)
+  const [captionRevision, setCaptionRevision] = useState(0)
 
   // live render job state from the shared WebSocket store
   const renderLive = useWsStore((s) => (renderJobId ? s.jobs[renderJobId] : undefined))
@@ -341,6 +365,44 @@ export function EditStudioPage() {
     setExportErrors({})
     setResolveInfo(null)
   }, [])
+
+  useEffect(() => {
+    if (!storyJobId) return
+    let cancelled = false
+    let timer: ReturnType<typeof window.setTimeout>
+    const poll = async () => {
+      try {
+        const job = await getJob(storyJobId)
+        if (cancelled) return
+        if (job.status === 'done') {
+          const planId = job.meta?.plan_id
+          if (typeof planId !== 'string') throw new Error('Story finished without an edit plan.')
+          const completed = await getPlan(planId)
+          if (cancelled) return
+          applyPlan(completed)
+          setStoryBusy(false)
+          setStoryJobId(null)
+          setStoryError(null)
+          return
+        }
+        if (['error', 'cancelled', 'interrupted'].includes(job.status)) {
+          setStoryError(job.message || `Story job ${job.status}.`)
+          setStoryBusy(false)
+          setStoryJobId(null)
+          return
+        }
+        setStoryError(null)
+      } catch (error) {
+        if (cancelled) return
+        setStoryError(`Checking story status: ${error instanceof Error ? error.message : String(error)}. Retrying…`)
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 3000)
+    }
+    void poll()
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [storyJobId, applyPlan])
+
+  useEffect(() => { setStoryCloudApproved(false) }, [storyCap, ratio])
 
   const generatePlan = async (override?: string) => {
     const text = (override ?? intent).trim()
@@ -417,7 +479,12 @@ export function EditStudioPage() {
         captions,
         width,
         height,
-      })
+        presets: renderPresets,
+        music_auto: musicAuto,
+        reframe,
+        safe_zones: { top: safeTop, bottom: safeBottom },
+        guide_overlay: guideOverlay,
+      } as Parameters<typeof startRender>[0])
       setRenderJobId(job.job_id)
       setRenderStatus({ status: 'running', output_path: null, progress: 0 })
     } catch (e) {
@@ -458,9 +525,10 @@ export function EditStudioPage() {
   }, [renderJobId, renderTerminal])
 
   const outputUrl = exportedFileUrl(renderStatus?.output_path)
+  const outputUrls = Object.entries(renderStatus?.output_paths ?? {}).map(([preset, path]) => ({ preset, url: exportedFileUrl(path) })).filter((item): item is { preset: string; url: string } => item.url !== null)
   const renderProgress = renderLive?.progress ?? renderStatus?.progress ?? 0
   const renderRunning = renderJobId !== null && !renderTerminal
-  const renderDone = renderStatus?.status === 'done' && outputUrl !== null
+  const renderDone = renderStatus?.status === 'done' && (outputUrl !== null || outputUrls.length > 0)
   const renderFailed = renderStatus?.status === 'error'
 
   const handleExport = async (format: ExportFormat) => {
@@ -489,7 +557,48 @@ export function EditStudioPage() {
     }
   }
 
+  const updateStoryScript = (value: string) => {
+    setStoryScript(value)
+    setStoryCloudApproved(false)
+    setStoryVoiceConsent(false)
+  }
+
+  const updateStoryVoice = (value: string) => {
+    setStoryVoiceId(value)
+    setStoryCloudApproved(false)
+    setStoryVoiceConsent(false)
+  }
+
+  const createStoryPlan = async () => {
+    const script = storyScript.trim()
+    const maxCharacters = Math.min(50000, Math.max(1, Math.floor(storyCap) || 1))
+    if (!script || script.length > maxCharacters || !storyCloudApproved || !storyVoiceConsent || storyBusy) return
+    setStoryBusy(true)
+    setStoryError(null)
+    setStoryJobId(null)
+    try {
+      const job = await createStory({
+        script,
+        voice_id: storyVoiceId.trim() || null,
+        ratio,
+        cloud_approved: true,
+        voice_consent: true,
+        max_characters: maxCharacters,
+      })
+      setStoryJobId(job.job_id)
+      setStoryCloudApproved(false)
+      setStoryVoiceConsent(false)
+    } catch (e) {
+      setStoryError(e instanceof Error ? e.message : 'Story creation could not start.')
+      setStoryBusy(false)
+    }
+  }
+
   const canExport = Boolean(plan) && (approved || renderDone)
+  const storyLength = storyScript.length
+  const storyCapValid = Number.isFinite(storyCap) && storyCap >= 1 && storyCap <= 50000
+  const canCreateStory = Boolean(storyScript.trim()) && storyCapValid && storyLength <= storyCap &&
+    storyCloudApproved && storyVoiceConsent && !storyBusy
 
   return (
     <div>
@@ -553,6 +662,97 @@ export function EditStudioPage() {
         )}
       </motion.div>
 
+      <div className="glass mb-6 rounded-xl p-4">
+        <div className="flex items-start gap-3">
+          <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-secondary" />
+          <div className="min-w-0 flex-1">
+            <h2 className="font-semibold">Story voiceover</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Create a draft edit plan with an ElevenLabs voiceover. Your script is sent to ElevenLabs to synthesize audio.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <div>
+            <Label htmlFor="story-script" className="text-xs font-medium text-muted-foreground">
+              Script
+            </Label>
+            <Textarea
+              id="story-script"
+              value={storyScript}
+              onChange={(e) => updateStoryScript(e.target.value)}
+              placeholder="Write the narration to turn into a voiceover…"
+              className="mt-1 min-h-[120px]"
+              disabled={storyBusy}
+            />
+            <p className={cn('mt-1 text-[11px]', storyLength > storyCap ? 'text-destructive' : 'text-muted-foreground')}>
+              {storyLength.toLocaleString()} of {Math.max(0, storyCap || 0).toLocaleString()} characters
+            </p>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="story-voice" className="text-xs font-medium text-muted-foreground">
+                Voice ID (optional)
+              </Label>
+              <Input
+                id="story-voice"
+                value={storyVoiceId}
+                onChange={(e) => updateStoryVoice(e.target.value)}
+                placeholder="Configured default voice"
+                className="mt-1 h-9 text-xs"
+                disabled={storyBusy}
+              />
+            </div>
+            <div>
+              <Label htmlFor="story-cap" className="text-xs font-medium text-muted-foreground">
+                Character cap
+              </Label>
+              <Input
+                id="story-cap"
+                type="number"
+                min={1}
+                max={50000}
+                value={storyCap}
+                onChange={(e) => setStoryCap(Number(e.target.value))}
+                className="mt-1 h-9 text-xs"
+                disabled={storyBusy}
+              />
+              <p className="mt-1 text-[10px] text-muted-foreground">Choose 1 to 50,000 characters.</p>
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 space-y-2 text-xs text-foreground">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              checked={storyCloudApproved}
+              onChange={(e) => setStoryCloudApproved(e.target.checked)}
+              disabled={storyBusy}
+              className="mt-0.5 h-4 w-4 accent-primary"
+            />
+            <span>I approve sending this script to ElevenLabs and using its quota for this job.</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              checked={storyVoiceConsent}
+              onChange={(e) => setStoryVoiceConsent(e.target.checked)}
+              disabled={storyBusy}
+              className="mt-0.5 h-4 w-4 accent-primary"
+            />
+            <span>I confirm I am permitted to use the selected voice{storyVoiceId.trim() ? ` (${storyVoiceId.trim()})` : ''}.</span>
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button variant="gradient" disabled={!canCreateStory} onClick={() => void createStoryPlan()}>
+            {storyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+            {storyBusy ? 'Creating story…' : 'Create story draft'}
+          </Button>
+          {storyJobId && <span className="text-xs text-emerald-400">Story job started: {storyJobId}</span>}
+          {storyError && <span className="text-xs text-destructive">{storyError}</span>}
+        </div>
+      </div>
+
       {/* ---------- plan review ---------- */}
       {plan && (
         <div className="space-y-4">
@@ -569,6 +769,9 @@ export function EditStudioPage() {
             </div>
             <p className="mt-3 text-sm leading-relaxed text-foreground/90">{plan.summary}</p>
           </div>
+
+          <PlanTools key={`${plan.plan_id}-${captionRevision}`} planId={plan.plan_id} isStory={Boolean((plan as EditPlan & { story?: unknown }).story) || plan.summary.toLowerCase().includes('story')} onPlan={(updated) => { applyPlan(updated); setCaptionRevision((current) => current + 1) }} />
+          <CaptionWordEditor key={`${plan.plan_id}-${captionRevision}`} planId={plan.plan_id} onSaved={() => { void getPlan(plan.plan_id).then((updated) => { applyPlan(updated); setCaptionRevision((current) => current + 1) }).catch(() => {}) }} />
 
           <div className="grid items-start gap-4 lg:grid-cols-[1fr_300px]">
             {/* timeline */}
@@ -662,6 +865,13 @@ export function EditStudioPage() {
                     </button>
                   ))}
                 </div>
+                <div className="mb-3">
+                  <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">Render presets</Label>
+                  <div className="flex gap-1 rounded-lg border border-border bg-white/[0.03] p-1">
+                    {RENDER_RATIOS.map((preset) => <button key={preset} type="button" onClick={() => setRenderPresets((current) => current.includes(preset) ? current.filter((value) => value !== preset) : [...current, preset])} className={cn('flex-1 cursor-pointer rounded-md px-2 py-1.5 text-xs font-medium', renderPresets.includes(preset) ? 'bg-primary/20 text-primary' : 'text-muted-foreground')} aria-pressed={renderPresets.includes(preset)}>{preset}</button>)}
+                  </div>
+                  <p className="mt-1 text-[10px] text-muted-foreground">Selected outputs render as a batch. Your current ratio is selected by default.</p>
+                </div>
 
                 <div className="mb-3 grid grid-cols-2 gap-2">
                   <div>
@@ -717,6 +927,13 @@ export function EditStudioPage() {
                     Absolute path on the backend machine — enables beat-synced cuts.
                   </p>
                 </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <Label className="text-xs">Choose music automatically<span className="block text-[10px] font-normal text-muted-foreground">Uses the library music selector when no path is supplied.</span></Label>
+                  <Switch checked={musicAuto} onCheckedChange={setMusicAuto} disabled={approved} />
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3"><Label className="text-xs">Smart reframe<span className="block text-[10px] font-normal text-muted-foreground">Tracks the focal area; turn off to use a centered crop.</span></Label><Switch checked={reframe === 'smart'} onCheckedChange={(enabled) => setReframe(enabled ? 'smart' : 'center')} disabled={approved} /></div>
+                <div className="mt-3 grid grid-cols-2 gap-2"><div><Label className="mb-1 block text-[10px] uppercase text-muted-foreground">Safe top</Label><Input type="number" min={0} max={0.45} step={0.01} value={safeTop} onChange={(e) => setSafeTop(Number(e.target.value))} className="h-8 text-xs" /></div><div><Label className="mb-1 block text-[10px] uppercase text-muted-foreground">Safe bottom</Label><Input type="number" min={0} max={0.45} step={0.01} value={safeBottom} onChange={(e) => setSafeBottom(Number(e.target.value))} className="h-8 text-xs" /></div></div>
+                <div className="mt-3 flex items-center justify-between gap-3"><Label className="text-xs">Frame guide overlay<span className="block text-[10px] font-normal text-muted-foreground">Draws the safe zones in the rendered preview.</span></Label><Switch checked={guideOverlay} onCheckedChange={setGuideOverlay} disabled={approved} /></div>
               </div>
 
               <div className="glass rounded-xl p-4">
@@ -794,7 +1011,7 @@ export function EditStudioPage() {
           </div>
 
           {/* ---------- render progress / output ---------- */}
-          {(renderJobId || renderStatus || outputUrl) && (
+          {(renderJobId || renderStatus || outputUrl || outputUrls.length > 0) && (
             <div className="glass rounded-xl p-4">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                 <Film className="h-4 w-4" /> Render
@@ -822,7 +1039,7 @@ export function EditStudioPage() {
                 </div>
               )}
 
-              {renderDone && outputUrl && (
+              {renderDone && (outputUrl || outputUrls[0]?.url) && (
                 <div>
                   <div className="flex items-center gap-2">
                     <Play className="h-4 w-4 text-primary" />
@@ -830,20 +1047,11 @@ export function EditStudioPage() {
                   </div>
                   <video
                     controls
-                    src={outputUrl}
+                    src={outputUrls[0]?.url ?? outputUrl ?? undefined}
                     className="mt-3 max-h-[420px] w-full rounded-lg border border-border bg-black"
                   />
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <a
-                      href={outputUrl}
-                      download
-                      className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground transition-colors hover:bg-white/5 hover:text-primary"
-                    >
-                      <Download className="h-3.5 w-3.5" /> Download MP4
-                    </a>
-                    <span className="text-[11px] text-muted-foreground">
-                      {outputUrl.split('/').pop()}
-                    </span>
+                    {(outputUrls.length > 0 ? outputUrls : outputUrl ? [{ preset: 'render', url: outputUrl }] : []).map(({ preset, url }) => <a key={preset} href={url} download className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground transition-colors hover:bg-white/5 hover:text-primary"><Download className="h-3.5 w-3.5" /> Download {preset}</a>)}
                   </div>
                 </div>
               )}
@@ -860,6 +1068,24 @@ export function EditStudioPage() {
                 ? 'Timeline exports use the approved plan.'
                 : 'Approve the plan (and render once) to unlock exports.'}
             </p>
+            <div className="mb-4 rounded-lg border border-border bg-white/[0.02] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Download handoff package</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    ZIP includes the edit plan, provenance, and captions. Source media is not included.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!approved}
+                  onClick={() => plan && triggerDownload(planPackageUrl(plan.plan_id))}
+                >
+                  <Download className="h-3.5 w-3.5" /> Download handoff package
+                </Button>
+              </div>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {EXPORT_FORMATS.map(({ format, label, hint, icon: Icon }) => {
                 const url = exportResults[format]
