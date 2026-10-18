@@ -7,6 +7,8 @@ renders and captions into this folder, writes post texts, POSTS.md and QC sheets
     python3 -I run_batch.py --dry-run               # print every request, send nothing
     python3 -I run_batch.py --only AW-B01           # one or more IDs (comma separated)
     python3 -I run_batch.py                         # everything not yet finished
+    python3 -I run_batch.py --rerender narrated-music   # re-render existing story plans (no ElevenLabs)
+    python3 -I run_batch.py --rerender AW01,DB04        # ... or just these IDs
     python3 -I run_batch.py --redo AW03             # forget a finished ID and run it again
     python3 -I run_batch.py --make-manifest         # (re)build manifest.json from SCRIPTS.md
 
@@ -536,6 +538,12 @@ def run_narrated(client: Client, manifest: dict, state: dict, v: dict, entry: di
     plan = client.call("GET", f"/api/edits/plan/{plan_id}")
     entry["asset_ids"] = sorted({c["asset_id"] for c in plan.get("clips", [])})
     with_retry("approve", lambda: client.call("POST", f"/api/edits/plan/{plan_id}/approve"))
+    music_path, music_start = narrated_music_args(v, plan)
+    finish_render(client, v, plan, plan_id, render_body(plan_id, music_path, music_start), state, entry)
+
+
+def narrated_music_args(v: dict, plan: dict):
+    """(music_path, music_start) for a narrated video, exactly as the manifest defines them."""
     music_path = music_start = None
     if v.get("music"):
         track = v["music"]["track"]
@@ -543,7 +551,19 @@ def run_narrated(client: Client, manifest: dict, state: dict, v: dict, entry: di
         bm = read_beatmap(track)
         if bm and v["music"].get("section", "default") != "default":
             music_start = section_start(bm, v["music"]["section"], float(plan["total_duration"]) + 2.0)
-    finish_render(client, v, plan, plan_id, render_body(plan_id, music_path, music_start), state, entry)
+    return music_path, music_start
+
+
+def rerender_narrated(client: Client, v: dict, entry: dict) -> None:
+    """Render an already-created story plan again (new mix/levels) without recreating the
+    story, so no ElevenLabs call is made. Overwrites the mp4, srt, post text and QC sheet."""
+    plan_id = entry.get("plan_id")
+    if not plan_id:
+        raise RuntimeError("no plan_id in the state file; run the video normally first")
+    plan = client.call("GET", f"/api/edits/plan/{plan_id}")
+    with_retry("approve", lambda: client.call("POST", f"/api/edits/plan/{plan_id}/approve"))
+    music_path, music_start = narrated_music_args(v, plan)
+    finish_render(client, v, plan, plan_id, render_body(plan_id, music_path, music_start), {}, entry)
 
 
 def run_broll(client: Client, manifest: dict, state: dict, v: dict, entry: dict) -> None:
@@ -617,6 +637,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--only", help="comma separated IDs, e.g. AW01,AW-B01")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--rerender", help="comma separated narrated IDs (or 'narrated-music' = every narrated "
+                    "video with music) to render again from their existing plan: no story is recreated, "
+                    "so no ElevenLabs quota is used")
     ap.add_argument("--redo", help="comma separated IDs to forget in the state file and run again")
     ap.add_argument("--make-manifest", action="store_true", help="rebuild manifest.json from SCRIPTS.md")
     ap.add_argument("--state", default="state.json", help="state file name inside this folder")
@@ -629,12 +652,37 @@ def main() -> int:
     videos = manifest["videos"]
     known = {v["id"] for v in videos}
     only = [x.strip() for x in args.only.split(",")] if args.only else None
+    rerender: list[str] | None = None
+    if args.rerender:
+        if args.rerender.strip() == "narrated-music":
+            rerender = [v["id"] for v in videos if v["kind"] == "narrated" and v.get("music")]
+        else:
+            rerender = [x.strip() for x in args.rerender.split(",") if x.strip()]
+        bad = [x for x in rerender if x not in known or next(v for v in videos if v["id"] == x)["kind"] != "narrated"]
+        if bad:
+            print("--rerender needs narrated IDs; not valid: " + ", ".join(bad), file=sys.stderr)
+            return 2
+        only = rerender
     if only:
         bad = [x for x in only if x not in known]
         if bad:
             print("unknown ID(s): " + ", ".join(bad), file=sys.stderr)
             return 2
     wanted = [v for v in videos if not only or v["id"] in only]
+    if args.dry_run and rerender is not None:
+        st = json.loads((HERE / args.state).read_text(encoding="utf-8")) if (HERE / args.state).exists() else {}
+        print(f"DRY RUN (re-render, no story recreated): {len(wanted)} video(s)")
+        for v in wanted:
+            pid = st.get(v["id"], {}).get("plan_id")
+            ms = None
+            if v.get("music"):
+                bm = read_beatmap(v["music"]["track"])
+                if bm and v["music"].get("section", "default") != "default":
+                    ms = section_start(bm, v["music"]["section"], estimate_window(v))
+            print(f"{v['id']:<6} plan {pid or 'MISSING in state.json'}  -> POST /api/render",
+                  json.dumps(render_body(pid or "<plan_id>", str(MUSIC_DIR / v["music"]["track"]) if v.get("music") else None, ms)),
+                  f"  overwrites {v['brand']}/narrated/{file_stem(v)}.mp4")
+        return 0
     if args.dry_run:
         dry_run(manifest, wanted)
         return 0
@@ -663,19 +711,30 @@ def main() -> int:
         os.replace(tmp, state_path)
 
     for v in wanted:
-        if state.get(v["id"], {}).get("status") == "done":
+        if rerender is None and state.get(v["id"], {}).get("status") == "done":
             log.info("%s already done, skipping", v["id"])
             continue
-        entry = state[v["id"]] = {"status": "running", "started": datetime.now(timezone.utc).isoformat()}
+        if rerender is not None:
+            old = state.get(v["id"], {})
+            entry = state[v["id"]] = dict(old, status="running", error=None,
+                                          started=datetime.now(timezone.utc).isoformat(), rerender=True)
+        else:
+            entry = state[v["id"]] = {"status": "running", "started": datetime.now(timezone.utc).isoformat()}
         save()
-        log.info("=== %s %s (%s)", v["id"], v["name"], v["kind"])
+        log.info("=== %s %s (%s)%s", v["id"], v["name"], v["kind"], " [re-render]" if rerender is not None else "")
         try:
-            (run_narrated if v["kind"] == "narrated" else run_broll)(client, manifest, state, v, entry)
+            if rerender is not None:
+                rerender_narrated(client, v, entry)
+            else:
+                (run_narrated if v["kind"] == "narrated" else run_broll)(client, manifest, state, v, entry)
             entry["status"] = "done"
         except Exception as exc:  # noqa: BLE001 - keep going with the next video
             entry["status"] = "failed"
             entry["error"] = str(exc)[:500]
             log.error("%s FAILED: %s", v["id"], exc)
+            if rerender is not None and old.get("file"):
+                entry["status"] = "done"          # the earlier render is still on disk
+                entry["error"] = f"re-render failed: {exc}"[:500]
         entry["finished"] = datetime.now(timezone.utc).isoformat()
         save()
         write_posts_md(manifest, state)

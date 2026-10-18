@@ -114,6 +114,12 @@ FACE_MODEL = os.environ.get("MF_FACE_MODEL", "buffalo_sc")
 RESOLVE_MODULE_DIR = os.environ.get("MF_RESOLVE_MODULE_DIR", "/opt/resolve/Developer/Scripting/Modules")
 RESOLVE_LIBS_DIR = os.environ.get("MF_RESOLVE_LIBS_DIR", "/opt/resolve/libs")
 
+# Narrated renders with music: voice is normalised to -16 LUFS and the music bed sits
+# this many dB below it (integrated), before sidechain ducking. MF_MUSIC_LEVELING=0
+# restores the old un-normalised mix.
+MUSIC_BED_DB = float(os.environ.get("MF_MUSIC_BED_DB", "18"))
+MUSIC_LEVELING = os.environ.get("MF_MUSIC_LEVELING", "1") != "0"
+
 # Render defaults
 RENDER_CRF = 18
 RENDER_PRESET = "medium"
