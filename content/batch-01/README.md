@@ -5,7 +5,7 @@ The reference batch for the MediaForge content engine: 60 vertical (9:16) videos
 - `SCRIPTS.md`: scripts, hooks, B-roll hints and post copy.
 - `MUSIC_PLAN.md`: Suno track assignments, beat-sync rules and trending-audio guidance.
 - `manifest.json`: generated from the two files above and editable by hand. The runner reads this file.
-- `run_batch.py`: the runner. It uses only the standard library and can resume. Run `python3 -I run_batch.py --dry-run | --only ID | --redo ID`.
+- `run_batch.py`: the runner. It uses only the standard library and can resume. Run `python3 -I run_batch.py --dry-run | --only ID | --redo ID`. `--rerender narrated-music` (or `--rerender AW01,DB04`) renders existing story plans again from `state.json`, overwriting the mp4/srt/post/QC sheet without recreating the story (no ElevenLabs).
 
 Rendered videos are not stored in git. They live outside the repo (`~/astra6/finished-content/batch-01/`) and in Google Drive under "Content - Batch 01".
 The runner reads `MF_API_TOKEN` from `/home/g15/mediaforge/.env` at runtime. The token is never written anywhere else.
