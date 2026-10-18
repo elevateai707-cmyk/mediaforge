@@ -267,6 +267,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     from . import kinetic, reframe as reframe_mod
     from . import beatmap as beatmap_mod
     from . import brands as brands_mod
+    from . import audio_levels
     story = story_mod.get_story(plan_id)
     # Story sidecars are timing contracts, not merely caption metadata.  Do
     # not render a voiceover against clips that have drifted since planning.
@@ -601,14 +602,20 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
 
     if is_story:
         input_index += (1 if voiceover else 0) + len(overlays)  # voiceover + overlay inputs
+    # Gain staging for narrated renders with a music bed (see audio_levels.py).
+    levels: Optional[dict] = None
+    if voiceover and music_path and not is_broll and config.MUSIC_LEVELING:
+        levels = audio_levels.plan_levels(voiceover, music_path, music_ss or 0.0, timeline)
     # Music input (last input index).
     music_label: Optional[str] = None
     if music_path:
         music_label = f"m{input_index}"
         fade_duration = min((0.5 if is_broll else 0.6) if is_story else 1.0, max(0.05, timeline_total))
         fade_start = max(0.0, timeline_total - fade_duration)
+        bed = (audio_levels.music_filter(levels["music_gain_db"], timeline if card_s else None) + ","
+               if levels else "")
         filters.append(
-            f"[{input_index}:a]aresample=48000,atrim=end={timeline_total:.3f},"
+            f"[{input_index}:a]aresample=48000,{bed}atrim=end={timeline_total:.3f},"
             f"afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[{music_label}]")
 
     # Video join chain. A hard cut concatenates complete clips; mixed plans
@@ -647,6 +654,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         pass  # no voice: music (or silence) is the whole soundtrack, built below
     elif is_story:
         filters.append(f"[{voice_idx}:a]aresample=48000"
+                       + (f",{audio_levels.voice_filter(levels['voice_gain_db'])}" if levels else "")
                        + (f",apad=whole_dur={timeline_total:.3f}" if card_s else "") + "[amix]")
     elif n > 1:
         has_cut = any(
@@ -709,7 +717,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         filters.append("[amix]asplit=2[vox1][vox2]")
         filters.append(
             f"[{music_label}][vox1]sidechaincompress="
-            "threshold=0.03:ratio=8:attack=20:release=250:makeup=1"
+            + (audio_levels.DUCK_FILTER if levels
+               else "threshold=0.03:ratio=8:attack=20:release=250:makeup=1")
+            +
             f"[{ducked}]")
         filters.append(
             f"[vox2][{ducked}]amix=inputs=2:duration=first:normalize=0[aout]")
