@@ -32,7 +32,7 @@ from . import auth, config, fsutil, models, persist, policy, schemas, touchup, t
 from .ai import clip
 from .ai import gpu, motion_store
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, broll, compilation, package, plan_history, planner, render, resolve_export, story
+from .edits import capcut_export, edl_export, fcpxml_export, broll, compilation, exclusions, package, plan_history, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
@@ -150,7 +150,7 @@ def _derive_tags(asset: models.Asset) -> list[str]:
     return out
 
 
-def _asset_out(db: Session, asset: models.Asset) -> dict:
+def _asset_out(db: Session, asset: models.Asset, min_smoothness: Optional[float] = None) -> dict:
     faces: list[str] = []
     try:
         faces = gpu_faces_names(db, asset.id)
@@ -187,8 +187,26 @@ def _asset_out(db: Session, asset: models.Asset) -> dict:
         "faces": faces,
         "scene_count": asset.scene_count or 0,
         "has_transcript": bool(asset.has_transcript),
-        "motion": motion_store.motion_dict(db.get(models.MotionAnalysis, asset.id)),
+        "motion": _motion_out(db, asset, min_smoothness),
+        "excluded": _excluded_out(db, asset.id),
     }
+
+
+def _motion_out(db: Session, asset: models.Asset, min_smoothness: Optional[float]) -> Optional[dict]:
+    row = db.get(models.MotionAnalysis, asset.id)
+    out = motion_store.motion_dict(row)
+    if out is not None and min_smoothness is not None and not row.is_hyperlapse:
+        # smooth stretches at the requested score, minus any excluded footage
+        wins = motion_store.windows_for(row, float(min_smoothness), float(asset.duration or 0) or None)
+        ex = exclusions.load(db, [asset.id]).get(asset.id)
+        out["windows_min"] = exclusions.subtract(wins, ex) if ex else wins
+    return out
+
+
+def _excluded_out(db: Session, asset_id: int) -> Optional[list[dict]]:
+    rows = (db.query(models.FootageExclusion).filter_by(asset_id=asset_id)
+            .order_by(models.FootageExclusion.start_s).all())
+    return [{"start": r.start_s, "end": r.end_s, "reason": r.reason} for r in rows] or None
 
 
 def gpu_faces_names(db: Session, asset_id: int) -> list[str]:
@@ -628,7 +646,7 @@ def list_assets(
         items = query.order_by(ordering).offset(offset).limit(limit).all()
 
     return schemas.AssetListOut(
-        total=total, items=[_asset_out(db, a) for a in items]
+        total=total, items=[_asset_out(db, a, min_smoothness) for a in items]
     )
 
 
@@ -637,6 +655,29 @@ def _get_asset(db: Session, asset_id: int) -> models.Asset:
     if asset is None:
         raise HTTPException(status_code=404, detail=f"asset {asset_id} not found")
     return asset
+
+
+@app.get("/api/assets/excluded")
+def list_excluded_footage():
+    """Every excluded range (assets whose footage no edit may use)."""
+    return {"excluded": exclusions.list_all()}
+
+
+@app.post("/api/assets/{asset_id}/exclude")
+def exclude_footage(asset_id: int, req: schemas.ExcludeRequest):
+    """Never use this asset (all=true) or these ranges again in any plan or render."""
+    try:
+        return exclusions.add(asset_id, req.ranges, req.all, req.reason)
+    except LookupError:
+        raise HTTPException(status_code=404, detail=f"asset {asset_id} not found")
+    except exclusions.ExclusionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/assets/{asset_id}/exclude")
+def clear_footage_exclusion(asset_id: int, exclusion_id: Optional[int] = Query(None)):
+    """Lift all exclusions of an asset (or one by id)."""
+    return exclusions.remove(asset_id, exclusion_id)
 
 
 @app.get("/api/assets/{asset_id}", response_model=schemas.AssetDetailOut)
@@ -970,7 +1011,7 @@ def restore_plan(plan_id: str, version: int):
 @app.post("/api/edits/plan/{plan_id}/swap-broll", response_model=schemas.PlanOut)
 def swap_broll(plan_id: str, req: schemas.SwapBrollRequest):
     try:
-        return planner.swap_broll(plan_id, req.beat_index, req.asset_id)
+        return planner.swap_broll(plan_id, req.beat_index, req.asset_id, req.start)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:

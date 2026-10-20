@@ -190,15 +190,28 @@ def create_compilation(daypart: str, include_dusk_in: Optional[str] = None, musi
         hint = " Run POST /api/motion/analyze first." if not analysed else ""
         raise CompilationError(f"no hyperlapse clips found for daypart {'+'.join(sorted(parts))}.{hint}")
 
+    from . import exclusions
+    with SessionLocal() as db:
+        excl = exclusions.load(db, [a.id for a in rows])
+    rows = [a for a in rows if not exclusions.is_whole(excl.get(a.id, []))]
+    if not rows:
+        raise CompilationError("every matching hyperlapse is excluded")
     unique, dup_dropped = dedupe(rows)
     ordered = order_assets(unique, order)
     clips = []
     for a in ordered:
         head, tail = edge_trim(a.path, float(a.duration))
-        length = float(a.duration) - head - tail
-        if length < min_clip_s:
+        lo, hi = head, float(a.duration) - tail
+        if excl.get(a.id):
+            # an excluded stretch splits the clip: keep the longest remaining piece
+            pieces = [(max(x, lo), min(y, hi)) for x, y in exclusions.free_ranges(float(a.duration), excl[a.id], 0.1)]
+            pieces = [(x, y) for x, y in pieces if y - x > 0]
+            if not pieces:
+                continue
+            lo, hi = max(pieces, key=lambda p: p[1] - p[0])
+        if hi - lo < min_clip_s:
             continue
-        clips.append({"asset": a, "start": head, "end": float(a.duration) - tail})
+        clips.append({"asset": a, "start": lo, "end": hi})
     if not clips:
         raise CompilationError("every hyperlapse clip is shorter than min_clip_s")
     natural = sum(c["end"] - c["start"] for c in clips)

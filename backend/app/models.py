@@ -182,6 +182,22 @@ class MotionAnalysis(Base):
     error = Column(Text, nullable=True)
 
 
+class FootageExclusion(Base):
+    """A range (or all) of a video that must never be used in an edit (privacy, overuse...).
+
+    One row per range; end_s NULL means "to the end of the clip", start 0 + end NULL = the whole
+    asset. Created by create_all (additive). See edits/exclusions.py.
+    """
+    __tablename__ = "footage_exclusions"
+
+    id = Column(Integer, primary_key=True)
+    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False, index=True)
+    start_s = Column(Float, nullable=False, default=0.0)
+    end_s = Column(Float, nullable=True)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+
 class ScanSkip(Base):
     """Files the scanner already examined and deliberately skipped (a byte-identical
     duplicate of another asset). Lets later scans skip them by path+size+mtime

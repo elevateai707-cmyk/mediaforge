@@ -398,6 +398,23 @@ def filtered_video_pool(db, trip_ids: Optional[set[int]] = None, broll_filter: O
                     windows[aid] = w
             keep[aid] = a
         rows = keep
+    if rows:
+        from . import exclusions
+        excl = exclusions.load(db, list(rows))
+        for aid, ex in excl.items():
+            if aid not in rows:
+                continue
+            if exclusions.is_whole(ex):
+                rows.pop(aid)
+                windows.pop(aid, None)
+                continue
+            base = windows.get(aid) or [[0.0, float(rows[aid].duration), 0.0]]
+            free = exclusions.subtract(base, ex)
+            if not free:
+                rows.pop(aid)
+                windows.pop(aid, None)
+            else:
+                windows[aid] = free
     return rows, windows
 
 

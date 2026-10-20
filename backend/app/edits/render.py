@@ -263,6 +263,14 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     progress = _progress_callable(job)
     plan, resolved = _load_plan(plan_id)
     n = len(resolved)
+    from . import exclusions
+    bad = exclusions.clip_violations([c for c, _a in resolved])
+    if bad:
+        first = bad[0]
+        raise RenderError(
+            f"clip {first['clip']} (asset {first['asset_id']}, {first['start']:.1f}-{first['end']:.1f}s) uses "
+            f"excluded footage{' (' + first['reason'] + ')' if first['reason'] else ''}; "
+            f"swap it out ({len(bad)} clip(s) affected)")
     from . import story as story_mod
     from . import kinetic, reframe as reframe_mod
     from . import beatmap as beatmap_mod

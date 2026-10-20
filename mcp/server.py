@@ -449,11 +449,36 @@ async def mf_restore_plan(plan_id: str, version_id: str) -> Any:
 
 
 @mcp.tool()
-async def mf_swap_broll(plan_id: str, beat_index: int, asset_id: int) -> Any:
+async def mf_swap_broll(plan_id: str, beat_index: int, asset_id: int, start: Optional[float] = None) -> Any:
     """Swap a story beat's B-roll while preserving its voiceover duration
-    (POST /api/edits/plan/{id}/swap-broll)."""
-    return await _call("POST", f"/api/edits/plan/{quote(plan_id, safe='')}/swap-broll",
-                       body={"beat_index": beat_index, "asset_id": asset_id})
+    (POST /api/edits/plan/{id}/swap-broll). start = where in the replacement the beat's footage
+    begins (default 0, or the earliest start that avoids excluded footage); excluded ranges are
+    refused. The plan returns to draft: approve it again before rendering."""
+    body = {"beat_index": beat_index, "asset_id": asset_id}
+    if start is not None:
+        body["start"] = start
+    return await _call("POST", f"/api/edits/plan/{quote(plan_id, safe='')}/swap-broll", body=body)
+
+
+@mcp.tool()
+async def mf_exclude_footage(asset_id: int, ranges: Optional[list[list[Optional[float]]]] = None,
+                             all: bool = False, reason: str = "", clear: bool = False) -> Any:
+    """Never use footage again (POST /api/assets/{id}/exclude): all=true excludes the whole clip,
+    or ranges=[[start, end], ...] in seconds (end null = to the end of the clip), e.g. a private
+    house or people in shot, or an over-used shot. Every selection path (story, B-roll, compilation,
+    swap) avoids excluded ranges and the renderer refuses plans that still contain them (swap those
+    clips out with mf_swap_broll). clear=true lifts the asset's exclusions (DELETE). Asset listings
+    show an `excluded` field; mf_list_excluded_footage lists them all."""
+    if clear:
+        return await _call("DELETE", f"/api/assets/{asset_id}/exclude")
+    return await _call("POST", f"/api/assets/{asset_id}/exclude",
+                       body={"ranges": ranges, "all": all, "reason": reason})
+
+
+@mcp.tool()
+async def mf_list_excluded_footage() -> Any:
+    """All excluded footage ranges (GET /api/assets/excluded)."""
+    return await _call("GET", "/api/assets/excluded")
 
 
 @mcp.tool()

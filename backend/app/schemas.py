@@ -120,6 +120,7 @@ class AssetOut(BaseModel):
     trip_id: Optional[int] = None
     gps_alt: Optional[float] = None
     motion: Optional[dict[str, Any]] = None
+    excluded: Optional[list[dict[str, Any]]] = None     # ranges that edits must never use
 
 
 class AssetDetailOut(AssetOut):
@@ -275,6 +276,16 @@ class PlanUpdateRequest(BaseModel):
 class SwapBrollRequest(BaseModel):
     beat_index: int = Field(ge=1)
     asset_id: int = Field(ge=1)
+    # Where in the replacement the beat's footage starts (default: 0, or the earliest
+    # start that avoids excluded footage).
+    start: Optional[float] = Field(default=None, ge=0)
+
+
+class ExcludeRequest(BaseModel):
+    """Exclude footage from every future edit: ``all`` or ranges [[start, end], ...] (end null = to the end)."""
+    ranges: Optional[list[list[Optional[float]]]] = Field(default=None, max_length=50)
+    all: bool = False
+    reason: str = Field(default="", max_length=300)
 
 
 class ApproveOut(BaseModel):
