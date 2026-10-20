@@ -13,6 +13,7 @@ from .test_story import _capture_ffmpeg, _silent_mp3
 
 pytestmark = pytest.mark.usefixtures("cleanup_assets")
 
+NOFILTER = {"min_smoothness": None, "hyperlapse": None}      # the clips fixture has no motion analysis
 DOWNBEATS = [round(1.0 + 2.0 * i, 3) for i in range(20)]        # 120 bpm, 4/4: a bar every 2 s
 
 
@@ -53,8 +54,8 @@ def test_silent_timeline():
 
 def test_assign_clips_no_reuse_drop_gets_best_and_start_skips_takeoff():
     cands = [_cand(1, 9.0, 9.5), _cand(2, 9.0, 8.0), _cand(3, 9.0, 7.0), _cand(4, 9.0, 6.0)]
-    per_cut, reused = broll.assign_clips([2.0, 2.0, 2.0], cands, drop_cut=2)
-    assert reused == 0
+    per_cut, reused, repeats = broll.assign_clips([2.0, 2.0, 2.0], cands, drop_cut=2)
+    assert reused == 0 and repeats == 0
     assert per_cut[2][0]["asset_id"] == 1                        # best clip on the drop cut
     ids = [c[0]["asset_id"] for c in per_cut]
     assert len(set(ids)) == 3
@@ -62,15 +63,34 @@ def test_assign_clips_no_reuse_drop_gets_best_and_start_skips_takeoff():
         assert cut[0]["start"] >= broll.START_SKIP_S and cut[0]["end"] - cut[0]["start"] == pytest.approx(slot)
 
 
-def test_assign_clips_short_assets_reuse_and_errors():
+def test_assign_clips_short_assets_and_errors():
     # a 2.5 s asset cannot fill a 4 s cut after skipping 1 s: spills into a second clip
-    per_cut, _ = broll.assign_clips([4.0], [_cand(1, 2.5, 5), _cand(2, 9.0, 4)], None)
+    per_cut, _, _ = broll.assign_clips([4.0], [_cand(1, 2.5, 5), _cand(2, 9.0, 4)], None)
     assert sum(c["end"] - c["start"] for c in per_cut[0]) == pytest.approx(4.0, abs=0.01)
-    # pool smaller than the number of cuts: reuse is counted rather than failing
-    per_cut, reused = broll.assign_clips([2.0, 2.0, 2.0], [_cand(1, 9, 5), _cand(2, 9, 4)], None)
-    assert reused >= 1 and all(per_cut)
-    with pytest.raises(broll.BrollError):
+    with pytest.raises(broll.BrollError, match="motion"):
         broll.assign_clips([2.0], [], None)
+
+
+def test_assign_clips_prefers_other_ranges_of_an_asset_before_repeating_a_range():
+    # one 9 s asset, six 2 s cuts: 4 distinct ranges, then identical ranges must repeat
+    per_cut, reused_assets, repeats = broll.assign_clips([2.0] * 4, [_cand(1, 9, 5)], None)
+    ranges = [(c[0]["asset_id"], c[0]["start"]) for c in per_cut]
+    assert len(set(ranges)) == 4 and repeats == 0 and reused_assets == 3
+    per_cut, _, repeats = broll.assign_clips([2.0] * 6, [_cand(1, 9, 5)], None)
+    assert repeats == 2
+    # two assets: all of asset 1's and 2's distinct ranges are used before any repeats
+    per_cut, _, repeats = broll.assign_clips([2.0] * 8, [_cand(1, 9, 5), _cand(2, 9, 4)], None)
+    assert repeats == 0 and len({(c[0]["asset_id"], c[0]["start"]) for c in per_cut}) == 8
+
+
+def test_assign_clips_stays_inside_smooth_windows():
+    c = _cand(1, 40.0, 5)
+    c["windows"] = [[10.0, 16.0, 0.9], [30.0, 34.0, 0.8]]
+    per_cut, _, _ = broll.assign_clips([2.0, 2.0, 2.0], [c], None)
+    for cut in per_cut:
+        s, e = cut[0]["start"], cut[0]["end"]
+        assert any(w0 <= s and e <= w1 for w0, w1, _ in c["windows"]), (s, e)
+    assert len({cut[0]["start"] for cut in per_cut}) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -116,23 +136,25 @@ def track(tmp_path):
 def test_create_broll_plan_api(client, clips, track):
     ids, prefix = clips
     r = client.post("/api/edits/broll", json={
-        "music_path": str(track), "target_seconds": 12, "bars_per_cut": 1,
+        "music_path": str(track), "target_seconds": 30, "bars_per_cut": 1,
         "text_line": "Your site is *invisible*", "brand": "albertaweb", "hook_text": "Stop scrolling",
-        "broll_filter": {"path_prefixes": [prefix]}})
+        "broll_filter": {"path_prefixes": [prefix], **NOFILTER}})
     assert r.status_code == 200, r.text
     plan = r.json()
     assert plan["status"] == "draft" and plan["intent"].startswith("broll: ") and plan["target_ratio"] == "9:16"
     sc = client.get(f"/api/edits/{plan['plan_id']}/broll").json()
     music = sc["music"]
     assert music["start"] == DOWNBEATS[2]                       # best_start moved onto a downbeat
-    assert sc["duration"] == 12.0 and sc["bars"] == 6 and plan["total_duration"] == 12.0
+    assert sc["duration"] == 30.0 and sc["bars"] == 15 and plan["total_duration"] == 30.0
     # cuts exactly on the track's downbeats, one clip per cut, no reuse, none too short
     abs_cuts = [round(c["start"] + music["start"], 3) for c in sc["cuts"]]
-    assert all(c in DOWNBEATS for c in abs_cuts) and len(abs_cuts) == 6
+    assert all(c in DOWNBEATS for c in abs_cuts) and len(abs_cuts) == 15
     used = [c["clips"][0]["asset_id"] for c in sc["cuts"]]
-    assert len(set(used)) == 6 and ids["short"] not in used
+    assert ids["short"] not in used and len(set(used[:8])) == 8       # every usable asset once first
+    ranges = [(c["clips"][0]["asset_id"], c["clips"][0]["start"]) for c in sc["cuts"]]
+    assert len(set(ranges)) == 15 and sc["reused_ranges"] == 0         # then different ranges, never a repeat
     assert all(c["clips"][0]["start"] >= 1.0 for c in sc["cuts"])
-    assert sum(c["slot"] for c in sc["cuts"]) == pytest.approx(12.0)
+    assert sum(c["slot"] for c in sc["cuts"]) == pytest.approx(30.0)
     # drop (DOWNBEATS[3] = 1 bar after start) falls in the window: best clip starts there
     drop_cut = next(c for c in sc["cuts"] if c["is_drop_cut"])
     assert drop_cut["start"] == 2.0 and drop_cut["clips"][0]["asset_id"] == ids["red"]
@@ -143,7 +165,7 @@ def test_create_broll_plan_api(client, clips, track):
     assert sc["brand"]["id"] == "albertaweb" and sc["hook_text"] == "Stop scrolling"
     # plan rows are hard cuts matching the sidecar; plan GET exposes the summary
     got = client.get(f"/api/edits/plan/{plan['plan_id']}").json()
-    assert got["broll"]["cut_count"] == 6 and all(c["transition"] == "cut" for c in got["clips"])
+    assert got["broll"]["cut_count"] == 15 and all(c["transition"] == "cut" for c in got["clips"])
     assert client.post(f"/api/edits/plan/{plan['plan_id']}/approve").status_code == 200
 
 
@@ -151,22 +173,26 @@ def test_create_broll_two_bars_per_cut_and_asset_ids_order(client, clips, track)
     ids, prefix = clips
     order = [ids["blue"], ids["green"], ids["red"]]
     r = client.post("/api/edits/broll", json={
-        "music_path": str(track), "target_seconds": 12, "bars_per_cut": 2, "asset_ids": order})
+        "music_path": str(track), "target_seconds": 30, "bars_per_cut": 2, "asset_ids": order,
+        "broll_filter": NOFILTER})
     assert r.status_code == 200, r.text
     sc = client.get(f"/api/edits/{r.json()['plan_id']}/broll").json()
-    assert [c["slot"] for c in sc["cuts"]] == [4.0, 4.0, 4.0]
-    non_drop = [c["clips"][0]["asset_id"] for c in sc["cuts"] if not c["is_drop_cut"]]
-    assert set(c["clips"][0]["asset_id"] for c in sc["cuts"]) == set(order)
-    assert non_drop == [a for a in order if a != next(c for c in sc["cuts"] if c["is_drop_cut"])["clips"][0]["asset_id"]]
+    assert [c["slot"] for c in sc["cuts"]] == [4.0] * 7 + [2.0]
+    used = [c["clips"][0]["asset_id"] for c in sc["cuts"]]
+    assert set(used) == set(order)
+    drop_asset = next(c for c in sc["cuts"] if c["is_drop_cut"])["clips"][0]["asset_id"]
+    assert drop_asset == order[0]                                      # priority order: first asset takes the drop
+    ranges = [(c["clips"][0]["asset_id"], c["clips"][0]["start"]) for c in sc["cuts"]]
+    assert len(set(ranges)) == len(ranges) or sc["reused_ranges"] > 0
 
 
 def test_create_broll_silent(client, clips):
     ids, prefix = clips
-    r = client.post("/api/edits/broll", json={"silent": True, "target_seconds": 12,
-                                              "broll_filter": {"path_prefixes": [prefix]}})
+    r = client.post("/api/edits/broll", json={"silent": True, "target_seconds": 30,
+                                              "broll_filter": {"path_prefixes": [prefix], **NOFILTER}})
     assert r.status_code == 200, r.text
     sc = client.get(f"/api/edits/{r.json()['plan_id']}/broll").json()
-    assert sc["silent"] and sc["music"] is None and sc["duration"] == pytest.approx(12.0, abs=0.01)
+    assert sc["silent"] and sc["music"] is None and sc["duration"] == pytest.approx(30.0, abs=0.01)
     assert all(1.4 <= c["slot"] <= 1.8 for c in sc["cuts"])
 
 
@@ -183,16 +209,20 @@ def test_create_broll_errors(client, clips, track, tmp_path, monkeypatch):
         r = client.post("/api/edits/broll", json=body)
         assert r.status_code == 422 and text in r.text, (body, r.text)
     assert client.post("/api/edits/broll", json={"bars_per_cut": 3}).status_code == 422
+    short = client.post("/api/edits/broll", json={"target_seconds": 12, "silent": True})
+    assert short.status_code == 422                                     # B-roll videos are at least 30 s
+    with pytest.raises(broll.BrollError, match="at least 30"):
+        broll.create_broll_plan(target_seconds=12, silent=True)
     # no music_path and no mapped tracks in the music folder
     monkeypatch.setattr(persist, "music_dir", lambda: str(tmp_path / "empty"))
-    r = client.post("/api/edits/broll", json={"broll_filter": {"path_prefixes": [prefix]}})
+    r = client.post("/api/edits/broll", json={"broll_filter": {"path_prefixes": [prefix], **NOFILTER}})
     assert r.status_code == 422 and "beat map" in r.text
 
 
 def test_default_music_is_a_mapped_track(client, clips, track, monkeypatch):
     ids, prefix = clips
     monkeypatch.setattr(persist, "music_dir", lambda: str(track.parent))
-    r = client.post("/api/edits/broll", json={"seed": 1, "broll_filter": {"path_prefixes": [prefix]}})
+    r = client.post("/api/edits/broll", json={"seed": 1, "broll_filter": {"path_prefixes": [prefix], **NOFILTER}})
     assert r.status_code == 200, r.text
     assert client.get(f"/api/edits/{r.json()['plan_id']}/broll").json()["music"]["path"] == str(track.resolve())
 
@@ -211,9 +241,9 @@ def _color_cuts(path, fps=30):
 
 def test_render_broll_cuts_land_on_downbeats(client, clips, track, monkeypatch):
     ids, prefix = clips
-    r = client.post("/api/edits/broll", json={"music_path": str(track), "target_seconds": 8,
+    r = client.post("/api/edits/broll", json={"music_path": str(track), "target_seconds": 30,
                                               "brand": "buildwithdb", "text_line": "Built to *scale*",
-                                              "broll_filter": {"path_prefixes": [prefix]}})
+                                              "broll_filter": {"path_prefixes": [prefix], **NOFILTER}})
     plan = r.json()
     sc = client.get(f"/api/edits/{plan['plan_id']}/broll").json()
     client.post(f"/api/edits/plan/{plan['plan_id']}/approve")
@@ -231,27 +261,27 @@ def test_render_broll_cuts_land_on_downbeats(client, clips, track, monkeypatch):
     # measured cut times vs the planned downbeat cut times (within one frame at 30 fps)
     planned = [c["start"] for c in sc["cuts"][1:]]
     measured = [t for t in _color_cuts(out) if t < sc["duration"] - 0.2]
-    assert len(measured) == len(planned)
-    for p, m in zip(planned, measured):
-        assert abs(p - m) <= 1 / 30 + 0.01, (planned, measured)
+    assert len(measured) >= 10                          # (adjacent similar colours may not register)
+    for m in measured:
+        assert min(abs(p - m) for p in planned) <= 1 / 30 + 0.01, (planned, measured)
 
 
 def test_render_silent_broll_has_silent_audio_track(client, clips, monkeypatch):
     ids, prefix = clips
-    plan = client.post("/api/edits/broll", json={"silent": True, "target_seconds": 6,
-                                                 "broll_filter": {"path_prefixes": [prefix]}}).json()
+    plan = client.post("/api/edits/broll", json={"silent": True, "target_seconds": 30,
+                                                 "broll_filter": {"path_prefixes": [prefix], **NOFILTER}}).json()
     client.post(f"/api/edits/plan/{plan['plan_id']}/approve")
     out = render.render_plan(plan["plan_id"], width=180, height=320)
     probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams",
                                        "-show_format", out], capture_output=True, text=True).stdout)
     assert {s["codec_type"] for s in probe["streams"]} == {"video", "audio"}
-    assert float(probe["format"]["duration"]) == pytest.approx(6.0, abs=0.3)
+    assert float(probe["format"]["duration"]) == pytest.approx(30.0, abs=0.5)
 
 
 def test_render_rejects_broll_plan_whose_clips_drifted(client, clips, track):
     ids, prefix = clips
-    plan = client.post("/api/edits/broll", json={"music_path": str(track), "target_seconds": 8,
-                                                 "broll_filter": {"path_prefixes": [prefix]}}).json()
+    plan = client.post("/api/edits/broll", json={"music_path": str(track), "target_seconds": 30,
+                                                 "broll_filter": {"path_prefixes": [prefix], **NOFILTER}}).json()
     pid = plan["plan_id"]
     with SessionLocal() as db:
         c = db.query(models.EditClip).filter_by(plan_id=pid).first()

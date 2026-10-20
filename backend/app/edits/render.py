@@ -295,7 +295,8 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     if broll_marked and broll is None:
         raise RenderError(f"B-roll sidecar missing or invalid for plan {plan_id!r}")
     if broll is not None:
-        drift = abs(sum(float(c.end) - float(c.start) for c, _a in resolved)
+        speed = float(broll.get("speed") or 1.0)
+        drift = abs(sum(float(c.end) - float(c.start) for c, _a in resolved) / speed
                     - float(broll["duration"]))
         if drift > 0.05:
             raise RenderError("B-roll clips no longer match the music timeline; create a new plan")
@@ -356,8 +357,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     font = config.find_font()
     total = 0.0
     per_clip: list[dict] = []
+    clip_speed = float(broll.get("speed") or 1.0) if broll is not None else 1.0
     for c, asset in resolved:
-        dur = max(0.2, float(c.end) - float(c.start))
+        dur = max(0.2, (float(c.end) - float(c.start)) / clip_speed)
         if asset.kind == "photo" or is_story:
             has_audio = False
         else:
@@ -540,6 +542,10 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         chain.append(
             f"scale={width}:{height}:force_original_aspect_ratio=increase"
             ":force_divisible_by=2")
+        if clip_speed < 1.0:
+            # Uniform slowdown (compilations): stretch time, blend frames back up to the render fps.
+            chain.append(f"setpts=PTS/{clip_speed:.4f}")
+            chain.append(f"framerate=fps={config.RENDER_FPS}")
         analysis = analysis_by_clip.get(str(pc["clip"].id), {})
         zones = reframe_mod.normalize_safe_zones(analysis.get("safe_zones"))
         chain.append(reframe_mod.build_crop_filter(analysis, width, height, pc["dur"]))

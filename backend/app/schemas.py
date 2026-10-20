@@ -119,6 +119,7 @@ class AssetOut(BaseModel):
     location_confidence: Optional[float] = None
     trip_id: Optional[int] = None
     gps_alt: Optional[float] = None
+    motion: Optional[dict[str, Any]] = None
 
 
 class AssetDetailOut(AssetOut):
@@ -208,6 +209,10 @@ class BrollFilter(BaseModel):
     min_aesthetic: Optional[float] = Field(default=None, ge=0, le=10)
     asset_ids: list[int] = Field(default_factory=list, max_length=5000)
     exclude_asset_ids: list[int] = Field(default_factory=list, max_length=5000)
+    # Camera-motion filters (need the motion analysis: POST /api/motion/analyze).
+    min_smoothness: Optional[float] = Field(default=None, ge=0, le=1)
+    hyperlapse: Optional[bool] = None            # true = only, false = exclude, null = any
+    daypart: Optional[list[Literal["day", "dusk", "night"]]] = None
 
 
 class StoryRequest(BaseModel):
@@ -230,7 +235,7 @@ class StoryRequest(BaseModel):
 class BrollPlanRequest(BaseModel):
     music_path: Optional[str] = Field(default=None, max_length=1024)
     music_start: Optional[float] = Field(default=None, ge=0, le=36000)
-    target_seconds: float = Field(default=12.0, ge=4, le=90)
+    target_seconds: float = Field(default=30.0, ge=30, le=90)
     bars_per_cut: Literal[1, 2] = 1
     text_line: str = Field(default="", max_length=90)
     hook_text: Optional[str] = Field(default=None, max_length=90)
@@ -241,6 +246,21 @@ class BrollPlanRequest(BaseModel):
     ratio: Literal["9:16", "16:9", "4:5", "1:1"] = "9:16"
     title: Optional[str] = Field(default=None, max_length=120)
     seed: Optional[int] = None
+
+
+class CompilationRequest(BaseModel):
+    daypart: Literal["day", "dusk", "night"]
+    include_dusk_in: Optional[Literal["day", "night"]] = None
+    music_path: Optional[str] = Field(default=None, max_length=1024)
+    music_start: Optional[float] = Field(default=None, ge=0, le=36000)
+    brand: Optional[str] = Field(default=None, max_length=40)
+    hook_text: Optional[str] = Field(default=None, max_length=90)
+    text_line: str = Field(default="", max_length=90)
+    ratio: Literal["9:16", "16:9", "4:5", "1:1"] = "9:16"
+    order: Literal["time", "flow"] = "time"
+    min_clip_s: float = Field(default=0.8, ge=0.2, le=10)
+    min_seconds: Optional[float] = Field(default=None, ge=4, le=300)
+    title: Optional[str] = Field(default=None, max_length=120)
 
 
 class StoryJobOut(BaseModel):

@@ -304,10 +304,16 @@ def allocate_clips(need: float, candidates: list[dict], used: set[int]) -> list[
         guard += 1
         dur = float(cand["duration"])
         start = cand.get("start")
-        if start is None:
+        limit = dur
+        if cand.get("windows"):
+            # Smooth-flying ranges only: the longest window, skipping takeoff wobble.
+            w0, w1, _s = max(cand["windows"], key=lambda w: w[1] - w[0])
+            skip = TAKEOFF_SKIP if w1 - max(w0, TAKEOFF_SKIP) >= min(remaining, 2.0) else w0
+            start, limit = max(w0, skip), w1
+        elif start is None:
             start = TAKEOFF_SKIP if dur > remaining + TAKEOFF_SKIP + 0.5 else 0.0
-        start = min(float(start), max(0.0, dur - MIN_SEGMENT))
-        take = min(remaining, dur - start)
+        start = min(float(start), max(0.0, limit - MIN_SEGMENT))
+        take = min(remaining, limit - start)
         if take < MIN_SEGMENT and remaining > MIN_SEGMENT:
             continue
         take = round(take, 3)
@@ -334,6 +340,11 @@ def _default_search(db, q: str, limit: int) -> list[int]:
 
 def filtered_video_assets(db, trip_ids: Optional[set[int]] = None,
                           broll_filter: Optional[dict] = None) -> dict[int, "models.Asset"]:
+    return filtered_video_pool(db, trip_ids, broll_filter)[0]
+
+
+def filtered_video_pool(db, trip_ids: Optional[set[int]] = None, broll_filter: Optional[dict] = None
+                        ) -> tuple[dict[int, "models.Asset"], dict[int, list]]:
     """Usable video assets (known duration) restricted by trip and ``broll_filter``.
 
     broll_filter keys (all optional): path_prefixes, require_aerial,
@@ -360,7 +371,34 @@ def filtered_video_assets(db, trip_ids: Optional[set[int]] = None,
     rows = {a.id: a for a in q.all()}
     if flt.get("require_aerial"):
         rows = {i: a for i, a in rows.items() if is_aerial(a.path, a.caption)}
-    return rows
+    windows: dict[int, list] = {}
+    hyper, parts = flt.get("hyperlapse"), flt.get("daypart")
+    min_smooth = flt.get("min_smoothness")
+    if rows and (hyper is not None or parts or min_smooth is not None):
+        from ..ai import motion_store
+        motion = {m.asset_id: m for m in db.query(models.MotionAnalysis)
+                  .filter(models.MotionAnalysis.asset_id.in_(list(rows))).all()}
+        keep: dict[int, "models.Asset"] = {}
+        for aid, a in rows.items():
+            m = motion.get(aid)
+            # Unanalysed assets only pass filters that do not need analysis data.
+            if m is None and (hyper is True or parts or min_smooth is not None):
+                continue
+            if m is not None:
+                if hyper is True and not m.is_hyperlapse:
+                    continue
+                if hyper is False and m.is_hyperlapse:
+                    continue
+                if parts and m.daypart not in parts:
+                    continue
+                if min_smooth is not None and not m.is_hyperlapse:
+                    w = motion_store.windows_for(m, float(min_smooth), float(a.duration))
+                    if not w:
+                        continue
+                    windows[aid] = w
+            keep[aid] = a
+        rows = keep
+    return rows, windows
 
 
 def beat_candidates(db, text: str, search_fn: Callable, trip_ids: Optional[set[int]],
@@ -373,7 +411,7 @@ def beat_candidates(db, text: str, search_fn: Callable, trip_ids: Optional[set[i
         ids = []
     scored: dict[int, float] = {aid: 1.0 - i / max(1, limit) for i, aid in enumerate(ids)}
 
-    rows = filtered_video_assets(db, trip_ids, broll_filter)
+    rows, windows = filtered_video_pool(db, trip_ids, broll_filter)
     # Backfill from the library so a CLIP-less / sparse search still has a pool.
     for a in rows.values():
         scored.setdefault(a.id, 0.0)
@@ -390,7 +428,7 @@ def beat_candidates(db, text: str, search_fn: Callable, trip_ids: Optional[set[i
             "asset_id": aid, "scene_id": scene.id if scene else None,
             "start": float(scene.start) if scene and scene.start is not None else None,
             "duration": float(a.duration), "caption": a.caption, "score": score,
-            "path": a.path,
+            "path": a.path, "windows": windows.get(aid),
         })
     out.sort(key=lambda c: c["score"], reverse=True)
     return out
@@ -529,7 +567,7 @@ def clean_broll_filter(raw: Optional[dict]) -> Optional[dict]:
     if not isinstance(raw, dict):
         raise StoryError("broll_filter must be an object")
     known = {"path_prefixes", "require_aerial", "exclude_faces", "min_aesthetic",
-             "asset_ids", "exclude_asset_ids"}
+             "asset_ids", "exclude_asset_ids", "min_smoothness", "hyperlapse", "daypart"}
     extra = set(raw) - known
     if extra:
         raise StoryError(f"unknown broll_filter key(s): {', '.join(sorted(extra))}")
@@ -548,6 +586,22 @@ def clean_broll_filter(raw: Optional[dict]) -> Optional[dict]:
             out["min_aesthetic"] = float(raw["min_aesthetic"])
         except (TypeError, ValueError):
             raise StoryError("broll_filter.min_aesthetic must be a number") from None
+    if raw.get("min_smoothness") is not None:
+        try:
+            ms = float(raw["min_smoothness"])
+        except (TypeError, ValueError):
+            raise StoryError("broll_filter.min_smoothness must be a number") from None
+        if not 0 <= ms <= 1:
+            raise StoryError("broll_filter.min_smoothness must be between 0 and 1")
+        out["min_smoothness"] = ms
+    if raw.get("hyperlapse") is not None:
+        out["hyperlapse"] = bool(raw["hyperlapse"])
+    if raw.get("daypart"):
+        parts = [raw["daypart"]] if isinstance(raw["daypart"], str) else list(raw["daypart"])
+        bad = [p for p in parts if p not in ("day", "dusk", "night")]
+        if bad:
+            raise StoryError("broll_filter.daypart values must be day, dusk or night")
+        out["daypart"] = sorted(set(parts))
     for key in ("asset_ids", "exclude_asset_ids"):
         if raw.get(key):
             try:

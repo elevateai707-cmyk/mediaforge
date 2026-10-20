@@ -149,6 +149,39 @@ class Job(Base):
     meta = Column(Text, nullable=True)  # JSON
 
 
+class MotionAnalysis(Base):
+    """Camera-motion / daypart / hyperlapse analysis of a video (see ai/motion.py).
+
+    One row per asset, created by create_all (additive, no migration of existing tables).
+    """
+    __tablename__ = "motion_analysis"
+
+    asset_id = Column(Integer, ForeignKey("assets.id"), primary_key=True)
+    version = Column(Integer, default=1)
+    analyzed_at = Column(DateTime, default=_utcnow)
+    runtime_s = Column(Float, nullable=True)
+    fps = Column(Float, nullable=True)                  # nominal (recorded) frame rate
+    fps_avg = Column(Float, nullable=True)              # average; well below nominal = dropped frames
+    is_hyperlapse = Column(Integer, default=0, index=True)
+    hyper_signal = Column(String, nullable=True)       # fps25 | discontinuity | fps25+discontinuity
+    disc_disp = Column(Float, nullable=True)
+    disc_fail = Column(Float, nullable=True)
+    daypart = Column(String, nullable=True, index=True)  # day | dusk | night
+    luma_mean = Column(Float, nullable=True)
+    luma_p5 = Column(Float, nullable=True)
+    luma_p95 = Column(Float, nullable=True)
+    highlight_frac = Column(Float, nullable=True)
+    shadow_frac = Column(Float, nullable=True)
+    smoothness = Column(Float, nullable=True, index=True)  # 0-1, null for hyperlapses
+    jerk_norm = Column(Float, nullable=True)
+    reversals_per_s = Column(Float, nullable=True)
+    stopstart_per_s = Column(Float, nullable=True)
+    mean_speed = Column(Float, nullable=True)
+    profile = Column(Text, nullable=True)               # JSON: per-second local smoothness
+    windows = Column(Text, nullable=True)               # JSON: [[start, end, score], ...] >= 3 s
+    error = Column(Text, nullable=True)
+
+
 class ScanSkip(Base):
     """Files the scanner already examined and deliberately skipped (a byte-identical
     duplicate of another asset). Lets later scans skip them by path+size+mtime

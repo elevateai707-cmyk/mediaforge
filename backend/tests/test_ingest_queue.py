@@ -35,6 +35,7 @@ def _remove_created_assets(client):
                 except Exception:  # noqa: BLE001
                     pass
             db.query(models.TripAsset).filter_by(asset_id=a.id).delete()
+            db.query(models.MotionAnalysis).filter_by(asset_id=a.id).delete()
             db.delete(a)
         db.query(models.ScanSkip).delete()
         db.commit()
