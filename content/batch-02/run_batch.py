@@ -527,6 +527,7 @@ def write_posts_md(manifest: dict, state: dict) -> None:
             lines += [f"## {v['id']} · {v['name']}",
                       f"- file: `{rel}`" if rel else "- file: (not rendered yet)",
                       "- post:", "", "```", post_text(v).rstrip(), "```", ""]
+        (HERE / brand).mkdir(parents=True, exist_ok=True)
         (HERE / brand / "POSTS.md").write_text("\n".join(lines), encoding="utf-8")
 
 
