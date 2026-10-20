@@ -247,7 +247,8 @@ def build_manifest() -> dict:
             "hook": c["hook"], "text_line": c["text_line"], "est_natural_s": c["est_natural_s"],
             "post_text": desc, "hashtags": tags, "silent": False,
         })
-    return {"api": API, "drone_prefix": DRONE_PREFIX, "music_dir": str(MUSIC_DIR), "videos": out}
+    return {"api": API, "drone_prefix": DRONE_PREFIX, "music_dir": str(MUSIC_DIR),
+            "max_asset_uses_per_brand": 2, "videos": out}
 
 
 def load_manifest(rebuild: bool = False) -> dict:
@@ -540,14 +541,30 @@ def plan_asset_ids(client: Client, plan_id: str) -> list[int]:
     return sorted({c["asset_id"] for c in plan.get("clips", [])})
 
 
+def overused_assets(manifest: dict, state: dict, brand: str, skip_id: str | None = None) -> set[int]:
+    """Assets already used by >= max_asset_uses_per_brand of this brand's finished videos in this
+    batch (manifest setting, default 2; 0 disables). Each video counts an asset once."""
+    cap = int(manifest.get("max_asset_uses_per_brand", 2))
+    if cap <= 0:
+        return set()
+    counts: dict[int, int] = {}
+    for x in manifest["videos"]:
+        e = state.get(x["id"], {})
+        if x["brand"] == brand and x["id"] != skip_id and e.get("status") == "done":
+            for aid in set(e.get("asset_ids", [])):
+                counts[aid] = counts.get(aid, 0) + 1
+    return {aid for aid, n in counts.items() if n >= cap}
+
+
 def narrated_excludes(manifest: dict, state: dict, v: dict) -> list[int]:
-    """Assets used by this brand's previous 3 narrated videos (in manifest order)."""
+    """Assets used by this brand's previous 3 narrated videos (in manifest order), plus every
+    asset the brand already used max_asset_uses_per_brand times anywhere in this batch."""
     prev = [x for x in manifest["videos"] if x["brand"] == v["brand"] and x["kind"] == "narrated"]
     idx = next(i for i, x in enumerate(prev) if x["id"] == v["id"])
     ids: list[int] = []
     for x in prev[max(0, idx - 3):idx]:
         ids += state.get(x["id"], {}).get("asset_ids", [])
-    return sorted(set(ids))
+    return sorted(set(ids) | overused_assets(manifest, state, v["brand"], v["id"]))
 
 
 def broll_exclude_sets(manifest: dict, state: dict, v: dict) -> list[list[int]]:
@@ -558,8 +575,12 @@ def broll_exclude_sets(manifest: dict, state: dict, v: dict) -> list[list[int]]:
         if x["brand"] == v["brand"] and x["kind"] == "broll" and x["id"] != v["id"] \
                 and state.get(x["id"], {}).get("status") == "done":
             broll.append(state[x["id"]].get("asset_ids", []))
-    last5 = sorted({i for ids in broll[-5:] for i in ids})
-    return [last5, []] if last5 else [[]]
+    last5 = {i for ids in broll[-5:] for i in ids}
+    capped = overused_assets(manifest, state, v["brand"], v["id"])
+    sets = [sorted(last5 | capped)]
+    if last5 and capped:
+        sets.append(sorted(capped))            # relax to the usage cap only
+    return sets + [[]] if sets[0] else [[]]
 
 
 # ---------------------------------------------------------------------------
@@ -856,7 +877,7 @@ def dry_run(manifest: dict, wanted: list[dict]) -> None:
         ms = row[1] if row else None
         if v["kind"] == "narrated":
             body = story_body(v, [])
-            body["broll_filter"]["exclude_asset_ids"] = "<asset ids of this brand's previous 3 narrated videos>"
+            body["broll_filter"]["exclude_asset_ids"] = "<asset ids of this brand's previous 3 narrated videos + any asset used >= max_asset_uses_per_brand times>"
             print("POST /api/edits/story", json.dumps(body, ensure_ascii=False, indent=1))
             print("POST /api/edits/plan/<plan_id>/approve")
             print("POST /api/render", json.dumps(
@@ -866,7 +887,7 @@ def dry_run(manifest: dict, wanted: list[dict]) -> None:
             music = v.get("music") if not v.get("silent") else None
             bm = read_beatmap(music["track"]) if music else None
             body = broll_body(v, [], bm, ms)
-            body["broll_filter"]["exclude_asset_ids"] = "<this brand's last 5 B-roll assets, if any>"
+            body["broll_filter"]["exclude_asset_ids"] = "<this brand's last 5 B-roll assets + assets used >= max_asset_uses_per_brand times>"
             print("POST /api/edits/broll", json.dumps(body, ensure_ascii=False, indent=1))
             print("POST /api/edits/plan/<plan_id>/approve")
             print("POST /api/render", json.dumps(render_body("<plan_id>")))

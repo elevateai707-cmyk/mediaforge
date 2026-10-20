@@ -2,6 +2,7 @@
   "api": "http://100.104.197.107:8420",
   "drone_prefix": "/srv/iris/media/library/blue-drone-1o1/",
   "music_dir": "/srv/iris/media/music/suno",
+  "max_asset_uses_per_brand": 2,
   "videos": [
     {
       "id": "AW16",

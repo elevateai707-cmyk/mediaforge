@@ -19,3 +19,7 @@ python3 -I run_batch.py --qc-only AW17,DB22       # speech QC on existing narrat
 Order: narrated AW16-30, DB16-30, then B-roll, then compilations. Each narrated render is checked with faster-whisper "small" (CPU): the share of script words heard goes into `state.json` and the summary, and below 85% is flagged QC-WARN (review by ear; never a failure).
 
 Music start points are always downbeats chosen so the track covers the video plus the 1.8 s end card without looping ("2nd" = ~40 s after the best section, or the furthest fitting downbeat if the track is short). The runner reads `MF_API_TOKEN` from `/home/g15/mediaforge/.env` at run time and never writes it anywhere. Rendered files live outside the repo in `~/astra6/finished-content/batch-02/`.
+
+## Diversity and footage fixes
+- `max_asset_uses_per_brand` (manifest, default 2): the runner also excludes any asset already used by that many of the brand's finished videos in the batch, on top of the "previous 3 narrated videos" rule (0 turns it off).
+- `fix_footage.py` is the one-off repair after the visual QC (privacy: asset 2133 from 7 s; overuse: asset 2132 kept only in AW16 and DB16). `--dry-run` reads the API and prints the swap table; the real run excludes 2133 [7, end] through the footage-exclusion API, swaps the affected beats (voice timing is kept) with the least-used smooth, face-free drone clips, then re-renders them with `run_batch.py --rerender`.
