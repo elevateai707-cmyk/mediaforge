@@ -28,6 +28,12 @@ FADE_OUT_S = 0.5
 TEXT_BAR_INDEX = 1          # text line appears on the downbeat of bar 2
 MUSIC_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 RATIOS = ("9:16", "16:9", "4:5", "1:1")
+MIN_TARGET_S = 30.0         # B-roll videos are at least 30 s
+# Normal (non-hyperlapse) drone footage must fly smoothly. On the real library (117 normal
+# clips) the score is bunched near 1.0 (median 0.97) and the rough clips sit well below: 0.8
+# drops the least steady ~20% of clips and, via the per-second windows, the rough stretches of
+# the rest. Callers can override with broll_filter.min_smoothness.
+DEFAULT_MIN_SMOOTHNESS = 0.8
 
 
 class BrollError(ValueError):
@@ -144,39 +150,79 @@ def _usable_start(c: dict) -> float:
     return max(START_SKIP_S, float(s)) if s is not None else START_SKIP_S
 
 
-def assign_clips(slots: list[float], candidates: list[dict], drop_cut: Optional[int]) -> tuple[list[list[dict]], int]:
-    """One entry per cut: the clips filling it. No asset is reused while unused
-    candidates exist. The first (best) candidate goes to ``drop_cut``. Returns
-    (clips per cut, number of reused assets)."""
+def segments_for(c: dict, need: float) -> list[tuple[float, float]]:
+    """Non-overlapping ``need``-second ranges of a candidate: inside its smooth windows when it
+    has them (skipping the takeoff second), else from its usable start to the end."""
+    dur = float(c["duration"])
+    wins = c.get("windows")
+    segs: list[tuple[float, float]] = []
+    if wins:
+        spans = [(float(w[0]), float(w[1])) for w in wins]
+        spans = [(max(a, START_SKIP_S) if b - max(a, START_SKIP_S) >= need else a, b) for a, b in spans]
+    else:
+        spans = [(_usable_start(c), dur)]
+    for a, b in spans:
+        for i in range(int((b - a + 1e-6) // need)):
+            segs.append((round(a + i * need, 3), round(a + (i + 1) * need, 3)))
+    return segs
+
+
+def assign_clips(slots: list[float], candidates: list[dict], drop_cut: Optional[int]) -> tuple[list[list[dict]], int, int]:
+    """One entry per cut: the clips filling it.
+
+    Preference order: an unused asset; then a DIFFERENT range of an already used asset;
+    then (clips shorter than the cut) several short clips from unused assets; only as a
+    last resort an identical range again. The best candidate goes to ``drop_cut``.
+    Returns (clips per cut, cuts reusing an asset, cuts repeating an identical range).
+    """
     if not candidates:
-        raise BrollError("no usable drone clips match this request (check broll_filter)")
-    used: set[int] = set()
-    reused = 0
+        raise BrollError("no usable drone clips match this request (check broll_filter, and that "
+                         "POST /api/motion/analyze has run for smoothness/hyperlapse filters)")
+    used_assets: set[int] = set()
+    used_ranges: set[tuple[int, float]] = set()
+    reused_assets = reused_ranges = 0
     result: list[Optional[list[dict]]] = [None] * len(slots)
     order = ([drop_cut] if drop_cut is not None else []) + \
         [i for i in range(len(slots)) if i != drop_cut]
+
+    def clip(c: dict, seg: tuple[float, float]) -> list[dict]:
+        return [{"asset_id": c["asset_id"], "scene_id": c.get("scene_id"),
+                 "start": seg[0], "end": seg[1]}]
+
     for i in order:
         need = slots[i]
-        fresh = [c for c in candidates if c["asset_id"] not in used]
-        pick = next((c for c in fresh if float(c["duration"]) - _usable_start(c) >= need), None)
+        segs = {c["asset_id"]: segments_for(c, need) for c in candidates}
+        pick = None
+        for c in candidates:                                   # 1. unused asset
+            if c["asset_id"] not in used_assets and segs[c["asset_id"]]:
+                pick = (c, segs[c["asset_id"]][0])
+                break
+        if pick is None:                                       # 2. another range of a used asset
+            for c in candidates:
+                free = [g for g in segs[c["asset_id"]] if (c["asset_id"], g[0]) not in used_ranges]
+                if free:
+                    pick = (c, free[0])
+                    reused_assets += 1
+                    break
         if pick is not None:
-            s = _usable_start(pick)
-            clips = [{"asset_id": pick["asset_id"], "scene_id": pick.get("scene_id"),
-                      "start": round(s, 3), "end": round(s + need, 3)}]
-            used.add(pick["asset_id"])
-        else:
-            pool = fresh or candidates
-            if not fresh:
-                reused += 1
-            try:
-                clips = [{k: c[k] for k in ("asset_id", "scene_id", "start", "end")}
-                         for c in story.allocate_clips(
-                             need, [dict(c, start=_usable_start(c)) for c in pool], set())]
-            except story.StoryError as exc:
-                raise BrollError(str(exc)) from None
-            used.update(c["asset_id"] for c in clips)
-        result[i] = clips
-    return [r or [] for r in result], reused
+            c, seg = pick
+            result[i] = clip(c, seg)
+            used_assets.add(c["asset_id"])
+            used_ranges.add((c["asset_id"], seg[0]))
+            continue
+        fresh = [c for c in candidates if c["asset_id"] not in used_assets] or candidates
+        try:                                                   # 3. stitch short clips together
+            cl = story.allocate_clips(need, [dict(c, start=_usable_start(c)) for c in fresh], set())
+            result[i] = [{k: x[k] for k in ("asset_id", "scene_id", "start", "end")} for x in cl]
+            used_assets.update(x["asset_id"] for x in cl)
+            if fresh is candidates:
+                reused_assets += 1
+        except story.StoryError as exc:
+            raise BrollError(str(exc)) from None
+        if any((x["asset_id"], x["start"]) in used_ranges for x in result[i]):
+            reused_ranges += 1
+        used_ranges.update((x["asset_id"], x["start"]) for x in result[i])
+    return [r or [] for r in result], reused_assets, reused_ranges
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +230,7 @@ def assign_clips(slots: list[float], candidates: list[dict], drop_cut: Optional[
 # ---------------------------------------------------------------------------
 
 def create_broll_plan(music_path: Optional[str] = None, music_start: Optional[float] = None,
-                      target_seconds: float = 12.0, bars_per_cut: int = 1, text_line: str = "",
+                      target_seconds: float = 30.0, bars_per_cut: int = 1, text_line: str = "",
                       brand: Optional[str] = None, broll_filter: Optional[dict] = None,
                       silent: bool = False, asset_ids: Optional[list[int]] = None,
                       hook_text: Optional[str] = None, ratio: str = "9:16",
@@ -193,15 +239,19 @@ def create_broll_plan(music_path: Optional[str] = None, music_start: Optional[fl
 
     if bars_per_cut not in (1, 2):
         raise BrollError("bars_per_cut must be 1 or 2")
-    if not 4 <= float(target_seconds) <= 90:
-        raise BrollError("target_seconds must be between 4 and 90")
+    if not MIN_TARGET_S <= float(target_seconds) <= 90:
+        raise BrollError("target_seconds must be between 30 and 90 (B-roll videos are at least 30 s)")
     if ratio not in RATIOS:
         raise BrollError(f"ratio must be one of {', '.join(RATIOS)}")
     text_line = " ".join((text_line or "").split())
     if len(text_line) > 90:
         raise BrollError("text_line must be at most 90 characters")
+    raw_filter = dict(broll_filter or {})
+    # Smooth, non-hyperlapse footage by default; an explicit null/value overrides.
+    raw_filter.setdefault("hyperlapse", False)
+    raw_filter.setdefault("min_smoothness", DEFAULT_MIN_SMOOTHNESS)
     try:
-        opts = story.validate_story_options("x", broll_filter, None, hook_text, brand)
+        opts = story.validate_story_options("x", raw_filter, None, hook_text, brand)
     except story.StoryError as exc:
         raise BrollError(str(exc)) from None
     flt = dict(opts["broll_filter"] or {})
@@ -236,7 +286,7 @@ def create_broll_plan(music_path: Optional[str] = None, music_start: Optional[fl
     plan_id = planner._new_plan_id()
     out_dir = broll_dir(plan_id)
     with SessionLocal() as db:
-        pool = story.filtered_video_assets(db, None, flt or None)
+        pool, windows = story.filtered_video_pool(db, None, flt or None)
         pool = {i: a for i, a in pool.items() if float(a.duration) >= MIN_ASSET_S
                 and Path(a.path or "").is_file()}
         cands = []
@@ -246,13 +296,13 @@ def create_broll_plan(music_path: Optional[str] = None, music_start: Optional[fl
             cands.append({"asset_id": aid, "scene_id": scene.id if scene else None,
                           "start": float(scene.start) if scene and scene.start is not None else None,
                           "duration": float(a.duration), "score": float(a.aesthetic_score or 0.0),
-                          "path": a.path})
+                          "path": a.path, "windows": windows.get(aid)})
         if priority:
             rank = {i: n for n, i in enumerate(priority)}
             cands.sort(key=lambda c: rank.get(c["asset_id"], 10 ** 6))
         else:
             cands.sort(key=lambda c: (-c["score"], c["asset_id"]))
-        per_cut, reused = assign_clips(tl["slots"], cands, drop_cut)
+        per_cut, reused, reused_ranges = assign_clips(tl["slots"], cands, drop_cut)
         score_of = {c["asset_id"]: c["score"] for c in cands}
 
         label = (title or "").strip() or text_line or "drone cut"
@@ -264,28 +314,18 @@ def create_broll_plan(music_path: Optional[str] = None, music_start: Optional[fl
             parsed_json=json.dumps({"broll": True}), target_ratio=ratio, total_duration=total)
 
         # caption words for the text line: one word per beat from bar 2's downbeat
-        caption_beats: list[dict] = []
-        if text_line:
-            clean, spans = kinetic.parse_emphasis(text_line)
-            words_in = clean.split()
-            if silent:
-                t0, step = SILENT_CUT_S, 0.4
-            else:
-                t0 = tl["downbeats_rel"][min(TEXT_BAR_INDEX, len(tl["downbeats_rel"]) - 1)]
-                step = max(0.25, music["bar_s"] / 4)
-            words = [{"word": w, "start": round(i * step, 3), "end": round(i * step + step * 0.9, 3)}
-                     for i, w in enumerate(words_in)]
-            span_list = [list(s) for s in spans[:kinetic.MAX_EMPH_PER_BEAT]] or \
-                [list(s) for s in kinetic.auto_emphasis(words_in)]
-            caption_beats.append({"index": 1, "text": clean, "start": round(t0, 3),
-                                  "slot": max(0.5, round(total - t0, 3)), "words": words,
-                                  "emphasis": span_list})
+        if silent:
+            t0, step = SILENT_CUT_S, 0.4
+        else:
+            t0 = tl["downbeats_rel"][min(TEXT_BAR_INDEX, len(tl["downbeats_rel"]) - 1)]
+            step = max(0.25, music["bar_s"] / 4)
+        caption_beats = caption_beats_for(text_line, t0, step, total)
 
     sidecar = {
         "kind": "broll", "plan_id": plan_id, "title": title, "ratio": ratio,
         "duration": total, "silent": silent, "music": music, "bars": tl["bars"],
         "bars_per_cut": bars_per_cut, "cut_count": len(tl["slots"]),
-        "downbeats_rel": tl["downbeats_rel"], "reused_assets": reused,
+        "downbeats_rel": tl["downbeats_rel"], "reused_assets": reused, "reused_ranges": reused_ranges,
         "cuts": [{"index": i + 1, "start": tl["cuts"][i], "slot": tl["slots"][i],
                   "is_drop_cut": i == drop_cut, "clips": per_cut[i]}
                  for i in range(len(tl["slots"]))],
@@ -293,6 +333,30 @@ def create_broll_plan(music_path: Optional[str] = None, music_start: Optional[fl
         "caption_style": "kinetic", "hook_text": opts["hook_text"], "brand": opts["brand"],
         "broll_filter": opts["broll_filter"], "fade_out_s": FADE_OUT_S,
     }
+    persist_plan(plan, sidecar, score_of)
+    result = planner.get_plan(plan_id) or {}
+    result["broll"] = broll_summary(plan_id)
+    return result
+
+
+def caption_beats_for(text_line: str, t0: float, step: float, total: float) -> list[dict]:
+    """One-word-per-step kinetic caption beat for a short text line (empty list if no text)."""
+    if not text_line:
+        return []
+    clean, spans = kinetic.parse_emphasis(text_line)
+    words_in = clean.split()
+    words = [{"word": w, "start": round(i * step, 3), "end": round(i * step + step * 0.9, 3)}
+             for i, w in enumerate(words_in)]
+    span_list = [list(sp) for sp in spans[:kinetic.MAX_EMPH_PER_BEAT]] or \
+        [list(sp) for sp in kinetic.auto_emphasis(words_in)]
+    return [{"index": 1, "text": clean, "start": round(t0, 3),
+             "slot": max(0.5, round(total - t0, 3)), "words": words, "emphasis": span_list}]
+
+
+def persist_plan(plan: "models.EditPlan", sidecar: dict, score_of: dict) -> None:
+    """Write the sidecar, then the plan + one hard-cut EditClip per sidecar clip."""
+    plan_id = plan.id
+    out_dir = broll_dir(plan_id)
     atomic_write(out_dir / "broll.json", json.dumps(sidecar, indent=2))
     try:
         with SessionLocal() as db:
@@ -311,6 +375,3 @@ def create_broll_plan(music_path: Optional[str] = None, music_start: Optional[fl
         import shutil
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
-    result = planner.get_plan(plan_id) or {}
-    result["broll"] = broll_summary(plan_id)
-    return result

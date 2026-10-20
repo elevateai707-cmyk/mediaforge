@@ -148,6 +148,22 @@ class MediaForgeMcpOfflineTests(unittest.IsolatedAsyncioTestCase):
         await server.mf_render("p", music_start=12.5)
         self.assertEqual(self.calls[0][3]["music_start"], 12.5)
 
+    async def test_footage_exclusion_tools(self):
+        self.fake_call([{"asset_id": 7}, {"asset_id": 7, "removed": 1}, {"excluded": []}, {"plan_id": "p"}])
+        await server.mf_exclude_footage(7, ranges=[[7, None]], reason="private house")
+        await server.mf_exclude_footage(7, clear=True)
+        await server.mf_list_excluded_footage()
+        await server.mf_swap_broll("p", 2, 9, start=4.5)
+        self.assertEqual(self.calls[0], ("POST", "/api/assets/7/exclude", None,
+                                         {"ranges": [[7, None]], "all": False, "reason": "private house"}))
+        self.assertEqual(self.calls[1], ("DELETE", "/api/assets/7/exclude", None, None))
+        self.assertEqual(self.calls[2], ("GET", "/api/assets/excluded", None, None))
+        self.assertEqual(self.calls[3][3], {"beat_index": 2, "asset_id": 9, "start": 4.5})
+        self.calls.clear()
+        self.fake_call([{"plan_id": "p"}])
+        await server.mf_swap_broll("p", 1, 3)
+        self.assertEqual(self.calls[0][3], {"beat_index": 1, "asset_id": 3})      # start omitted when unset
+
     async def test_render_legacy_default_does_not_enable_auto_music(self):
         self.fake_call([{"job_id": "render-legacy"}])
         await server.mf_render("plan-1")

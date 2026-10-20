@@ -749,9 +749,13 @@ def update_plan(plan_id: str, clips: list[dict]) -> Optional[dict]:
     return get_plan(plan_id)
 
 
-def swap_broll(plan_id: str, beat_index: int, asset_id: int) -> dict:
-    """Beat index is the one-based index shown in the story plan."""
-    from . import story
+def swap_broll(plan_id: str, beat_index: int, asset_id: int, start: Optional[float] = None) -> dict:
+    """Beat index is the one-based index shown in the story plan.
+
+    ``start`` picks where in the replacement the beat's footage begins (default 0, or the
+    earliest start that avoids excluded footage). Excluded ranges are never used.
+    """
+    from . import exclusions, story
     from .plan_history import atomic_write, plan_lock
     with plan_lock(plan_id), SessionLocal() as db:
         plan = db.get(models.EditPlan, plan_id)
@@ -769,11 +773,24 @@ def swap_broll(plan_id: str, beat_index: int, asset_id: int) -> dict:
         need = float(beat["slot"])
         if asset.kind == "video" and (not asset.duration or float(asset.duration) + 1e-6 < need):
             raise ValueError(f"Replacement video must cover this beat's {need:.3f}s duration")
+        ex = exclusions.load(db, [asset_id]).get(asset_id, [])
+        if start is not None and (start < 0 or (asset.duration and start + need > float(asset.duration) + 1e-6)):
+            raise ValueError("start must leave room for the beat inside the replacement clip")
+        clip_start = float(start) if start is not None else 0.0
+        if ex:
+            if start is None:
+                found = exclusions.first_free_start(float(asset.duration or need), need, ex)
+                if found is None:
+                    raise ValueError("Replacement footage is excluded (no free range is long enough)")
+                clip_start = found
+            elif exclusions.overlaps(ex, clip_start, clip_start + need):
+                raise ValueError("That range of the replacement is excluded footage")
         record_revision(plan_id, "before B-roll swap")
         original = (story.story_dir(plan_id) / "story.json").read_text()
         plan.status = "draft"
         db.commit()  # Approval must stay revoked even if the subsequent write fails.
-        beat["clips"] = [{"asset_id": asset_id, "scene_id": None, "start": 0.0, "end": need}]
+        beat["clips"] = [{"asset_id": asset_id, "scene_id": None, "start": round(clip_start, 3),
+                          "end": round(clip_start + need, 3)}]
         for c in list(plan.clips):
             db.delete(c)
         db.flush()

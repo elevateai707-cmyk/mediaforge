@@ -30,9 +30,9 @@ from sqlalchemy.orm import Session
 
 from . import auth, config, fsutil, models, persist, policy, schemas, touchup, transfer
 from .ai import clip
-from .ai import gpu
+from .ai import gpu, motion_store
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, broll, package, plan_history, planner, render, resolve_export, story
+from .edits import capcut_export, edl_export, fcpxml_export, broll, compilation, exclusions, package, plan_history, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
@@ -150,7 +150,7 @@ def _derive_tags(asset: models.Asset) -> list[str]:
     return out
 
 
-def _asset_out(db: Session, asset: models.Asset) -> dict:
+def _asset_out(db: Session, asset: models.Asset, min_smoothness: Optional[float] = None) -> dict:
     faces: list[str] = []
     try:
         faces = gpu_faces_names(db, asset.id)
@@ -187,7 +187,26 @@ def _asset_out(db: Session, asset: models.Asset) -> dict:
         "faces": faces,
         "scene_count": asset.scene_count or 0,
         "has_transcript": bool(asset.has_transcript),
+        "motion": _motion_out(db, asset, min_smoothness),
+        "excluded": _excluded_out(db, asset.id),
     }
+
+
+def _motion_out(db: Session, asset: models.Asset, min_smoothness: Optional[float]) -> Optional[dict]:
+    row = db.get(models.MotionAnalysis, asset.id)
+    out = motion_store.motion_dict(row)
+    if out is not None and min_smoothness is not None and not row.is_hyperlapse:
+        # smooth stretches at the requested score, minus any excluded footage
+        wins = motion_store.windows_for(row, float(min_smoothness), float(asset.duration or 0) or None)
+        ex = exclusions.load(db, [asset.id]).get(asset.id)
+        out["windows_min"] = exclusions.subtract(wins, ex) if ex else wins
+    return out
+
+
+def _excluded_out(db: Session, asset_id: int) -> Optional[list[dict]]:
+    rows = (db.query(models.FootageExclusion).filter_by(asset_id=asset_id)
+            .order_by(models.FootageExclusion.start_s).all())
+    return [{"start": r.start_s, "end": r.end_s, "reason": r.reason} for r in rows] or None
 
 
 def gpu_faces_names(db: Session, asset_id: int) -> list[str]:
@@ -441,6 +460,37 @@ def fs_stat(req: schemas.FsStatRequest):
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+class MotionAnalyzeRequest(schemas.BaseModel):
+    force: bool = False
+    asset_ids: Optional[list[int]] = None
+    path_prefix: Optional[str] = None
+    drone_only: bool = True
+    limit: int = schemas.Field(default=5000, ge=1, le=20000)
+
+
+@app.post("/api/motion/analyze", response_model=schemas.JobRefOut)
+async def motion_analyze(req: MotionAnalyzeRequest):
+    """CPU-only camera-motion / daypart / hyperlapse analysis of drone videos (background job).
+
+    Skips assets already analysed unless ``force``. Results appear on GET /api/assets.
+    """
+    ids = await asyncio.to_thread(
+        motion_store.pending_ids, req.limit, req.drone_only, req.force, req.asset_ids, req.path_prefix)
+
+    async def _run(progress, flag):
+        workers = max(1, int(os.environ.get("MF_MOTION_JOBS", "2")))
+        return await asyncio.to_thread(
+            motion_store.analyze_many, ids, req.force, progress, flag, workers)
+
+    job_id = jobs.run("motion", _run)
+    return schemas.JobRefOut(job_id=job_id, kind="motion")
+
+
+@app.get("/api/motion/status")
+def motion_status():
+    return motion_store.status()
+
+
 @app.get("/api/music", response_model=list[schemas.MusicTrackOut])
 def list_music():
     return music.list_tracks(persist.music_dir())
@@ -485,9 +535,25 @@ def list_assets(
     trip_id: Optional[int] = Query(None),
     min_aesthetic: Optional[float] = Query(None),
     path_prefix: Optional[str] = Query(None, max_length=1024),
+    min_smoothness: Optional[float] = Query(None, ge=0, le=1),
+    hyperlapse: Optional[bool] = Query(None),
+    daypart: Optional[str] = Query(None, description="comma separated: day,dusk,night"),
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Asset)
+
+    if min_smoothness is not None or hyperlapse is not None or daypart:
+        parts = [p.strip() for p in (daypart or "").split(",") if p.strip()]
+        if any(p not in ("day", "dusk", "night") for p in parts):
+            raise HTTPException(status_code=422, detail="daypart must be day, dusk and/or night")
+        mq = db.query(models.MotionAnalysis.asset_id)
+        if hyperlapse is not None:
+            mq = mq.filter(models.MotionAnalysis.is_hyperlapse == (1 if hyperlapse else 0))
+        if parts:
+            mq = mq.filter(models.MotionAnalysis.daypart.in_(parts))
+        if min_smoothness is not None:
+            mq = mq.filter(models.MotionAnalysis.smoothness >= min_smoothness)
+        query = query.filter(models.Asset.id.in_(mq))
 
     if path_prefix:
         query = query.filter(models.Asset.path.startswith(path_prefix, autoescape=True))
@@ -580,7 +646,7 @@ def list_assets(
         items = query.order_by(ordering).offset(offset).limit(limit).all()
 
     return schemas.AssetListOut(
-        total=total, items=[_asset_out(db, a) for a in items]
+        total=total, items=[_asset_out(db, a, min_smoothness) for a in items]
     )
 
 
@@ -589,6 +655,29 @@ def _get_asset(db: Session, asset_id: int) -> models.Asset:
     if asset is None:
         raise HTTPException(status_code=404, detail=f"asset {asset_id} not found")
     return asset
+
+
+@app.get("/api/assets/excluded")
+def list_excluded_footage():
+    """Every excluded range (assets whose footage no edit may use)."""
+    return {"excluded": exclusions.list_all()}
+
+
+@app.post("/api/assets/{asset_id}/exclude")
+def exclude_footage(asset_id: int, req: schemas.ExcludeRequest):
+    """Never use this asset (all=true) or these ranges again in any plan or render."""
+    try:
+        return exclusions.add(asset_id, req.ranges, req.all, req.reason)
+    except LookupError:
+        raise HTTPException(status_code=404, detail=f"asset {asset_id} not found")
+    except exclusions.ExclusionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/assets/{asset_id}/exclude")
+def clear_footage_exclusion(asset_id: int, exclusion_id: Optional[int] = Query(None)):
+    """Lift all exclusions of an asset (or one by id)."""
+    return exclusions.remove(asset_id, exclusion_id)
 
 
 @app.get("/api/assets/{asset_id}", response_model=schemas.AssetDetailOut)
@@ -922,7 +1011,7 @@ def restore_plan(plan_id: str, version: int):
 @app.post("/api/edits/plan/{plan_id}/swap-broll", response_model=schemas.PlanOut)
 def swap_broll(plan_id: str, req: schemas.SwapBrollRequest):
     try:
-        return planner.swap_broll(plan_id, req.beat_index, req.asset_id)
+        return planner.swap_broll(plan_id, req.beat_index, req.asset_id, req.start)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -1006,7 +1095,8 @@ async def create_story(req: schemas.StoryRequest):
 async def create_broll(req: schemas.BrollPlanRequest):
     """Music-led drone B-roll plan: cuts on downbeats, whole bars, optional kinetic text line,
     hook and brand end card. Fast (no TTS), so it returns the draft plan directly."""
-    flt = req.broll_filter.model_dump() if req.broll_filter else None
+    # exclude_unset: an explicit null (e.g. min_smoothness) switches a default filter off
+    flt = req.broll_filter.model_dump(exclude_unset=True) if req.broll_filter else None
     try:
         return await asyncio.to_thread(
             broll.create_broll_plan, music_path=req.music_path, music_start=req.music_start,
@@ -1015,6 +1105,19 @@ async def create_broll(req: schemas.BrollPlanRequest):
             asset_ids=req.asset_ids, hook_text=req.hook_text, ratio=req.ratio,
             title=req.title, seed=req.seed)
     except broll.BrollError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/edits/compilation", response_model=schemas.PlanOut)
+async def create_compilation(req: schemas.CompilationRequest):
+    """ALL hyperlapse clips of a daypart in one draft plan (natural length reported in
+    ``broll.natural_seconds`` / ``warnings``; ``min_seconds`` slows uniformly, never loops)."""
+    try:
+        return await asyncio.to_thread(
+            compilation.create_compilation, req.daypart, req.include_dusk_in, req.music_path,
+            req.music_start, req.brand, req.hook_text, req.text_line, req.ratio, req.order,
+            req.min_clip_s, req.min_seconds, req.title)
+    except compilation.CompilationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

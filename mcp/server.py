@@ -104,14 +104,22 @@ async def mf_list_assets(
     city: Optional[str] = None,
     trip_id: Optional[int] = None,
     min_aesthetic: Optional[float] = None,
+    path_prefix: Optional[str] = None,
+    min_smoothness: Optional[float] = None,
+    hyperlapse: Optional[bool] = None,
+    daypart: Optional[str] = None,
 ) -> Any:
     """List/filter library assets (GET /api/assets). limit 1-500, offset for paging.
+    Drone motion filters (need mf_analyze_motion first): path_prefix (folder), min_smoothness
+    (0-1, steady flying), hyperlapse (true = only hyperlapses, false = exclude), daypart
+    ("day", "dusk", "night" or comma list). Analysed assets carry a `motion` object.
     kind e.g. 'video'/'image'; sort/order; tag, face (name), q (text), date_from/date_to,
     geo filter (lat, lon, radius_km), city, trip_id, min_aesthetic. Each asset carries
     file_url/thumb_url/poster_url/proxy_url links."""
     p = dict(limit=limit, offset=offset, kind=kind, sort=sort, order=order, tag=tag, face=face,
              q=q, date_from=date_from, date_to=date_to, lat=lat, lon=lon, radius_km=radius_km,
-             city=city, trip_id=trip_id, min_aesthetic=min_aesthetic)
+             city=city, trip_id=trip_id, min_aesthetic=min_aesthetic, path_prefix=path_prefix,
+             min_smoothness=min_smoothness, hyperlapse=hyperlapse, daypart=daypart)
     return _decorate(await _call("GET", "/api/assets", p))
 
 
@@ -256,7 +264,9 @@ async def mf_create_story_plan(
     auto-picked. 9:16 is the kinetic style's native format. voice_id defaults to the configured
     voice; trip_id restricts footage to one trip. max_characters is a per-job cap (1-50,000).
     B-roll source control: broll_filter = {path_prefixes: [abs path prefixes], require_aerial: bool,
-    exclude_faces: bool, min_aesthetic: float 0-10, asset_ids: [ids], exclude_asset_ids: [ids]}
+    exclude_faces: bool, min_aesthetic: float 0-10, asset_ids: [ids], exclude_asset_ids: [ids],
+    min_smoothness: float 0-1 (steady flying only, taken from smooth windows), hyperlapse: bool|null,
+    daypart: ["day"|"dusk"|"night"]}
     restricts which library videos can be used (drone footage lives under
     /srv/iris/media/library/blue-drone-1o1/; use path_prefixes + require_aerial + exclude_faces
     to avoid selfies/street footage). beat_hints = one search query per beat (shorter lists fall back
@@ -297,7 +307,7 @@ async def mf_create_story_plan(
 async def mf_create_broll_plan(
     music_path: Optional[str] = None,
     music_start: Optional[float] = None,
-    target_seconds: float = 12.0,
+    target_seconds: float = 30.0,
     bars_per_cut: Literal[1, 2] = 1,
     text_line: str = "",
     brand: Optional[str] = None,
@@ -312,7 +322,8 @@ async def mf_create_broll_plan(
     """Music-led drone B-roll plan (POST /api/edits/broll): no narration, no paid calls.
     Cuts land exactly on the music's downbeats (needs a beat map in <music dir>/.beats/, made by
     scripts/beatmap.py); the length is the whole number of bars nearest target_seconds
-    (bars_per_cut 1 or 2 bars per shot). music_path omitted = a random mapped track from the
+    (bars_per_cut 1 or 2 bars per shot). B-roll videos are at least 30 s (target_seconds 30-90,
+    default 30); the track must be long enough (looping is not allowed). music_path omitted = a random mapped track from the
     music folder (seed makes it repeatable); music_start omitted = the track's best section,
     moved onto a downbeat. If the track's drop falls inside the window, the highest-aesthetic
     clip starts on it. Clips are never reused while unused ones exist, are >= 2 s long and start
@@ -320,7 +331,11 @@ async def mf_create_broll_plan(
     the downbeat of bar 2 (mark emphasis with *asterisks*); hook_text is a 0-1.4 s gradient
     headline; brand ("albertaweb" / "buildwithdb", config/brands.yaml) adds a 1.8 s end card.
     broll_filter = {path_prefixes, require_aerial, exclude_faces, min_aesthetic, asset_ids,
-    exclude_asset_ids} picks the footage (drone library: /srv/iris/media/library/blue-drone-1o1/);
+    exclude_asset_ids, min_smoothness, hyperlapse, daypart} picks the footage. By default B-roll
+    excludes hyperlapses and requires min_smoothness 0.8 (steady, flowing flight; shots are taken
+    only from the smooth windows of a clip); pass {"min_smoothness": null, "hyperlapse": null} to
+    switch that off. Needs mf_analyze_motion to have run. If the pool is short, other smooth ranges
+    of the same clip are used before any range repeats (drone library: /srv/iris/media/library/blue-drone-1o1/);
     asset_ids also sets priority order. silent=true skips music: a cut every ~1.6 s, length =
     target_seconds, and the render carries a silent AAC track for platform compatibility.
     Returns the draft plan (with a `broll` summary). Workflow: review -> mf_approve_edit_plan ->
@@ -331,6 +346,55 @@ async def mf_create_broll_plan(
         "bars_per_cut": bars_per_cut, "text_line": text_line, "brand": brand,
         "broll_filter": broll_filter, "silent": silent, "asset_ids": asset_ids,
         "hook_text": hook_text, "ratio": ratio, "title": title, "seed": seed})
+
+
+@mcp.tool()
+async def mf_create_compilation(
+    daypart: Literal["day", "dusk", "night"],
+    include_dusk_in: Optional[Literal["day", "night"]] = None,
+    music_path: Optional[str] = None,
+    music_start: Optional[float] = None,
+    brand: Optional[str] = None,
+    hook_text: Optional[str] = None,
+    text_line: str = "",
+    ratio: Literal["9:16", "16:9", "4:5", "1:1"] = "9:16",
+    order: Literal["time", "flow"] = "time",
+    min_clip_s: float = 0.8,
+    min_seconds: Optional[float] = None,
+    title: Optional[str] = None,
+) -> Any:
+    """Compile ALL hyperlapse clips of one daypart into a single draft plan (POST
+    /api/edits/compilation). Hyperlapses are exempt from the smoothness rule; every clip is used
+    whole (only black head/tail trimmed), duplicates dropped, ordered by taken_at ("time") or visual
+    flow ("flow"). With music_path (needs a beat map) each cut is nudged onto a downbeat by trimming
+    <= 0.4 s per clip end; nothing is sped up. include_dusk_in="day" (or "night") folds dusk clips
+    into that compilation. The natural length is returned in plan.broll.natural_seconds; looping is
+    never allowed. If it is under 30 s a warning is returned; min_seconds (e.g. 30) applies one uniform
+    slowdown (at most 0.6x, frames blended) to reach it. hook_text / text_line / brand work as for
+    mf_create_broll_plan. Then mf_approve_edit_plan -> mf_render(plan_id). Needs mf_analyze_motion."""
+    return await _call("POST", "/api/edits/compilation", body={
+        "daypart": daypart, "include_dusk_in": include_dusk_in, "music_path": music_path,
+        "music_start": music_start, "brand": brand, "hook_text": hook_text, "text_line": text_line,
+        "ratio": ratio, "order": order, "min_clip_s": min_clip_s, "min_seconds": min_seconds,
+        "title": title})
+
+
+@mcp.tool()
+async def mf_analyze_motion(force: bool = False, asset_ids: Optional[list[int]] = None,
+                            path_prefix: Optional[str] = None) -> Any:
+    """Start the CPU-only drone motion analysis job (POST /api/motion/analyze): per video it records
+    hyperlapse (25 fps / frame-discontinuity), daypart (day/dusk/night) and a 0-1 smoothness score
+    with smooth windows. Skips already-analysed assets unless force=true. New drone assets are
+    analysed automatically when the AI worker is idle. Track with mf_get_job; GET /api/motion/status
+    (mf_motion_status) shows progress. Safe to run any time (no GPU)."""
+    return await _call("POST", "/api/motion/analyze", body={
+        "force": force, "asset_ids": asset_ids, "path_prefix": path_prefix})
+
+
+@mcp.tool()
+async def mf_motion_status() -> Any:
+    """How many drone videos have motion analysis (GET /api/motion/status), by class."""
+    return await _call("GET", "/api/motion/status")
 
 
 @mcp.tool()
@@ -385,11 +449,36 @@ async def mf_restore_plan(plan_id: str, version_id: str) -> Any:
 
 
 @mcp.tool()
-async def mf_swap_broll(plan_id: str, beat_index: int, asset_id: int) -> Any:
+async def mf_swap_broll(plan_id: str, beat_index: int, asset_id: int, start: Optional[float] = None) -> Any:
     """Swap a story beat's B-roll while preserving its voiceover duration
-    (POST /api/edits/plan/{id}/swap-broll)."""
-    return await _call("POST", f"/api/edits/plan/{quote(plan_id, safe='')}/swap-broll",
-                       body={"beat_index": beat_index, "asset_id": asset_id})
+    (POST /api/edits/plan/{id}/swap-broll). start = where in the replacement the beat's footage
+    begins (default 0, or the earliest start that avoids excluded footage); excluded ranges are
+    refused. The plan returns to draft: approve it again before rendering."""
+    body = {"beat_index": beat_index, "asset_id": asset_id}
+    if start is not None:
+        body["start"] = start
+    return await _call("POST", f"/api/edits/plan/{quote(plan_id, safe='')}/swap-broll", body=body)
+
+
+@mcp.tool()
+async def mf_exclude_footage(asset_id: int, ranges: Optional[list[list[Optional[float]]]] = None,
+                             all: bool = False, reason: str = "", clear: bool = False) -> Any:
+    """Never use footage again (POST /api/assets/{id}/exclude): all=true excludes the whole clip,
+    or ranges=[[start, end], ...] in seconds (end null = to the end of the clip), e.g. a private
+    house or people in shot, or an over-used shot. Every selection path (story, B-roll, compilation,
+    swap) avoids excluded ranges and the renderer refuses plans that still contain them (swap those
+    clips out with mf_swap_broll). clear=true lifts the asset's exclusions (DELETE). Asset listings
+    show an `excluded` field; mf_list_excluded_footage lists them all."""
+    if clear:
+        return await _call("DELETE", f"/api/assets/{asset_id}/exclude")
+    return await _call("POST", f"/api/assets/{asset_id}/exclude",
+                       body={"ranges": ranges, "all": all, "reason": reason})
+
+
+@mcp.tool()
+async def mf_list_excluded_footage() -> Any:
+    """All excluded footage ranges (GET /api/assets/excluded)."""
+    return await _call("GET", "/api/assets/excluded")
 
 
 @mcp.tool()

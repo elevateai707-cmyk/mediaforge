@@ -173,3 +173,26 @@ consent-gated ElevenLabs story narration.
   music continues. Hook and card only appear in the kinetic style, and are not part of
   exported NLE/caption packages.
 - Kinetic body captions are 5.5% of the (safe-zone) frame height on portrait output.
+
+## Drone motion, 30 s B-roll and hyperlapse compilations (`g15/drone-motion`)
+
+- **Motion analysis** (`ai/motion.py`, CPU only, results in the new additive table
+  `motion_analysis`): per drone video it records `is_hyperlapse` and which signal fired
+  (25 fps DJI files, or a frame-to-frame discontinuity check on native-rate frames), `daypart`
+  (day / dusk / night from luma statistics), and for normal footage a 0-1 `smoothness`
+  (camera path tracked at 10 fps with LK features + RANSAC similarity transform; jerk of the
+  path normalised by its speed, penalised for direction reversals and stop-start) plus a
+  per-second profile and the smooth `windows` (>= 3 s). Start it with `POST /api/motion/analyze`
+  (`mf_analyze_motion`; skips analysed assets unless `force`); the AI worker also analyses new
+  drone assets when idle. `GET /api/motion/status` shows progress.
+- **Filters**: `broll_filter` (story + B-roll) takes `min_smoothness`, `hyperlapse` (true = only,
+  false = exclude, null = any) and `daypart`; `GET /api/assets` takes the same query parameters
+  and returns a `motion` object. Unanalysed assets pass only filters that need no analysis.
+  With `min_smoothness`, shots are cut only from the smooth windows of a clip.
+- **B-roll >= 30 s**: `target_seconds` is 30-90 (default 30). B-roll defaults to
+  `hyperlapse: false` and `min_smoothness: 0.6`; an explicit null switches a default off. When the
+  pool is short, other smooth ranges of the same clip are used before any range repeats.
+- **Hyperlapse compilations**: `POST /api/edits/compilation` / `mf_create_compilation` use ALL
+  hyperlapses of a daypart (duplicates dropped, black head/tail trimmed), ordered by time or visual
+  flow, with cuts nudged onto downbeats by trimming <= 0.4 s per clip end when music is given.
+  Natural length is reported; looping is never allowed; `min_seconds` slows uniformly (>= 0.6x).

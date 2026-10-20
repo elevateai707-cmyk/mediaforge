@@ -476,6 +476,20 @@ def worker_status() -> dict:
     }
 
 
+def _motion_one() -> bool:
+    """Idle-time: analyse one drone video's camera motion (CPU only, never touches VRAM)."""
+    try:
+        from . import motion_store
+        ids = motion_store.pending_ids(limit=1)
+        if not ids:
+            return False
+        motion_store.analyze_asset(ids[0])
+        return True
+    except Exception as exc:  # noqa: BLE001 - the queue must keep draining
+        log.warning("motion analysis step failed: %s", exc)
+        return False
+
+
 def _backfill_one() -> bool:
     """Idle-time: embed one asset that was indexed while CLIP was unavailable."""
     with SessionLocal() as db:
@@ -545,6 +559,8 @@ async def _queue_loop() -> None:
                 if not ids:
                     loop = asyncio.get_running_loop()
                     if await loop.run_in_executor(pool, _backfill_one):
+                        continue
+                    if await loop.run_in_executor(pool, _motion_one):
                         continue
                     if _quarantined:
                         _report(1.0, f"queue idle ({len(_quarantined)} asset(s) "

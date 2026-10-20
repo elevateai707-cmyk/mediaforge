@@ -182,5 +182,7 @@ def cleanup_assets(client):
                     pass
             db.query(models.TripAsset).filter_by(asset_id=a.id).delete()
             db.query(models.FaceDetection).filter_by(asset_id=a.id).delete()
+            db.query(models.MotionAnalysis).filter_by(asset_id=a.id).delete()
+            db.query(models.FootageExclusion).filter_by(asset_id=a.id).delete()
             db.delete(a)
         db.commit()
