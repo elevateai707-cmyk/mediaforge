@@ -1,0 +1,1047 @@
+#!/usr/bin/env python3
+"""Batch 02 runner: 30 narrated stories (33-38 s) + 16 music-led / silent smooth-drone B-roll
+videos (32 s) + 4 hyperlapse compilations.
+
+Stdlib only (works with ``python3 -I``). Talks to the MediaForge API, copies the
+renders and captions into this folder, writes post texts, POSTS.md and QC sheets. Narrated
+renders also get a speech-recognition QC (faster-whisper "small", CPU, run by a helper in the
+MediaForge venv): the share of script words heard is stored in state.json and the summary;
+below 85% is flagged QC-WARN (never a failure).
+
+    python3 -I run_batch.py --dry-run               # print every request + track-fit table, send nothing
+    python3 -I run_batch.py --only AW-B16           # one or more IDs (comma separated)
+    python3 -I run_batch.py                         # everything not yet finished, in order:
+                                                    #   narrated AW16-30, DB16-30, B-roll, compilations
+    python3 -I run_batch.py --rerender narrated-music   # re-render existing story plans (no ElevenLabs)
+    python3 -I run_batch.py --rerender AW17,DB21        # ... or just these IDs
+    python3 -I run_batch.py --redo AW20             # forget a finished ID and run it again
+    python3 -I run_batch.py --qc-only AW17,DB22     # speech QC of existing narrated files (no API calls)
+    python3 -I run_batch.py --make-manifest         # (re)build manifest.json from SCRIPTS.md
+
+Files (all in this folder):
+  SCRIPTS.md                  input, parsed once into manifest.json together with the music /
+                              B-roll / compilation assignments in this file (the manifest is
+                              human-editable: fix a script, hook, hint, track or text line there
+                              and re-run; delete it or pass --make-manifest to regenerate)
+  state.json                  resumable progress (finished IDs are skipped)
+  run.log                     log (the API token is never written to it)
+  <brand>/<narrated|broll|compilations>/   <ID>_<slug>[_voice-only|_silent].mp4, .srt, <ID>_post.txt
+  <brand>/POSTS.md            every video file with its post text
+  qc/<ID>.png                 contact sheet per video
+  qc_whisper.py               helper started once per run (MediaForge venv: faster-whisper)
+
+The API token is read from /home/g15/mediaforge/.env (MF_API_TOKEN) at start-up and only
+ever sent as an Authorization header. Videos run strictly one after another.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+API = "http://100.104.197.107:8420"
+ENV_FILE = Path("/home/g15/mediaforge/.env")
+MUSIC_DIR = Path("/srv/iris/media/music/suno")
+DRONE_PREFIX = "/srv/iris/media/library/blue-drone-1o1/"
+BRANDS = {"AW": ("albertaweb", "albertaweb", "AlbertaWeb.Design"),
+          "DB": ("buildwithdb", "buildwithdb", "Build With DB")}
+VOICE_ONLY_NOTE = "\U0001F3B5 Add trending audio in-app (low volume under voice)"
+SILENT_NOTE = "\U0001F3B5 Add trending audio in-app"
+BROLL_TAGS = {
+    "AW": ["#calgary", "#albertabusiness", "#dronefootage", "#localseo", "#webdesign"],
+    "DB": ["#buildwithdb", "#systemscreatefreedom", "#entrepreneur", "#dronefootage", "#automation"],
+}
+BROLL_HANDLE = {"AW": "albertaweb.design", "DB": "@buildwithdb"}
+STORY_TIMEOUT_S = 20 * 60
+RENDER_TIMEOUT_S = 60 * 60
+VENV_PY = "/home/g15/mediaforge/backend/.venv/bin/python"
+END_CARD_S = 1.8
+QC_WARN_PCT = 85.0
+SMOOTH_FILTER = {"min_smoothness": 0.8, "hyperlapse": False}   # footage must fly smoothly, no hyperlapses
+LATER_OFFSET_S = 40.0           # "2nd" music section: a downbeat ~40 s after the best section
+
+log = logging.getLogger("batch02")
+
+
+# ---------------------------------------------------------------------------
+# manifest (parsed from SCRIPTS.md + MUSIC_PLAN assignments transcribed below)
+# ---------------------------------------------------------------------------
+
+# Narrated music (ADs only; ORG = voice only). section: default | later | drop
+NARRATED_MUSIC = {
+    "AW17": ("432 Hz Rooftop.m4a", "default"),
+    "AW18": ("Sombra do Crime.m4a", "default"),
+    "AW20": ("ten_minute_reset.mp3", "default"),
+    "AW23": ("Grief and Glory.m4a", "default"),
+    "AW24": ("beyond_the_final_peak.mp3", "default"),
+    "AW26": ("the_three_second_reset.mp3", "default"),
+    "AW28": ("432 Hz Rooftop.m4a", "later"),
+    "AW30": ("ten_minute_reset.mp3", "later"),
+    "DB17": ("Sombra do Crime.m4a", "default"),
+    "DB19": ("Dark Gold Grind.m4a", "default"),
+    "DB21": ("Sombra do Crime.m4a", "later"),
+    "DB23": ("Grief and Glory.m4a", "default"),
+    "DB25": ("the_three_second_reset.mp3", "default"),
+    "DB27": ("Dark Gold Grind.m4a", "later"),
+    "DB29": ("beyond_the_final_peak.mp3", "default"),
+}
+# B-roll (8 per brand, IDs <AW|DB>-B16..B23): (text line with *emphasis*, track or None = silent)
+BROLL_START = 16
+BROLL_TARGET_S = 32
+BROLL_ITEMS = {
+    "AW": [("Above *Alberta*", "heat_on_the_north-side.mp3"), ("Built to be *found*", "stone_and_steam.mp3"),
+           ("Every street is a *market*", "beyond_the_final_peak.mp3"), ("Fast. Clean. *Yours*.", "432 Hz Rooftop.m4a"),
+           ("Alberta, from *above*", "ten_minute_reset.mp3"), ("Your city is *searching*", None),
+           ("Websites for *builders*", None), ("Get *found*", None)],
+    "DB": [("Built from the *ground* up", "Keep Building.mp3"), ("*Freedom* is built", "Build it R&B.m4a"),
+           ("Systems over *hustle*", "Dark Gold Grind.m4a"), ("Quiet *systems*", "Grief and Glory.m4a"),
+           ("Keep *building*", "Sombra do Crime.m4a"), ("Discipline *compounds*", None),
+           ("Work *smarter*", None), ("*Systems* create freedom", None)],
+}
+# Compilations: id -> settings. est_natural_s = natural length from the motion analysis (editable).
+COMPILATIONS = [
+    {"id": "AW-HL-DAY", "brand": "albertaweb", "daypart": "day", "track": "beyond_the_final_peak.mp3",
+     "hook": "Alberta in fast forward", "text_line": "Alberta, *sped up*", "est_natural_s": 104.0,
+     "post": "A whole day over Alberta, in fast forward \u23E9 albertaweb.design #hyperlapse #alberta #calgary #dronefootage #albertaweb"},
+    {"id": "DB-HL-DAY", "brand": "buildwithdb", "daypart": "day", "track": "Build it R&B.m4a",
+     "hook": "Systems never stop", "text_line": "*Systems* never stop", "est_natural_s": 104.0,
+     "post": "Build it once. Let it run all day \u23E9 @buildwithdb #hyperlapse #dronefootage #buildwithdb #systemscreatefreedom #timelapse"},
+    {"id": "AW-HL-NIGHT", "brand": "albertaweb", "daypart": "night", "track": "Sombra do Crime.m4a",
+     "hook": "Calgary after dark", "text_line": "The city never *sleeps*", "est_natural_s": 44.3,
+     "post": "The city never sleeps. Neither should your website \U0001F303 albertaweb.design #hyperlapse #calgary #nightdrone #yyc #albertaweb"},
+    {"id": "DB-HL-NIGHT", "brand": "buildwithdb", "daypart": "night", "track": "Dark Gold Grind.m4a",
+     "hook": "The night shift runs itself", "text_line": "Built to *run*", "est_natural_s": 44.3,
+     "post": "The night shift runs itself \U0001F303 @buildwithdb #hyperlapse #nightdrone #buildwithdb #automation #timelapse"},
+]
+
+
+def slugify(text: str, limit: int = 40) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return s[:limit].strip("-") or "video"
+
+
+def parse_hashtags(post: str) -> tuple[str, list[str]]:
+    tags = re.findall(r"#\w+", post)
+    desc = re.sub(r"\s*#\w+", "", post).strip()
+    if len(tags) > 5:
+        log.warning("post has %d hashtags; keeping the first 5", len(tags))
+    return desc, tags[:5]
+
+
+def parse_scripts(md: str) -> tuple[list[dict], dict[str, list[str]]]:
+    """-> (narrated entries, {"AW": [15 text lines], "DB": [15 text lines]})."""
+    videos: list[dict] = []
+    cur: dict | None = None
+    para: list[str] = []
+
+    def flush_para():
+        nonlocal para
+        if cur is not None and para:
+            cur["paragraphs"].append(" ".join(para).strip())
+        para = []
+
+    for raw in md.splitlines():
+        line = raw.rstrip()
+        m = re.match(r'^### ((?:AW|DB)\d\d) · (AD|ORG) · "(.*)"\s*$', line)
+        if m:
+            flush_para()
+            cur = {"id": m.group(1), "kind": "narrated", "brand": BRANDS[m.group(1)[:2]][0],
+                   "type": m.group(2), "name": m.group(3), "hook": "", "hints": [],
+                   "paragraphs": [], "post": ""}
+            videos.append(cur)
+            continue
+        if line.startswith("## "):
+            flush_para()
+            cur = None if not line.startswith("### ") else cur
+            if "B-roll videos" in line:
+                cur = None
+            continue
+        if cur is None:
+            continue
+        if line.startswith("- **Hook overlay:**"):
+            cur["hook"] = line.split(":**", 1)[1].strip()
+        elif line.startswith("- **B-roll:**"):
+            cur["hints"] = [h.strip() for h in line.split(":**", 1)[1].split(" · ") if h.strip()]
+        elif line.startswith("- **Post:**"):
+            flush_para()
+            cur["post"] = line.split(":**", 1)[1].strip()
+        elif line.startswith(">"):
+            body = line[1:].strip()
+            if body:
+                para.append(body)
+            else:
+                flush_para()
+        else:
+            if para:
+                flush_para()
+    flush_para()
+    table: dict[str, list[str]] = {"AW": [], "DB": []}
+    for line in md.splitlines():
+        m = re.match(r"^\|\s*(\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|$", line)
+        if m:
+            table["AW"].append(m.group(2))
+            table["DB"].append(m.group(3))
+    return videos, table
+
+
+def emphasise_text_line(text: str) -> str:
+    """Mark the longest word (>=5 letters) of a B-roll text line with *asterisks*."""
+    words = text.split()
+    best, size = -1, 4
+    for i, w in enumerate(words):
+        letters = re.sub(r"[^A-Za-z]", "", w)
+        if len(letters) > size:
+            best, size = i, len(letters)
+    if best < 0:
+        return text
+    w = words[best]
+    core = re.sub(r"^[^A-Za-z0-9$]+|[^A-Za-z0-9]+$", "", w)
+    words[best] = w.replace(core, f"*{core}*", 1) if core else w
+    return " ".join(words)
+
+
+def plain(text: str) -> str:
+    return text.replace("*", "")
+
+
+def build_manifest() -> dict:
+    videos, _table = parse_scripts((HERE / "SCRIPTS.md").read_text(encoding="utf-8"))
+    out: list[dict] = []
+    for v in videos:
+        track, section = NARRATED_MUSIC.get(v["id"], (None, None))
+        if v["type"] == "AD" and not track:
+            print(f"warning: {v['id']} is an AD but has no music assignment", file=sys.stderr)
+        desc, tags = parse_hashtags(v["post"])
+        v.update({"slug": slugify(v["name"]), "music": ({"track": track, "section": section} if track else None),
+                  "post_text": desc, "hashtags": tags})
+        v["script"] = "\n\n".join(v["paragraphs"])
+        out.append(v)
+    for key in ("AW", "DB"):
+        brand, _folder, _name = BRANDS[key]
+        for n, (text, track) in enumerate(BROLL_ITEMS[key], BROLL_START):
+            out.append({
+                "id": f"{key}-B{n:02d}", "kind": "broll", "brand": brand, "name": plain(text),
+                "slug": slugify(plain(text)), "silent": track is None,
+                "music": {"track": track, "section": "default"} if track else None,
+                "target_seconds": BROLL_TARGET_S, "text_line": text, "hook": None,
+                "post_text": f"{plain(text)} \U0001F681 {BROLL_HANDLE[key]}", "hashtags": BROLL_TAGS[key][:5],
+            })
+    for c in COMPILATIONS:
+        desc, tags = parse_hashtags(c["post"])
+        name = {"day": "Day hyperlapse", "night": "Night hyperlapse"}[c["daypart"]]
+        out.append({
+            "id": c["id"], "kind": "compilation", "brand": c["brand"], "name": f"{name} compilation",
+            "slug": slugify(f"{c['daypart']}-hyperlapse-compilation"), "daypart": c["daypart"],
+            "include_dusk_in": "night", "order": "time", "music": {"track": c["track"], "section": "default"},
+            "hook": c["hook"], "text_line": c["text_line"], "est_natural_s": c["est_natural_s"],
+            "post_text": desc, "hashtags": tags, "silent": False,
+        })
+    return {"api": API, "drone_prefix": DRONE_PREFIX, "music_dir": str(MUSIC_DIR), "videos": out}
+
+
+def load_manifest(rebuild: bool = False) -> dict:
+    path = HERE / "manifest.json"
+    if rebuild or not path.exists():
+        data = build_manifest()
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"wrote {path} ({len(data['videos'])} videos) - edit it freely, the runner reads it")
+        return data
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# beat maps (music start selection)
+# ---------------------------------------------------------------------------
+
+def read_beatmap(track: str) -> dict | None:
+    f = MUSIC_DIR / ".beats" / f"{track}.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def nearest(values, t):
+    return min(values, key=lambda v: abs(v - t)) if values else None
+
+
+def best_key(bm: dict, window: float) -> float:
+    """The track's best section start for a video of ``window`` seconds (as MediaForge picks it)."""
+    k30, k15 = bm.get("best_start_30s"), bm.get("best_start_15s")
+    pick = (k30 if window > 20 else k15)
+    return float(pick if pick is not None else (k15 or k30 or 0.0))
+
+
+def choose_start(bm: dict, section: str, window: float):
+    """-> (music_start, fits). Always a downbeat whose remaining track length covers ``window``
+    (the video plus its end card), so the music never has to loop. section: default = the best
+    section; later = ~40 s after it; drop = the drop. fits=False when no start can cover it."""
+    downs = sorted(bm.get("downbeats") or [])
+    latest = float(bm["duration"]) - window
+    fits = [d for d in downs if d <= latest]
+    if not downs or not fits:
+        return None, False
+    best = best_key(bm, window)
+    if section == "later":
+        want = best + LATER_OFFSET_S
+    elif section == "drop" and bm.get("drop_s") is not None:
+        want = float(bm["drop_s"])
+    else:
+        want = best
+    start = nearest(fits, want)
+    if section == "later" and abs(start - best) < 8.0:
+        # the track is too short to move 40 s on: take the fitting downbeat furthest from the best section
+        start = max(fits, key=lambda d: abs(d - best))
+    return start, True
+
+
+def section_start(bm: dict, which: str, window: float):
+    """Back-compat wrapper: music_start for a section (None when nothing fits)."""
+    return choose_start(bm, which, window)[0]
+
+
+def bars_per_cut_for(bm: dict | None) -> int:
+    return 2 if bm and float(bm.get("bpm") or 0) < 125 else 1
+
+
+# ---------------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------------
+
+class ApiError(Exception):
+    pass
+
+
+def read_token() -> str | None:
+    try:
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            if line.startswith("MF_API_TOKEN="):
+                return line.split("=", 1)[1].strip().strip("'\"") or None
+    except OSError:
+        pass
+    return None
+
+
+class Client:
+    def __init__(self, base: str, token: str | None):
+        self.base, self._token = base.rstrip("/"), token
+
+    def call(self, method: str, path: str, body=None, timeout: float = 90):
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(self.base + path, data=data, method=method)
+        req.add_header("Content-Type", "application/json")
+        if self._token:
+            req.add_header("Authorization", f"Bearer {self._token}")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.loads(e.read().decode("utf-8")).get("detail", "")
+            except Exception:  # noqa: BLE001
+                detail = ""
+            raise ApiError(f"HTTP {e.code} {method} {path}: {detail}"[:600]) from None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise ApiError(f"{method} {path} failed: {type(e).__name__}") from None
+
+
+def with_retry(label: str, fn):
+    """One retry per step."""
+    try:
+        return fn()
+    except (ApiError, RuntimeError) as exc:
+        log.warning("%s failed (%s); retrying once in 10 s", label, exc)
+        time.sleep(10)
+        return fn()
+
+
+def poll_job(client: Client, job_id: str, timeout: float, what: str) -> dict:
+    deadline = time.time() + timeout
+    last = ""
+    while time.time() < deadline:
+        job = client.call("GET", f"/api/jobs/{job_id}")
+        msg = f"{job.get('status')} {int((job.get('progress') or 0) * 100)}% {job.get('message') or ''}"
+        if msg != last:
+            log.info("%s %s: %s", what, job_id, msg)
+            last = msg
+        if job["status"] == "done":
+            return job
+        if job["status"] in ("error", "cancelled", "interrupted"):
+            raise RuntimeError(f"{what} job {job_id} {job['status']}: {job.get('message')}")
+        time.sleep(4)
+    raise RuntimeError(f"{what} job {job_id} timed out")
+
+
+# ---------------------------------------------------------------------------
+# request bodies
+# ---------------------------------------------------------------------------
+
+def story_body(v: dict, exclude: list[int]) -> dict:
+    paras = v["paragraphs"] if v.get("paragraphs") else v["script"].split("\n\n")
+    hints = v.get("hints") or []
+    def hint(i: int) -> str:
+        h = hints[i % len(hints)]
+        return h if "aerial" in h.lower().split() else f"aerial {h}"
+
+    hint_list = [hint(i) for i in range(len(paras))] if hints else None
+    flt = {"path_prefixes": [DRONE_PREFIX], "require_aerial": True, "exclude_faces": True, **SMOOTH_FILTER}
+    if exclude:
+        flt["exclude_asset_ids"] = sorted(set(exclude))
+    body = {
+        "script": "\n\n".join(paras), "ratio": "9:16", "title": f"{v['id']} {v['name']}",
+        "brand": v["brand"], "broll_filter": flt, "beat_hints": hint_list,
+        "cloud_approved": True, "voice_consent": True,
+    }
+    if v.get("hook"):
+        body["hook_text"] = v["hook"]
+    return body
+
+
+def broll_body(v: dict, exclude: list[int], bm: dict | None, music_start) -> dict:
+    flt = {"path_prefixes": [DRONE_PREFIX], "require_aerial": True, "exclude_faces": True, **SMOOTH_FILTER}
+    if exclude:
+        flt["exclude_asset_ids"] = sorted(set(exclude))
+    music = v.get("music")
+    body = {
+        "target_seconds": v.get("target_seconds", BROLL_TARGET_S), "text_line": v.get("text_line", ""),
+        "brand": v["brand"], "broll_filter": flt, "silent": bool(v.get("silent")),
+        "bars_per_cut": bars_per_cut_for(bm), "ratio": "9:16", "title": f"{v['id']} {v['name']}",
+    }
+    if v.get("hook"):
+        body["hook_text"] = v["hook"]
+    if music and not v.get("silent"):
+        body["music_path"] = str(MUSIC_DIR / music["track"])
+        if music_start is not None:
+            body["music_start"] = music_start
+    return body
+
+
+def compilation_body(v: dict, music_start) -> dict:
+    body = {"daypart": v["daypart"], "include_dusk_in": v.get("include_dusk_in"), "ratio": "9:16",
+            "order": v.get("order", "time"), "min_clip_s": 0.8, "brand": v["brand"],
+            "title": f"{v['id']} {v['name']}"}
+    if v.get("hook"):
+        body["hook_text"] = v["hook"]
+    if v.get("text_line"):
+        body["text_line"] = v["text_line"]
+    if v.get("music"):
+        body["music_path"] = str(MUSIC_DIR / v["music"]["track"])
+        if music_start is not None:
+            body["music_start"] = music_start
+    return body
+
+
+def render_body(plan_id: str, music_path=None, music_start=None) -> dict:
+    body = {"plan_id": plan_id, "ratio": "9:16", "width": 1080, "height": 1920, "reframe": "smart"}
+    if music_path:
+        body["music_path"] = music_path
+        if music_start is not None:
+            body["music_start"] = music_start
+    return body
+
+
+def estimate_window(v: dict) -> float:
+    """Music window a video needs: narrated = speech + gaps + end card; B-roll = target + a bar;
+    compilation = estimated natural length + end card."""
+    if v["kind"] == "broll":
+        return float(v.get("target_seconds", BROLL_TARGET_S)) + 3.0
+    if v["kind"] == "compilation":
+        return float(v.get("est_natural_s", 60.0)) + END_CARD_S + 1.0
+    words = len(plain(" ".join(v.get("paragraphs") or v["script"].split("\n\n"))).split())
+    return 2.3 + 0.385 * words + 0.5      # fitted on batch 01's 30 real renders (card included)
+
+
+# ---------------------------------------------------------------------------
+# outputs
+# ---------------------------------------------------------------------------
+
+def out_dir(v: dict) -> Path:
+    d = HERE / v["brand"] / {"narrated": "narrated", "broll": "broll", "compilation": "compilations"}[v["kind"]]
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def suffix(v: dict) -> str:
+    if v["kind"] == "broll":
+        return "_silent" if v.get("silent") else ""
+    return "" if v.get("music") else "_voice-only"
+
+
+def file_stem(v: dict) -> str:
+    return f"{v['id']}_{v['slug']}{suffix(v)}"
+
+
+def post_text(v: dict) -> str:
+    tags = " ".join((v.get("hashtags") or [])[:5])
+    line1 = f"{v.get('post_text', '').strip()} {tags}".strip()
+    note = None
+    if v["kind"] == "narrated" and not v.get("music"):
+        note = VOICE_ONLY_NOTE
+    elif v["kind"] == "broll" and v.get("silent"):
+        note = SILENT_NOTE
+    return line1 + ("\n" + note if note else "") + "\n"
+
+
+def ffprobe_duration(path: Path) -> float | None:
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
+        return float(r.stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def contact_sheet(video: Path, dest: Path, frames: int = 12) -> bool:
+    dur = ffprobe_duration(video)
+    if not dur:
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(video), "-vf",
+           f"fps={frames / dur:.5f},scale=216:384,tile=6x2:padding=4:color=black",
+           "-frames:v", "1", str(dest)]
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=300).returncode == 0 and dest.exists()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def write_posts_md(manifest: dict, state: dict) -> None:
+    for brand in {v["brand"] for v in manifest["videos"]}:
+        lines = [f"# {brand}: video files and post text", ""]
+        for v in manifest["videos"]:
+            if v["brand"] != brand:
+                continue
+            st = state.get(v["id"], {})
+            rel = Path(st["file"]).relative_to(HERE / brand) if st.get("file") else None
+            lines += [f"## {v['id']} · {v['name']}",
+                      f"- file: `{rel}`" if rel else "- file: (not rendered yet)",
+                      "- post:", "", "```", post_text(v).rstrip(), "```", ""]
+        (HERE / brand / "POSTS.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# processing
+# ---------------------------------------------------------------------------
+
+def plan_asset_ids(client: Client, plan_id: str) -> list[int]:
+    plan = client.call("GET", f"/api/edits/plan/{plan_id}")
+    return sorted({c["asset_id"] for c in plan.get("clips", [])})
+
+
+def narrated_excludes(manifest: dict, state: dict, v: dict) -> list[int]:
+    """Assets used by this brand's previous 3 narrated videos (in manifest order)."""
+    prev = [x for x in manifest["videos"] if x["brand"] == v["brand"] and x["kind"] == "narrated"]
+    idx = next(i for i, x in enumerate(prev) if x["id"] == v["id"])
+    ids: list[int] = []
+    for x in prev[max(0, idx - 3):idx]:
+        ids += state.get(x["id"], {}).get("asset_ids", [])
+    return sorted(set(ids))
+
+
+def broll_exclude_sets(manifest: dict, state: dict, v: dict) -> list[list[int]]:
+    """Exclusion attempts, strictest first: assets of this brand's last 5 finished B-roll videos
+    (in this batch); then nothing."""
+    broll = []
+    for x in manifest["videos"]:
+        if x["brand"] == v["brand"] and x["kind"] == "broll" and x["id"] != v["id"] \
+                and state.get(x["id"], {}).get("status") == "done":
+            broll.append(state[x["id"]].get("asset_ids", []))
+    last5 = sorted({i for ids in broll[-5:] for i in ids})
+    return [last5, []] if last5 else [[]]
+
+
+# ---------------------------------------------------------------------------
+# speech QC (narrated videos): how many script words does faster-whisper hear?
+# ---------------------------------------------------------------------------
+
+_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if w != "_"}
+
+
+def normalise_words(text: str) -> list[str]:
+    """Lowercase words with loose number handling: spoken numbers become digits
+    ("sixty five hundred" -> 6500), "$6,500" -> 6500, "albertaweb.design" -> "albertaweb dot design"."""
+    t = text.lower().replace("*", " ").replace("\u2019", "'")
+    t = re.sub(r"(?<=\d),(?=\d{3})", "", t)
+    t = re.sub(r"(?<=[a-z])\.(?=[a-z])", " dot ", t)
+    t = re.sub(r"[$%]", " ", t)
+    t = re.sub(r"[^a-z0-9' ]+", " ", t.replace("-", " "))
+    toks = [w.strip("'") for w in t.split()]
+    out: list[str] = []
+    total = cur = 0
+    active = False
+
+    def flush():
+        nonlocal total, cur, active
+        if active:
+            out.append(str(total + cur))
+        total = cur = 0
+        active = False
+
+    for w in toks:
+        if not w:
+            continue
+        if w in _UNITS:
+            cur += _UNITS[w]; active = True
+        elif w in _TENS:
+            cur += _TENS[w]; active = True
+        elif w == "hundred" and active:
+            cur = max(cur, 1) * 100
+        elif w == "thousand" and active:
+            total += max(cur, 1) * 1000; cur = 0
+        elif w == "and" and active:
+            continue
+        else:
+            flush()
+            out.append(w)
+    flush()
+    return out
+
+
+def recognition_pct(script: str, heard: str) -> float:
+    """Percentage of script words found (in order) in the transcript."""
+    import difflib
+    ref, hyp = normalise_words(script), normalise_words(heard)
+    if not ref:
+        return 100.0
+    blocks = difflib.SequenceMatcher(None, ref, hyp, autojunk=False).get_matching_blocks()
+    return round(100.0 * sum(b.size for b in blocks) / len(ref), 1)
+
+
+class WhisperQC:
+    """One long-lived helper process (MediaForge venv) that loads faster-whisper "small" once."""
+
+    def __init__(self) -> None:
+        self.proc = None
+        self.failed = False
+
+    def _start(self) -> bool:
+        if self.proc is not None:
+            return True
+        if self.failed:
+            return False
+        try:
+            self.proc = subprocess.Popen([VENV_PY, str(HERE / "qc_whisper.py")], stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+            return True
+        except OSError as exc:
+            log.warning("speech QC unavailable (%s)", exc)
+            self.failed = True
+            return False
+
+    def transcribe(self, video: Path, timeout: float = 900) -> str | None:
+        if not self._start():
+            return None
+        try:
+            self.proc.stdin.write(json.dumps({"video": str(video)}) + "\n")
+            self.proc.stdin.flush()
+            line = self.proc.stdout.readline()
+            reply = json.loads(line) if line else {"error": "helper exited"}
+        except (OSError, ValueError) as exc:
+            reply = {"error": str(exc)}
+        if reply.get("error"):
+            log.warning("speech QC failed for %s: %s", video.name, reply["error"])
+            self.close()
+            self.failed = True
+            return None
+        return reply.get("text", "")
+
+    def close(self) -> None:
+        if self.proc is not None:
+            try:
+                self.proc.stdin.close()
+                self.proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                self.proc.kill()
+            self.proc = None
+
+
+QC = WhisperQC()
+
+
+def speech_qc(v: dict, video: Path, entry: dict) -> None:
+    """Record the word-recognition % of a narrated render; below 85% is QC-WARN (not a failure)."""
+    heard = QC.transcribe(video)
+    if heard is None:
+        entry["asr"] = None
+        return
+    script = v.get("script") or "\n\n".join(v.get("paragraphs") or [])
+    pct = recognition_pct(script, heard)
+    entry["asr"] = {"recognition_pct": pct, "warn": pct < QC_WARN_PCT, "heard_words": len(normalise_words(heard)),
+                    "script_words": len(normalise_words(script))}
+    if pct < QC_WARN_PCT:
+        log.warning("QC-WARN %s: only %.1f%% of the script words were recognised (< %.0f%%)", v["id"], pct, QC_WARN_PCT)
+    else:
+        log.info("%s speech QC: %.1f%% of script words recognised", v["id"], pct)
+
+
+def finish_render(client: Client, v: dict, plan: dict, plan_id: str, render_req: dict,
+                  state: dict, entry: dict) -> None:
+    job = with_retry("render", lambda: client.call("POST", "/api/render", render_req))
+    log.info("%s render job %s", v["id"], job["job_id"])
+    entry["render_job"] = job["job_id"]
+    poll_job(client, job["job_id"], RENDER_TIMEOUT_S, f"{v['id']} render")
+    status = client.call("GET", f"/api/render/{job['job_id']}")
+    output = status.get("output_path")
+    if not output or not Path(output).is_file():
+        raise RuntimeError(f"render finished but output is missing: {output}")
+    stem = file_stem(v)
+    dest = out_dir(v) / f"{stem}.mp4"
+    shutil.copy2(output, dest)
+    entry["file"] = str(dest)
+    entry["duration"] = ffprobe_duration(dest)
+    story = plan.get("story") or {}
+    srt = story.get("srt")
+    if v["kind"] == "narrated" and srt and Path(srt).is_file():
+        shutil.copy2(srt, out_dir(v) / f"{stem}.srt")
+    (out_dir(v) / f"{v['id']}_post.txt").write_text(post_text(v), encoding="utf-8")
+    sheet = HERE / "qc" / f"{v['id']}.png"
+    entry["qc"] = str(sheet) if contact_sheet(dest, sheet) else None
+    if v["kind"] == "narrated":
+        try:
+            speech_qc(v, dest, entry)
+        except Exception as exc:  # noqa: BLE001 - QC must never fail a video
+            log.warning("speech QC error for %s: %s", v["id"], exc)
+
+
+def run_narrated(client: Client, manifest: dict, state: dict, v: dict, entry: dict) -> None:
+    body = story_body(v, narrated_excludes(manifest, state, v))
+    started = with_retry("story", lambda: client.call("POST", "/api/edits/story", body))
+    def _wait():
+        return poll_job(client, started["job_id"], STORY_TIMEOUT_S, f"{v['id']} story")
+    job = _wait()
+    plan_id = (job.get("meta") or {}).get("plan_id")
+    if not plan_id:
+        raise RuntimeError("story job finished without a plan id")
+    entry["plan_id"] = plan_id
+    plan = client.call("GET", f"/api/edits/plan/{plan_id}")
+    entry["asset_ids"] = sorted({c["asset_id"] for c in plan.get("clips", [])})
+    with_retry("approve", lambda: client.call("POST", f"/api/edits/plan/{plan_id}/approve"))
+    music_path, music_start = narrated_music_args(v, plan, entry)
+    finish_render(client, v, plan, plan_id, render_body(plan_id, music_path, music_start), state, entry)
+
+
+def narrated_music_args(v: dict, plan: dict, entry: dict | None = None):
+    """(music_path, music_start) for a narrated video: a downbeat chosen so the track covers the
+    video plus its end card without looping (recorded as entry["music_fit"])."""
+    music_path = music_start = None
+    if v.get("music"):
+        track = v["music"]["track"]
+        music_path = str(MUSIC_DIR / track)
+        bm = read_beatmap(track)
+        if bm:
+            window = float(plan["total_duration"]) + END_CARD_S + 0.5
+            music_start, fits = choose_start(bm, v["music"].get("section", "default"), window)
+            if entry is not None:
+                entry["music_fit"] = {"track": track, "start": music_start, "window": round(window, 1),
+                                      "track_s": bm["duration"], "fits": fits}
+            if not fits:
+                log.warning("%s: %s (%.0f s) is too short for %.0f s of video; the music will loop",
+                            v["id"], track, bm["duration"], window)
+    return music_path, music_start
+
+
+def rerender_narrated(client: Client, v: dict, entry: dict) -> None:
+    """Render an already-created story plan again (new mix/levels) without recreating the
+    story, so no ElevenLabs call is made. Overwrites the mp4, srt, post text and QC sheet."""
+    plan_id = entry.get("plan_id")
+    if not plan_id:
+        raise RuntimeError("no plan_id in the state file; run the video normally first")
+    plan = client.call("GET", f"/api/edits/plan/{plan_id}")
+    with_retry("approve", lambda: client.call("POST", f"/api/edits/plan/{plan_id}/approve"))
+    music_path, music_start = narrated_music_args(v, plan, entry)
+    finish_render(client, v, plan, plan_id, render_body(plan_id, music_path, music_start), {}, entry)
+
+
+def run_broll(client: Client, manifest: dict, state: dict, v: dict, entry: dict) -> None:
+    music = v.get("music") if not v.get("silent") else None
+    bm = read_beatmap(music["track"]) if music else None
+    window = estimate_window(v)
+    music_start, fits = (choose_start(bm, music["section"], window) if (bm and music) else (None, True))
+    if bm and music and not fits:
+        log.warning("%s: %s is too short for %.0f s of video", v["id"], music["track"], window)
+    plan = None
+    last_error = None
+    for attempt, exclude in enumerate(broll_exclude_sets(manifest, state, v)):
+        body = broll_body(v, exclude, bm, music_start)
+        try:
+            candidate = with_retry("broll plan", lambda: client.call("POST", "/api/edits/broll", body))
+        except ApiError as exc:
+            last_error = exc
+            log.warning("%s: plan with %d excluded assets failed: %s", v["id"], len(exclude), exc)
+            continue
+        side = client.call("GET", f"/api/edits/{candidate['plan_id']}/broll")
+        if side.get("reused_assets") and attempt < 2:
+            log.info("%s: %d reused asset(s) with %d excluded; relaxing the exclusion",
+                     v["id"], side["reused_assets"], len(exclude))
+            plan = candidate  # keep as a last resort
+            continue
+        plan = candidate
+        break
+    if plan is None:
+        raise RuntimeError(f"could not create a B-roll plan: {last_error}")
+    plan_id = plan["plan_id"]
+    entry["plan_id"] = plan_id
+    entry["asset_ids"] = sorted({c["asset_id"] for c in plan.get("clips", [])})
+    record_music_fit(client, plan_id, entry)
+    with_retry("approve", lambda: client.call("POST", f"/api/edits/plan/{plan_id}/approve"))
+    finish_render(client, v, plan, plan_id, render_body(plan_id), state, entry)
+
+
+def record_music_fit(client: Client, plan_id: str, entry: dict) -> None:
+    """Check on the created plan that music start + length stays inside the track (no looping)."""
+    side = client.call("GET", f"/api/edits/{plan_id}/broll")
+    m = side.get("music")
+    if m:
+        need = side["duration"] + END_CARD_S
+        entry["music_fit"] = {"track": Path(m["path"]).name, "start": m["start"], "window": round(need, 1),
+                              "track_s": m["track_duration"], "fits": m["start"] + need <= m["track_duration"] + 0.05}
+        if not entry["music_fit"]["fits"]:
+            log.warning("%s: music start %.1f + %.1f s runs past the end of the %.0f s track (it will loop)",
+                        plan_id, m["start"], need, m["track_duration"])
+    entry["natural_seconds"] = (side.get("natural_seconds") or side.get("duration"))
+    entry["warnings"] = side.get("warnings") or []
+
+
+def run_compilation(client: Client, manifest: dict, state: dict, v: dict, entry: dict) -> None:
+    bm = read_beatmap(v["music"]["track"]) if v.get("music") else None
+    start = fits = None
+    if bm:
+        start, fits = choose_start(bm, "default", estimate_window(v))
+    body = compilation_body(v, start)
+    plan = with_retry("compilation plan", lambda: client.call("POST", "/api/edits/compilation", body))
+    plan_id = plan["plan_id"]
+    entry["plan_id"] = plan_id
+    entry["asset_ids"] = sorted({c["asset_id"] for c in plan.get("clips", [])})
+    info = plan.get("broll") or {}
+    entry["clip_count"] = info.get("clip_count")
+    log.info("%s: %s clips, natural %.1f s, output %.1f s %s", v["id"], info.get("clip_count"),
+             info.get("natural_seconds") or 0, plan.get("total_duration") or 0, info.get("warnings") or "")
+    record_music_fit(client, plan_id, entry)
+    with_retry("approve", lambda: client.call("POST", f"/api/edits/plan/{plan_id}/approve"))
+    finish_render(client, v, plan, plan_id, render_body(plan_id), state, entry)
+
+
+def fit_row(v: dict):
+    """(track, start, window, track_len, fits) for a video that uses music, else None."""
+    if not v.get("music"):
+        return None
+    bm = read_beatmap(v["music"]["track"])
+    if not bm:
+        return (v["music"]["track"], None, estimate_window(v), None, False)
+    window = estimate_window(v)
+    start, fits = choose_start(bm, v["music"].get("section", "default"), window)
+    return (v["music"]["track"], start, window, float(bm["duration"]), fits)
+
+
+def dry_run(manifest: dict, wanted: list[dict]) -> None:
+    print(f"DRY RUN: {len(wanted)} video(s); nothing is sent. API {manifest.get('api', API)}\n")
+    for v in wanted:
+        print(f"=== {v['id']}  {v['kind']}  {v['name']!r}  -> {v['brand']}/{file_stem(v)}.mp4")
+        row = fit_row(v)
+        ms = row[1] if row else None
+        if v["kind"] == "narrated":
+            body = story_body(v, [])
+            body["broll_filter"]["exclude_asset_ids"] = "<asset ids of this brand's previous 3 narrated videos>"
+            print("POST /api/edits/story", json.dumps(body, ensure_ascii=False, indent=1))
+            print("POST /api/edits/plan/<plan_id>/approve")
+            print("POST /api/render", json.dumps(
+                render_body("<plan_id>", str(MUSIC_DIR / v["music"]["track"]) if v.get("music") else None, ms)))
+            print("speech QC: faster-whisper small vs the script (QC-WARN below %.0f%%)" % QC_WARN_PCT)
+        elif v["kind"] == "broll":
+            music = v.get("music") if not v.get("silent") else None
+            bm = read_beatmap(music["track"]) if music else None
+            body = broll_body(v, [], bm, ms)
+            body["broll_filter"]["exclude_asset_ids"] = "<this brand's last 5 B-roll assets, if any>"
+            print("POST /api/edits/broll", json.dumps(body, ensure_ascii=False, indent=1))
+            print("POST /api/edits/plan/<plan_id>/approve")
+            print("POST /api/render", json.dumps(render_body("<plan_id>")))
+        else:
+            print("POST /api/edits/compilation", json.dumps(compilation_body(v, ms), ensure_ascii=False, indent=1))
+            print("POST /api/edits/plan/<plan_id>/approve")
+            print("POST /api/render", json.dumps(render_body("<plan_id>")))
+        if row:
+            print(f"music fit: {row[0]} start {row[1]} s, needs {row[2]:.0f} s of a {row[3]} s track -> "
+                  + ("fits" if row[4] else "DOES NOT FIT"))
+        print("post.txt:\n  " + post_text(v).replace("\n", "\n  ").rstrip())
+        print()
+    kinds = {k: [v for v in wanted if v["kind"] == k] for k in ("narrated", "broll", "compilation")}
+    n, b, c = kinds["narrated"], kinds["broll"], kinds["compilation"]
+    print("SUMMARY: narrated %d (music %d, voice-only %d) | B-roll %d (music %d, silent %d) | compilations %d" % (
+        len(n), sum(1 for v in n if v.get("music")), sum(1 for v in n if not v.get("music")),
+        len(b), sum(1 for v in b if not v.get("silent")), sum(1 for v in b if v.get("silent")), len(c)))
+    rows = [(v["id"], fit_row(v)) for v in wanted if v.get("music")]
+    print("\nTRACK FIT (start = a downbeat; window = video + end card; the music must not loop):")
+    for vid, r in rows:
+        print(f"  {vid:<12} {r[0]:<28} start {r[1] if r[1] is None else round(r[1], 1)!s:>6}  need {r[2]:5.1f}s  "
+              f"track {r[3]}s  {'ok' if r[4] else 'NO FIT'}")
+    bad = [vid for vid, r in rows if not r[4]]
+    print("  -> " + ("all tracks cover their videos" if not bad else "WILL NOT FIT: " + ", ".join(bad)))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--only", help="comma separated IDs, e.g. AW01,AW-B01")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--rerender", help="comma separated narrated IDs (or 'narrated-music' = every narrated "
+                    "video with music) to render again from their existing plan: no story is recreated, "
+                    "so no ElevenLabs quota is used")
+    ap.add_argument("--qc-only", help="comma separated narrated IDs: run the speech QC on their existing "
+                    "files and update state.json (no API calls)")
+    ap.add_argument("--redo", help="comma separated IDs to forget in the state file and run again")
+    ap.add_argument("--make-manifest", action="store_true", help="rebuild manifest.json from SCRIPTS.md")
+    ap.add_argument("--state", default="state.json", help="state file name inside this folder")
+    ap.add_argument("--api", help="override the API base URL")
+    args = ap.parse_args()
+
+    manifest = load_manifest(rebuild=args.make_manifest)
+    if args.make_manifest and not (args.only or args.dry_run):
+        return 0
+    videos = manifest["videos"]
+    known = {v["id"] for v in videos}
+    only = [x.strip() for x in args.only.split(",")] if args.only else None
+    rerender: list[str] | None = None
+    if args.rerender:
+        if args.rerender.strip() == "narrated-music":
+            rerender = [v["id"] for v in videos if v["kind"] == "narrated" and v.get("music")]
+        else:
+            rerender = [x.strip() for x in args.rerender.split(",") if x.strip()]
+        bad = [x for x in rerender if x not in known or next(v for v in videos if v["id"] == x)["kind"] != "narrated"]
+        if bad:
+            print("--rerender needs narrated IDs; not valid: " + ", ".join(bad), file=sys.stderr)
+            return 2
+        only = rerender
+    if only:
+        bad = [x for x in only if x not in known]
+        if bad:
+            print("unknown ID(s): " + ", ".join(bad), file=sys.stderr)
+            return 2
+    wanted = [v for v in videos if not only or v["id"] in only]
+    if args.qc_only:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                            handlers=[logging.StreamHandler(sys.stdout)])
+        sp = HERE / args.state
+        st = json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else {}
+        for x in [i.strip() for i in args.qc_only.split(",") if i.strip()]:
+            v = next((vv for vv in videos if vv["id"] == x and vv["kind"] == "narrated"), None)
+            f = Path(st.get(x, {}).get("file", ""))
+            if v is None or not f.is_file():
+                print(f"{x}: not a rendered narrated video", file=sys.stderr)
+                continue
+            speech_qc(v, f, st.setdefault(x, {}))
+            print(f"{x}: {st[x].get('asr')}")
+        QC.close()
+        sp.write_text(json.dumps(st, indent=1, ensure_ascii=False), encoding="utf-8")
+        return 0
+    if args.dry_run and rerender is not None:
+        st = json.loads((HERE / args.state).read_text(encoding="utf-8")) if (HERE / args.state).exists() else {}
+        print(f"DRY RUN (re-render, no story recreated): {len(wanted)} video(s)")
+        for v in wanted:
+            pid = st.get(v["id"], {}).get("plan_id")
+            ms = None
+            if v.get("music"):
+                bm = read_beatmap(v["music"]["track"])
+                if bm and v["music"].get("section", "default") != "default":
+                    ms = section_start(bm, v["music"]["section"], estimate_window(v))
+            print(f"{v['id']:<6} plan {pid or 'MISSING in state.json'}  -> POST /api/render",
+                  json.dumps(render_body(pid or "<plan_id>", str(MUSIC_DIR / v["music"]["track"]) if v.get("music") else None, ms)),
+                  f"  overwrites {v['brand']}/narrated/{file_stem(v)}.mp4")
+        return 0
+    if args.dry_run:
+        dry_run(manifest, wanted)
+        return 0
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                        handlers=[logging.FileHandler(HERE / "run.log", encoding="utf-8"),
+                                  logging.StreamHandler(sys.stdout)])
+    state_path = HERE / args.state
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    for x in (args.redo or "").split(","):
+        if x.strip():
+            state.pop(x.strip(), None)
+    token = read_token()
+    if not token:
+        log.warning("no MF_API_TOKEN found; requests are sent without authentication")
+    client = Client(args.api or manifest.get("api", API), token)
+    try:
+        client.call("GET", "/api/health", timeout=20)
+    except ApiError as exc:
+        log.error("MediaForge is not reachable: %s", exc)
+        return 1
+
+    def save():
+        tmp = state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=1, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, state_path)
+
+    for v in wanted:
+        if rerender is None and state.get(v["id"], {}).get("status") == "done":
+            log.info("%s already done, skipping", v["id"])
+            continue
+        if rerender is not None:
+            old = state.get(v["id"], {})
+            entry = state[v["id"]] = dict(old, status="running", error=None,
+                                          started=datetime.now(timezone.utc).isoformat(), rerender=True)
+        else:
+            entry = state[v["id"]] = {"status": "running", "started": datetime.now(timezone.utc).isoformat()}
+        save()
+        log.info("=== %s %s (%s)%s", v["id"], v["name"], v["kind"], " [re-render]" if rerender is not None else "")
+        try:
+            if rerender is not None:
+                rerender_narrated(client, v, entry)
+            else:
+                {"narrated": run_narrated, "broll": run_broll,
+                 "compilation": run_compilation}[v["kind"]](client, manifest, state, v, entry)
+            entry["status"] = "done"
+        except Exception as exc:  # noqa: BLE001 - keep going with the next video
+            entry["status"] = "failed"
+            entry["error"] = str(exc)[:500]
+            log.error("%s FAILED: %s", v["id"], exc)
+            if rerender is not None and old.get("file"):
+                entry["status"] = "done"          # the earlier render is still on disk
+                entry["error"] = f"re-render failed: {exc}"[:500]
+        entry["finished"] = datetime.now(timezone.utc).isoformat()
+        save()
+        write_posts_md(manifest, state)
+
+    write_posts_md(manifest, state)
+    QC.close()
+    print("\nID           status   dur(s)  asr%   file")
+    for v in wanted:
+        e = state.get(v["id"], {})
+        f = Path(e["file"]).name if e.get("file") else (e.get("error") or "")[:70]
+        d = f"{e['duration']:.1f}" if e.get("duration") else "-"
+        asr = e.get("asr")
+        a = f"{asr['recognition_pct']:.0f}" if asr else "-"
+        flags = []
+        if asr and asr["warn"]:
+            flags.append("QC-WARN")
+        if e.get("music_fit") and not e["music_fit"].get("fits", True):
+            flags.append("MUSIC-LOOPS")
+        for w in e.get("warnings") or []:
+            flags.append("WARN:" + w[:50])
+        print(f"{v['id']:<12} {e.get('status', 'skipped'):<8} {d:>6} {a:>5}  {f}  {' '.join(flags)}")
+    failed = [v["id"] for v in wanted if state.get(v["id"], {}).get("status") == "failed"]
+    warned = [v["id"] for v in wanted if (state.get(v["id"], {}).get("asr") or {}).get("warn")]
+    if warned:
+        print("\nQC-WARN (speech recognition below %.0f%%, review by ear): %s" % (QC_WARN_PCT, ", ".join(warned)))
+    if failed:
+        print("\nfailed: " + ", ".join(failed) + "  (re-run to retry only those)")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
