@@ -157,8 +157,8 @@ def smoothness_from_steps(steps: dict, fps: float = ANALYSIS_FPS) -> dict:
     # stop-start: moving <-> still transitions
     moving = speed > 0.012
     still = speed < 0.003
-    state = np.where(moving, 1, np.where(still, 0, -1))
-    state = state[state >= 0]
+    state_full = np.where(moving, 1, np.where(still, 0, -1))
+    state = state_full[state_full >= 0]
     stops = int((state[1:] != state[:-1]).sum()) if len(state) > 1 else 0
     seconds = n / fps
     rev_s, stop_s = rev / seconds, stops / seconds
@@ -181,7 +181,11 @@ def smoothness_from_steps(steps: dict, fps: float = ANALYSIS_FPS) -> dict:
             s = np.sign(v[axis][a:b]) * (np.abs(v[axis][a:b]) > 0.01)
             nz = s[s != 0]
             lrev += int((nz[1:] != nz[:-1]).sum()) if len(nz) > 1 else 0
-        local.append(round(math.exp(-JERK_K * lj) * max(0.0, 1.0 - 0.35 * lrev * per / (b - a)), 3))
+        st = state_full[a:min(b, len(state_full))]
+        st = st[st >= 0]
+        lstop = int((st[1:] != st[:-1]).sum()) if len(st) > 1 else 0
+        local.append(round(math.exp(-JERK_K * lj)
+                           * max(0.0, 1.0 - 0.35 * lrev * per / (b - a) - 0.30 * lstop * per / (b - a)), 3))
     out["profile"] = local
     out["windows"] = windows_from_profile(local, 0.6, 1.0)
     return out
