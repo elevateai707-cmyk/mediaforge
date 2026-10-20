@@ -1,7 +1,7 @@
 # Batch 02: scripts for review (30+ s narrated)
 
 Both brands belong to **Elevate Vision Digital**. Each brand's content posts to its own accounts: **@buildwithdb** and **albertaweb.design**.
-Format: 9:16, 80–90 words each, about 33–38 s with the end card. The voice is your clone and the captions are kinetic; footage is **smooth** drone B-roll only.
+Format: 9:16, 75–90 words each, about 31–37 s with the end card. The voice is your clone and the captions are kinetic; footage is **smooth** drone B-roll only.
 Each paragraph is one beat. `*word*` marks an emphasis word. **Type:** AD has a direct CTA; ORG is organic, built for reach.
 
 > Before posting: label these as AI-generated on TikTok and Instagram (cloned voice).
@@ -25,6 +25,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > If the answer is no, a customer just picked someone *else*.
 >
+> Then check *Maps*. Are your hours, photos, and reviews actually up to date?
+>
 > That's the gap we fix for Alberta businesses. Follow for more checks like this.
 
 - **Post:** The 60-second test every business owner should do today 📱 #smallbusinesstips #localseo #calgarybusiness #albertabusiness #webdesign
@@ -42,6 +44,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 > We build websites that back up your profile with clean, *verified* information.
 >
 > So Maps, Google, and AI all tell the *same* story about you.
+>
+> AI assistants read the same details, and they won't recommend a business they can't *confirm*.
 >
 > Run the live scan at albertaweb dot design.
 
@@ -61,6 +65,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > You wake up to real leads instead of an empty *inbox*.
 >
+> It works for trades, clinics, salons, and service businesses, anywhere a missed lead means a missed *job*. Set it up once and it just runs.
+>
 > Lead automation from albertaweb dot design. Book a consult.
 
 - **Post:** Your website should work the night shift too 🌙 #leadautomation #leadgeneration #contractors #smallbusiness #albertaweb
@@ -78,6 +84,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 > The customer never even saw your *work*.
 >
 > Being the best isn't enough if you're hard to *find*.
+>
+> The fix isn't working harder on the tools. It's making sure your *website* does the selling before you ever pick up the phone.
 >
 > Follow for straight talk about winning more local jobs in Alberta.
 
@@ -97,6 +105,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > Four. Would you trust it if it wasn't *yours*?
 >
+> Five. Is your city and service area written in plain *text*, not hidden inside an image?
+>
 > Fail any of these? Run the live scan at albertaweb dot design and we'll show you the rest.
 
 - **Post:** Save this and check your site tonight ✅ #websiteaudit #webdesigntips #smallbusiness #albertabusiness #calgary
@@ -114,6 +124,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 > Leave the platform, and your website *disappears*.
 >
 > Custom code costs more up front, but it's *yours*, it's faster, and it's built to get leads.
+>
+> And when the platform raises its prices, or changes the rules, you have no choice but to *pay*.
 >
 > Follow for honest numbers on what websites really cost.
 
@@ -133,6 +145,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > Being machine readable is the new *SEO*.
 >
+> That's why we build sites with structured data that spells out exactly *who* you are and where you work.
+>
 > Follow for more on getting found in the age of AI.
 
 - **Post:** AI search is here. Is your business readable? 🤖 #aisearch #chatgpt #seo #localbusiness #albertabusiness
@@ -150,6 +164,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 > We build fast, custom sites made to turn searches into *calls*.
 >
 > No templates, no mystery pricing, and you own the *code*.
+>
+> From Sherwood Park to St. Albert, homeowners are searching on their phones right *now*, and they call whoever looks most trustworthy first.
 >
 > Book a consult at albertaweb dot design.
 
@@ -169,6 +185,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > Fast, mobile first, and readable by Google, Maps, and *AI*.
 >
+> Whether you're a trade, a clinic, or a shop on Gaetz Avenue, your website should be bringing you *customers*.
+>
 > See where you stand. Run the live scan at albertaweb dot design.
 
 - **Post:** Central Alberta, get found first 📍 #reddeer #centralalberta #albertabusiness #localseo #smallbusiness
@@ -186,6 +204,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 > Mobile first means big buttons, fast loading, and your number right at the *top*.
 >
 > Design for the truck, not the *boardroom*.
+>
+> Test it yourself. Open your website on your phone, with one hand, standing *outside*. Can you find the call button in two seconds?
 >
 > Follow for more practical website advice for Alberta businesses.
 
@@ -205,6 +225,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > We build sites designed to make you less dependent on *anyone* else.
 >
+> When you stop paying the platform, those leads stop *coming*. When you own the website, the traffic you build keeps working for you, month after month.
+>
 > Book a consult at albertaweb dot design.
 
 - **Post:** Stop renting your customers 🏠 #leadgeneration #contractors #ownyourleads #albertabusiness #webdesign
@@ -222,6 +244,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 > Does stuff jump around while it *loads*?
 >
 > Google measures all three, and slow, jumpy sites get *pushed* down.
+>
+> Think of it like a job site *inspection*. A site that fails doesn't get shut down, but it slowly loses the customers it should be winning every single day.
 >
 > Every site we build passes them by default. Follow for more website basics in plain English.
 
@@ -241,6 +265,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > Our two hundred ninety nine dollar AI visibility audit shows you exactly what's *leaking*.
 >
+> We see it all the time. Businesses spending thousands on ads, sending traffic to a page that loads slowly and never asks for the *call*.
+>
 > Book it at albertaweb dot design.
 
 - **Post:** Fix the bucket before you pour in water 🪣 #digitalmarketing #googleads #webdesign #albertabusiness #conversion
@@ -259,6 +285,10 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 >
 > Your website can be the one that's *working*.
 >
+> A customer finishing a late shift. A homeowner who just found a leak. A manager planning tomorrow's *job*.
+>
+> They all search the same way, on a phone, and they choose whoever answers *first*.
+>
 > Follow for more ways to win local jobs in Alberta.
 
 - **Post:** The city never stops searching 🌃 #calgary #yyc #nightdrone #smallbusiness #albertaweb
@@ -276,6 +306,8 @@ Voice: "we", direct. CTAs: *Run the live scan at albertaweb.design* / *Book a co
 > And if you don't need us, we'll say so *plainly*.
 >
 > Call eight two five, four three five, nine zero nine eight.
+>
+> No sales pressure and no confusing jargon. Just clear advice about what will actually bring you more *calls*.
 >
 > Or book a consult at albertaweb dot design.
 
@@ -300,6 +332,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > Now the work I do once keeps paying me back, again and *again*.
 >
+> I still remember the first automation that ran while I was asleep. Small, simple, but it changed how I saw my *time*.
+>
 > That's what Build With DB is about. Follow if you want out of the hours trap.
 
 - **Post:** Your time shouldn't be your only income ⏳ #buildwithdb #systemscreatefreedom #entrepreneur #tradestobusiness #passiveincome
@@ -317,6 +351,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 > Your customers get answers instantly, and you get *qualified* leads, even at midnight.
 >
 > No more missed opportunities from people who just wanted a quick *answer*.
+>
+> It even knows when to hand the conversation over to a real *human*.
 >
 > Try the live demo and request a build at buildwithdb dot ca.
 
@@ -336,6 +372,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > Each one takes busy work off your plate and puts money back in your *pocket*.
 >
+> None of these need a big budget. Most can be set up in an afternoon, and they keep paying you back every single *week*.
+>
 > Save this, and follow for more systems built by a tradesman.
 
 - **Post:** Save this one 🔧 #trades #automation #contractors #smallbusinesstips #buildwithdb
@@ -353,6 +391,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 > Built for Canada and the US, so tax season isn't a *scramble*.
 >
 > Know your real numbers every *week*, not just in April.
+>
+> You can see what each platform really pays you after gas and expenses, so you can decide where your time is *worth* it.
 >
 > Get Ignite Gig free at buildwithdb dot ca.
 
@@ -372,6 +412,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > That's exactly how I build automations now, clean, documented, and made to *last*.
 >
+> And measure twice, cut once. In the field it saves material. In business, it saves you months of expensive *rework*.
+>
 > If you came from the trades, you already think like a builder. Follow for more.
 
 - **Post:** The trades teach business better than school 🔌 #redseal #electrician #tradestotech #buildwithdb #entrepreneur
@@ -389,6 +431,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 > You stay on the tools. The system handles the *phone*.
 >
 > And every call is logged, so nothing slips through the *cracks*.
+>
+> It works for trades, clinics, and service businesses, anywhere a missed call means a missed *job*.
 >
 > Request a build at buildwithdb dot ca.
 
@@ -408,6 +452,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > Build systems that work on your worst *days*.
 >
+> I learned that on job sites. The best crews don't wait for motivation. They follow a *process*, and the process gets results.
+>
 > Systems create freedom. Follow if you're building.
 
 - **Post:** Build for your worst days 💪 #discipline #systems #entrepreneurmindset #buildwithdb #systemscreatefreedom
@@ -425,6 +471,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 > Then I build it, test it, and hand it over so it runs *without* you.
 >
 > You get your hours back, and your business gets *leverage*.
+>
+> Every system is built around how you actually work, not some generic template that forces you to *change* everything.
 >
 > Request a build at buildwithdb dot ca.
 
@@ -444,6 +492,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > If the answer is nothing, it's time to build a *system*.
 >
+> Busy work feels urgent, but it rarely moves you forward. Building one system this week could save you hundreds of hours over the next *year*.
+>
 > Follow for ways to turn busy work into automation.
 
 - **Post:** Busy ≠ productive ⏱️ #productivity #automation #entrepreneur #timemanagement #buildwithdb
@@ -461,6 +511,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 > One content system can turn out a month of videos in an *afternoon*.
 >
 > I build content systems like this for *businesses*.
+>
+> Even the B-roll was chosen automatically, only the smooth drone shots, cut to the beat of the *music*.
 >
 > Request a build at buildwithdb dot ca.
 
@@ -480,6 +532,10 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > Building is exciting, but protecting what you've built is what lets you *keep* it.
 >
+> Most people only think about protection after something goes *wrong*. A crashed laptop. A lost client. A platform that shuts down overnight.
+>
+> Build your backups *before* you ever need them.
+>
 > Systems create freedom, but only if you protect them. Follow for more.
 
 - **Post:** Build it. Then protect it. 🛡️ #buildwithdb #businessprinciples #entrepreneur #cybersecurity #systemscreatefreedom
@@ -497,6 +553,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 > Taught by a tradesman, in plain language, with no *fluff*.
 >
 > Start where you are and build up from *there*.
+>
+> Every lesson comes from real builds, real mistakes, and real results. You'll learn how to think in systems, so you can solve problems on your *own*.
 >
 > Press start building at buildwithdb dot ca.
 
@@ -516,6 +574,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > That's why I built Ignite Gig, a free tracker for gig *workers*.
 >
+> Ten minutes every Sunday. Log your income, log your expenses, and you'll never have to *guess* again at tax time.
+>
 > Follow for more money systems for gig workers.
 
 - **Post:** Track weekly, sleep better 💰 #gigeconomy #gigworker #moneytips #budgeting #ignitegig
@@ -534,6 +594,8 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 >
 > Start with one. Then *stack* them.
 >
+> Maybe it's sending invoices, answering the same questions, or posting *content*. Whatever it is, you only have to build it once.
+>
 > If you'd rather have it built for you, request a build at buildwithdb dot ca.
 
 - **Post:** Start with one 🧱 #automation #productivity #smallbusiness #aitools #buildwithdb
@@ -551,6 +613,10 @@ Voice: "I", founder. Tagline: *Systems Create Freedom.* CTAs: *Request a build a
 > Systems aren't the goal. *Freedom* is.
 >
 > Build the machine, so you can live the *life*.
+>
+> I spent years working long shifts and missing *moments* I can't get back.
+>
+> Now every system I build is about buying that *time* back, for me, and for the people I build for.
 >
 > Systems create freedom. Follow if that's what you're building toward.
 
