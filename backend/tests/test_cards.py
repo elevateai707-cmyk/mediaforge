@@ -87,7 +87,7 @@ def test_card_frames_per_kind(kind):
     assert content.sum() > 1500, f"{kind}: nothing drawn"
     assert content[:int(0.10 * h)].sum() == 0 or kind in ("headline",), kind     # headline pill sits at 12%+
     sx, sy, sw, sh = kinetic._safe_rect(w, h, ZONES)
-    assert content[:, sx + sw + 4:].sum() == 0                          # right UI margin stays clear
+    assert content[:, int(0.93 * w) + 1:].sum() == 0                    # symmetric 7% side margin
     assert content[int(0.78 * h):].sum() == 0                           # bottom UI zone stays clear
     band = content[int(0.46 * h):int(0.56 * h), int(0.30 * w):int(0.86 * w)]
     assert band.sum() == 0, f"{kind}: card content in the caption band"
@@ -234,3 +234,27 @@ def test_compact_cards_stay_in_the_top_band():
         content = _diff(r.frame(5.0), r.background(5.0)) > 70
         assert content.sum() > 500, kind
         assert content[int(0.42 * 960):].sum() == 0, f"{kind} reaches into the presenter area"
+
+
+@pytest.mark.parametrize("w,h", [(540, 960), (960, 540)])
+@pytest.mark.parametrize("kind", list(SPECS) + ["ambient"])
+def test_every_card_keeps_a_symmetric_side_margin(kind, w, h):
+    """Non-background content stays inside [7%, 93%] of the frame width at every moment (9:16 and 16:9)."""
+    spec = cards.validate_card(SPECS.get(kind, {"kind": "ambient", "text": "Title line"}))
+    for zones in (ZONES, None, {"top": 0.12, "bottom": 0.22, "left": 0.0, "right": 0.14}):
+        r = cards.CardRenderer(spec, w, h, 7.0, 30, zones if h > w else None, seed=4)
+        for t in (0.8, 1.6, 2.6, 4.0, 6.5):
+            content = _diff(r.frame(t), r.background(t)) > 70
+            if not content.any():
+                continue
+            xs = np.where(content.any(axis=0))[0]
+            assert xs.min() >= int(0.07 * w) - 1 and xs.max() <= int(0.93 * w) + 1, \
+                f"{kind} {w}x{h} t={t}: content spans x {xs.min()}..{xs.max()} of {w}"
+    # centred blocks really are centred
+    if kind in ("stat", "terminal"):
+        r = cards.CardRenderer(spec, w, h, 7.0, 30, ZONES if h > w else None, seed=4)
+        content = _diff(r.frame(6.0), r.background(6.0)) > 70
+        if kind == "terminal":
+            top = content[: int(0.45 * h)]
+            xs = np.where(top.any(axis=0))[0]
+            assert abs((xs.min() + xs.max()) / 2 - w / 2) < 0.03 * w and (xs.max() - xs.min()) <= 0.86 * w + 2

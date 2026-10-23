@@ -265,10 +265,10 @@ class CardRenderer:
             self.top1 = int(0.285 * h)
             self.low0 = int(0.295 * h)
             self.low1 = int(0.375 * h)
-        # inner padding so content never hugs the left edge when the safe zone has no left margin
-        pad = max(0, int(0.055 * w) - (self.sx if h >= w else 0))
-        self.fx = self.sx + pad
-        self.fw = self.sw - pad
+        # Symmetric horizontal frame: at least 7% of the width on both sides in every orientation
+        # (8% here leaves room for the light camera drift), centred blocks are centred on the frame.
+        self.fx = int(0.08 * w)
+        self.fw = w - 2 * self.fx
         # Short beats: speed the reveal up so the card is complete before its voice slot ends.
         kind = spec["kind"]
         n_items = len(spec.get("items") or [])
