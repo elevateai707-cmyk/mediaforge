@@ -206,3 +206,15 @@ def test_swap_broll_on_a_card_beat_restores_footage(client, fake_tts, long_asset
     plan, _sc = _approved_with_cards(client, long_assets)
     planner.swap_broll(plan["plan_id"], 1, long_assets[1])
     assert story.get_story(plan["plan_id"])["beats"][0].get("visual") is None
+
+
+def test_short_beats_speed_the_reveal_up():
+    spec = cards.validate_card(SPECS["timeline"])
+    long_r = cards.CardRenderer(spec, 540, 960, 8.0, 30, ZONES)
+    short_r = cards.CardRenderer(spec, 540, 960, 2.7, 30, ZONES)
+    assert long_r.speed == 1.0 and 0.4 <= short_r.speed < 1.0
+    # by 2.2 s of a 2.7 s beat all three steps have appeared
+    img = short_r.frame(2.2)
+    assert (_diff(img, short_r.background(2.2)) > 70)[int(0.34 * 960):int(0.45 * 960)].sum() > 300
+    term = cards.CardRenderer(cards.validate_card(SPECS["terminal"]), 540, 960, 2.0, 30, ZONES)
+    assert term.speed == 1.0                        # the counter already scales with the slot

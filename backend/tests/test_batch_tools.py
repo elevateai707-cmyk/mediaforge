@@ -163,3 +163,46 @@ def test_fix_script_dry_run_and_real_run(fix, tmp_path, monkeypatch, capsys):
     for _p, b in swaps:
         assert b["beat_index"] == 2 and b["asset_id"] in (50, 51, 52) and b["start"] >= 1.0
     assert ran and ran[0][-2:] == ["--rerender", "AW17,AW20"]
+
+
+# ---------------------------------------------------------------------------
+# batch 03: [CARD ...] markup, music lines and B-roll tables
+# ---------------------------------------------------------------------------
+def _load03():
+    spec = importlib.util.spec_from_file_location("run_batch03", BATCH.parent / "batch-03" / "run_batch.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_batch03_card_and_music_parsing():
+    rb = _load03()
+    card = rb.parse_card("[CARD terminal: exploit attempts | counter 1,000 → 10,000 → 1,000,000+]")
+    assert card == {"type": "card", "card": {"kind": "terminal", "text": "exploit attempts",
+                                              "sub": "counter 1,000 → 10,000 → 1,000,000+"}}
+    assert rb.parse_card("[CARD stat: Millions | exploit attempts after disclosure · Source: Cloudflare]")["card"]["sub"] \
+        .endswith("Source: Cloudflare")
+    assert rb.parse_card("[CARD alert: HEADLINE only]")["card"]["sub"] == ""
+    assert rb.parse_card("not a card") is None
+    assert rb.parse_music("Sombra do Crime.m4a (tense)") == {"track": "Sombra do Crime.m4a", "section": "default"}
+    assert rb.parse_music("none (voice-only, add trending audio)") is None and rb.parse_music("silent") is None
+
+
+def test_batch03_manifest_matches_the_scripts():
+    m = json.loads((BATCH.parent / "batch-03" / "manifest.json").read_text())
+    vids = {v["id"]: v for v in m["videos"]}
+    assert [v["id"] for v in m["videos"] if v["kind"] == "narrated"] == ["AW31", "AW32", "AW33", "DB31", "DB32", "DB33"]
+    aw31 = vids["AW31"]
+    kinds = [(x["card"]["kind"] if x else None) for x in aw31["beat_visuals"]]
+    assert kinds == ["stat", "headline", None, "alert", None, None] and len(aw31["paragraphs"]) == len(aw31["beat_visuals"])
+    assert aw31["music"]["track"] == "Sombra do Crime.m4a" and vids["AW32"]["music"] is None
+    assert vids["DB33"]["beat_visuals"][3]["card"]["sub"] == "✔ backups ✔ updates ✔ alerts"
+    assert vids["AW-B25"]["silent"] and vids["AW-B24"]["music"]["track"] == "heat_on_the_north-side.mp3"
+    assert all(len(v["hashtags"]) <= 5 for v in m["videos"]) and vids["DB-B26"]["target_seconds"] == 32
+    # every narrated card is accepted by the backend validator
+    import sys
+    sys.path.insert(0, str(BATCH.parents[1] / "backend"))
+    from app.edits import cards
+    for v in m["videos"]:
+        if v["kind"] == "narrated" and v.get("beat_visuals"):
+            cards.validate_beat_visuals(v["beat_visuals"], len(v["paragraphs"]))

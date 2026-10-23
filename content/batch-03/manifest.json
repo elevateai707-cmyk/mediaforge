@@ -1,0 +1,495 @@
+{
+  "api": "http://100.104.197.107:8420",
+  "drone_prefix": "/srv/iris/media/library/blue-drone-1o1/",
+  "music_dir": "/srv/iris/media/music/suno",
+  "max_asset_uses_per_brand": 2,
+  "videos": [
+    {
+      "id": "AW31",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Is your site running the hacked code?",
+      "hook": "Is your website running this week's hacked code?",
+      "hints": [
+        "aerial Calgary skyline",
+        "city at night",
+        "highway"
+      ],
+      "paragraphs": [
+        "This week, two critical flaws were found in *PHP*, the code behind roughly seven in ten websites, including WordPress.",
+        "They let attackers take over a website's server without ever logging *in*.",
+        "Attackers were already trying them before the fix was even *released*.",
+        "Governments pulled their own websites *offline* until they could patch.",
+        "If your website hasn't been updated in years, it's an open *door*.",
+        "We update and harden existing Alberta websites, without starting over. Run the live scan at albertaweb dot design."
+      ],
+      "post": "This week's PHP flaws hit the code behind ~7 in 10 websites. When was yours last updated? 🔐 Live scan at albertaweb.design #cybersecurity #wordpress #websitesecurity #albertabusiness #php2shell",
+      "slug": "is-your-site-running-the-hacked-code",
+      "music": {
+        "track": "Sombra do Crime.m4a",
+        "section": "default"
+      },
+      "post_text": "This week's PHP flaws hit the code behind ~7 in 10 websites. When was yours last updated? 🔐 Live scan at albertaweb.design",
+      "hashtags": [
+        "#cybersecurity",
+        "#wordpress",
+        "#websitesecurity",
+        "#albertabusiness",
+        "#php2shell"
+      ],
+      "script": "This week, two critical flaws were found in *PHP*, the code behind roughly seven in ten websites, including WordPress.\n\nThey let attackers take over a website's server without ever logging *in*.\n\nAttackers were already trying them before the fix was even *released*.\n\nGovernments pulled their own websites *offline* until they could patch.\n\nIf your website hasn't been updated in years, it's an open *door*.\n\nWe update and harden existing Alberta websites, without starting over. Run the live scan at albertaweb dot design.",
+      "beat_visuals": [
+        {
+          "type": "card",
+          "card": {
+            "kind": "stat",
+            "text": "7 in 10",
+            "sub": "websites run PHP, including WordPress"
+          }
+        },
+        {
+          "type": "card",
+          "card": {
+            "kind": "headline",
+            "text": "Critical PHP flaws let attackers take over servers",
+            "sub": "Severity 9.2 / 10 · Source: BankInfoSecurity"
+          }
+        },
+        null,
+        {
+          "type": "card",
+          "card": {
+            "kind": "alert",
+            "text": "UPDATE NOW OR GO OFFLINE",
+            "sub": "Advice from UK NCSC and US NSA · Oct 21"
+          }
+        },
+        null,
+        null
+      ]
+    },
+    {
+      "id": "AW32",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "ORG",
+      "name": "Millions of attacks in hours",
+      "hook": "From thousands to millions of attacks. In hours.",
+      "hints": [
+        "night city aerial",
+        "lit highway",
+        "downtown at night"
+      ],
+      "paragraphs": [
+        "Here's how fast a website attack *spreads*.",
+        "According to Cloudflare's CEO, there were *thousands* of attempts before the flaw was even announced.",
+        "Tens of thousands within forty five minutes. Hundreds of thousands within two *hours*.",
+        "Then *millions*.",
+        "Attackers don't wait for you to get around to it. Updates have to happen in hours, not *months*.",
+        "And if your website runs on hosting nobody is watching, nobody is applying that patch for *you*.",
+        "Follow for plain English website security for Alberta businesses."
+      ],
+      "post": "Thousands → tens of thousands → millions of attacks within hours of disclosure (Cloudflare). Speed is security ⏱️ #cybersecurity #websitesecurity #smallbusiness #calgary #php2shell",
+      "slug": "millions-of-attacks-in-hours",
+      "music": null,
+      "post_text": "Thousands → tens of thousands → millions of attacks within hours of disclosure (Cloudflare). Speed is security ⏱️",
+      "hashtags": [
+        "#cybersecurity",
+        "#websitesecurity",
+        "#smallbusiness",
+        "#calgary",
+        "#php2shell"
+      ],
+      "script": "Here's how fast a website attack *spreads*.\n\nAccording to Cloudflare's CEO, there were *thousands* of attempts before the flaw was even announced.\n\nTens of thousands within forty five minutes. Hundreds of thousands within two *hours*.\n\nThen *millions*.\n\nAttackers don't wait for you to get around to it. Updates have to happen in hours, not *months*.\n\nAnd if your website runs on hosting nobody is watching, nobody is applying that patch for *you*.\n\nFollow for plain English website security for Alberta businesses.",
+      "beat_visuals": [
+        {
+          "type": "card",
+          "card": {
+            "kind": "timeline",
+            "text": "Oct 17 attacks begin · Oct 20 details leak · Oct 21 patch released",
+            "sub": "PHP2Shell timeline"
+          }
+        },
+        {
+          "type": "card",
+          "card": {
+            "kind": "terminal",
+            "text": "exploit attempts",
+            "sub": "counter 1,000 → 10,000 → 100,000 → 1,000,000+"
+          }
+        },
+        null,
+        {
+          "type": "card",
+          "card": {
+            "kind": "stat",
+            "text": "Millions",
+            "sub": "exploit attempts after disclosure · Source: Cloudflare"
+          }
+        },
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "id": "AW33",
+      "kind": "narrated",
+      "brand": "albertaweb",
+      "type": "AD",
+      "name": "Update, don't rebuild",
+      "hook": "Your old website doesn't need replacing. It needs updating.",
+      "hints": [
+        "aerial construction site",
+        "houses",
+        "skyline"
+      ],
+      "paragraphs": [
+        "After a week like this, you might think you need a brand new *website*.",
+        "Usually you don't. You need the one you have *updated*.",
+        "Current software. Patched plugins. A secure *server*. Backups that actually work.",
+        "Old WordPress sites on outdated hosting are exactly what attackers *scan* for.",
+        "We retrofit existing sites so they're secure, fast, and readable by Google and *AI*.",
+        "Book a consult at albertaweb dot design, or call eight two five, four three five, nine zero nine eight."
+      ],
+      "post": "Don't rebuild. Update. 🔧 We retrofit existing Alberta websites so they're secure and fast. albertaweb.design #wordpresssecurity #websitemaintenance #albertabusiness #edmonton #calgary",
+      "slug": "update-don-t-rebuild",
+      "music": {
+        "track": "ten_minute_reset.mp3",
+        "section": "default"
+      },
+      "post_text": "Don't rebuild. Update. 🔧 We retrofit existing Alberta websites so they're secure and fast. albertaweb.design",
+      "hashtags": [
+        "#wordpresssecurity",
+        "#websitemaintenance",
+        "#albertabusiness",
+        "#edmonton",
+        "#calgary"
+      ],
+      "script": "After a week like this, you might think you need a brand new *website*.\n\nUsually you don't. You need the one you have *updated*.\n\nCurrent software. Patched plugins. A secure *server*. Backups that actually work.\n\nOld WordPress sites on outdated hosting are exactly what attackers *scan* for.\n\nWe retrofit existing sites so they're secure, fast, and readable by Google and *AI*.\n\nBook a consult at albertaweb dot design, or call eight two five, four three five, nine zero nine eight.",
+      "beat_visuals": [
+        null,
+        {
+          "type": "card",
+          "card": {
+            "kind": "headline",
+            "text": "Governments worldwide rush to patch PHP flaws",
+            "sub": "Source: Nextgov · Oct 22"
+          }
+        },
+        {
+          "type": "card",
+          "card": {
+            "kind": "alert",
+            "text": "CHECKLIST",
+            "sub": "Updated PHP · Patched plugins · Secure hosting · Tested backups"
+          }
+        },
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "id": "DB31",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "AI found it. AI attacks it.",
+      "hook": "AI found a hole in most of the internet",
+      "hints": [
+        "aerial city",
+        "highway",
+        "night skyline"
+      ],
+      "paragraphs": [
+        "This week, *AI* helped uncover two critical flaws in PHP, the code behind most of the internet.",
+        "The bug had been sitting there since *twenty twelve*.",
+        "But here's the part that matters. Attackers were already using it before the patch *existed*.",
+        "The same tools that find holes faster can also *exploit* them faster.",
+        "So the gap between a flaw and an attack is shrinking to *hours*.",
+        "Your systems need to keep up. Systems create freedom. Follow if you're building."
+      ],
+      "post": "AI found a 14-year-old hole in the code behind most websites. Attackers moved within hours 🤖 #ai #cybersecurity #automation #buildwithdb #php2shell",
+      "slug": "ai-found-it-ai-attacks-it",
+      "music": null,
+      "post_text": "AI found a 14-year-old hole in the code behind most websites. Attackers moved within hours 🤖",
+      "hashtags": [
+        "#ai",
+        "#cybersecurity",
+        "#automation",
+        "#buildwithdb",
+        "#php2shell"
+      ],
+      "script": "This week, *AI* helped uncover two critical flaws in PHP, the code behind most of the internet.\n\nThe bug had been sitting there since *twenty twelve*.\n\nBut here's the part that matters. Attackers were already using it before the patch *existed*.\n\nThe same tools that find holes faster can also *exploit* them faster.\n\nSo the gap between a flaw and an attack is shrinking to *hours*.\n\nYour systems need to keep up. Systems create freedom. Follow if you're building.",
+      "beat_visuals": [
+        {
+          "type": "card",
+          "card": {
+            "kind": "headline",
+            "text": "AI helps uncover critical PHP flaws hidden since 2012",
+            "sub": "Source: ABC News · Oct 22"
+          }
+        },
+        null,
+        {
+          "type": "card",
+          "card": {
+            "kind": "terminal",
+            "text": "exploit attempts",
+            "sub": "counter 1,000 → 10,000 → 1,000,000+"
+          }
+        },
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "id": "DB32",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "ORG",
+      "name": "This week proved Protect",
+      "hook": "This week is why 'Protect' is one of my principles",
+      "hints": [
+        "calm aerial",
+        "river valley",
+        "city"
+      ],
+      "paragraphs": [
+        "One of my six principles is *protect*. This week showed why.",
+        "Critical flaws in PHP sent governments scrambling to take websites *offline*.",
+        "Banking, transport, and tax services were *paused* in several countries.",
+        "Here in Canada, a vendor breach exposed one and a half million Crime Stoppers *tips*.",
+        "Everything you build depends on the software underneath it. Your website, your apps, your tools. Keep them *updated*, and keep backups you've actually tested.",
+        "Build it. Then protect it. Follow for more."
+      ],
+      "post": "Build it. Then protect it. This week proved why 🛡️ #cybersecurity #buildwithdb #systemscreatefreedom #smallbusiness #canada",
+      "slug": "this-week-proved-protect",
+      "music": null,
+      "post_text": "Build it. Then protect it. This week proved why 🛡️",
+      "hashtags": [
+        "#cybersecurity",
+        "#buildwithdb",
+        "#systemscreatefreedom",
+        "#smallbusiness",
+        "#canada"
+      ],
+      "script": "One of my six principles is *protect*. This week showed why.\n\nCritical flaws in PHP sent governments scrambling to take websites *offline*.\n\nBanking, transport, and tax services were *paused* in several countries.\n\nHere in Canada, a vendor breach exposed one and a half million Crime Stoppers *tips*.\n\nEverything you build depends on the software underneath it. Your website, your apps, your tools. Keep them *updated*, and keep backups you've actually tested.\n\nBuild it. Then protect it. Follow for more.",
+      "beat_visuals": [
+        null,
+        {
+          "type": "card",
+          "card": {
+            "kind": "alert",
+            "text": "UPDATE NOW OR GO OFFLINE",
+            "sub": "Advice from UK NCSC and US NSA · Oct 21"
+          }
+        },
+        {
+          "type": "card",
+          "card": {
+            "kind": "stat",
+            "text": "Millions",
+            "sub": "exploit attempts within hours · Source: Cloudflare"
+          }
+        },
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "id": "DB33",
+      "kind": "narrated",
+      "brand": "buildwithdb",
+      "type": "AD",
+      "name": "Make updates a system",
+      "hook": "Updates shouldn't depend on your memory",
+      "hints": [
+        "aerial highway",
+        "city grid",
+        "night roads"
+      ],
+      "paragraphs": [
+        "Most security problems start with an update nobody got around *to*.",
+        "This week, attackers went from thousands to millions of attempts in *hours*.",
+        "You can't rely on remembering to check, especially when you're busy running jobs all week. It has to be a *system*.",
+        "Update reminders, automatic backups, and alerts when something *changes*.",
+        "I build automations that take the busy work out of keeping your business *safe*.",
+        "Request a build at buildwithdb dot ca."
+      ],
+      "post": "Security shouldn't depend on your memory. Make it a system ⚙️ @buildwithdb #automation #cybersecurity #businesssystems #smallbusiness #buildwithdb",
+      "slug": "make-updates-a-system",
+      "music": {
+        "track": "Dark Gold Grind.m4a",
+        "section": "default"
+      },
+      "post_text": "Security shouldn't depend on your memory. Make it a system ⚙️ @buildwithdb",
+      "hashtags": [
+        "#automation",
+        "#cybersecurity",
+        "#businesssystems",
+        "#smallbusiness",
+        "#buildwithdb"
+      ],
+      "script": "Most security problems start with an update nobody got around *to*.\n\nThis week, attackers went from thousands to millions of attempts in *hours*.\n\nYou can't rely on remembering to check, especially when you're busy running jobs all week. It has to be a *system*.\n\nUpdate reminders, automatic backups, and alerts when something *changes*.\n\nI build automations that take the busy work out of keeping your business *safe*.\n\nRequest a build at buildwithdb dot ca.",
+      "beat_visuals": [
+        null,
+        {
+          "type": "card",
+          "card": {
+            "kind": "timeline",
+            "text": "Before disclosure: thousands · 45 minutes: tens of thousands · 2 hours: hundreds of thousands · Then: millions",
+            "sub": "Source: Cloudflare CEO"
+          }
+        },
+        null,
+        {
+          "type": "card",
+          "card": {
+            "kind": "terminal",
+            "text": "system check",
+            "sub": "✔ backups ✔ updates ✔ alerts"
+          }
+        },
+        null,
+        null
+      ]
+    },
+    {
+      "id": "AW-B24",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "7 in 10 websites run PHP. Is yours patched?",
+      "slug": "7-in-10-websites-run-php-is-yours-patche",
+      "silent": false,
+      "music": {
+        "track": "heat_on_the_north-side.mp3",
+        "section": "default"
+      },
+      "target_seconds": 32,
+      "text_line": "7 in 10 websites run PHP. Is *yours* patched?",
+      "hook": null,
+      "post_text": "This week's PHP flaws affect the code behind most websites. Is yours updated? 🔐 albertaweb.design",
+      "hashtags": [
+        "#cybersecurity",
+        "#wordpress",
+        "#php2shell",
+        "#albertabusiness",
+        "#calgary"
+      ]
+    },
+    {
+      "id": "AW-B25",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Update or go offline",
+      "slug": "update-or-go-offline",
+      "silent": true,
+      "music": null,
+      "target_seconds": 32,
+      "text_line": "Update or go *offline*",
+      "hook": null,
+      "post_text": "Governments took sites offline this week to patch. Small businesses can't afford to. 🔐 albertaweb.design",
+      "hashtags": [
+        "#websitesecurity",
+        "#cybersecurity",
+        "#smallbusiness",
+        "#alberta",
+        "#php2shell"
+      ]
+    },
+    {
+      "id": "AW-B26",
+      "kind": "broll",
+      "brand": "albertaweb",
+      "name": "Old site? Update it.",
+      "slug": "old-site-update-it",
+      "silent": false,
+      "music": {
+        "track": "432 Hz Rooftop.m4a",
+        "section": "default"
+      },
+      "target_seconds": 32,
+      "text_line": "Old site? *Update* it.",
+      "hook": null,
+      "post_text": "Your existing website can be secured without starting over 🔧 albertaweb.design",
+      "hashtags": [
+        "#websitemaintenance",
+        "#wordpress",
+        "#albertabusiness",
+        "#edmonton",
+        "#cybersecurity"
+      ]
+    },
+    {
+      "id": "DB-B24",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Protect what you build",
+      "slug": "protect-what-you-build",
+      "silent": false,
+      "music": {
+        "track": "Grief and Glory.m4a",
+        "section": "default"
+      },
+      "target_seconds": 32,
+      "text_line": "*Protect* what you build",
+      "hook": null,
+      "post_text": "Build it. Then protect it. 🛡️ @buildwithdb",
+      "hashtags": [
+        "#buildwithdb",
+        "#cybersecurity",
+        "#systemscreatefreedom",
+        "#protect",
+        "#dronefootage"
+      ]
+    },
+    {
+      "id": "DB-B25",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "Updates are a system",
+      "slug": "updates-are-a-system",
+      "silent": true,
+      "music": null,
+      "target_seconds": 32,
+      "text_line": "Updates are a *system*",
+      "hook": null,
+      "post_text": "Security that runs on a system, not memory ⚙️ @buildwithdb",
+      "hashtags": [
+        "#automation",
+        "#cybersecurity",
+        "#buildwithdb",
+        "#systems",
+        "#smallbusiness"
+      ]
+    },
+    {
+      "id": "DB-B26",
+      "kind": "broll",
+      "brand": "buildwithdb",
+      "name": "AI found it first",
+      "slug": "ai-found-it-first",
+      "silent": false,
+      "music": {
+        "track": "Sombra do Crime.m4a",
+        "section": "default"
+      },
+      "target_seconds": 32,
+      "text_line": "AI found it *first*",
+      "hook": null,
+      "post_text": "AI found the flaw. Attackers moved within hours. Is your stack updated? 🤖 @buildwithdb",
+      "hashtags": [
+        "#ai",
+        "#cybersecurity",
+        "#buildwithdb",
+        "#php2shell",
+        "#automation"
+      ]
+    }
+  ]
+}

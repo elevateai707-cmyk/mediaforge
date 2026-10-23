@@ -256,6 +256,13 @@ class CardRenderer:
             self.low0 = int(0.60 * h)
         self.fx = self.sx
         self.fw = self.sw
+        # Short beats: speed the reveal up so the card is complete before its voice slot ends.
+        kind = spec["kind"]
+        n_items = len(spec.get("items") or [])
+        design = {"headline": 4.2, "stat": 1.8, "alert": 1.6 + 0.5 * n_items,
+                  "timeline": 1.0 + 0.8 * n_items, "terminal": 0.0}[kind]
+        avail = self.T - self.delay - 0.5
+        self.speed = 1.0 if design <= 0 else _clamp(avail / design, 0.4, 1.0)
 
     # -- background --------------------------------------------------------------
     def _build_background(self) -> None:
@@ -307,7 +314,7 @@ class CardRenderer:
     def frame(self, t: float) -> Image.Image:
         cv = self.cv
         cv.img = self.background(t)
-        c = self.clock(t)
+        c = self.clock(t) / self.speed
         if t >= self.delay:
             getattr(self, "_" + self.spec["kind"])(cv, c, t)
         return cv.img
