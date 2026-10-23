@@ -1,0 +1,312 @@
+"""Motion-graphic story cards: spec validation, frames, video, story + render integration."""
+import json
+import re
+import subprocess
+
+import numpy as np
+import pytest
+from PIL import ImageChops
+
+from app import config
+from app.edits import cards, kinetic, planner, render, story
+from .test_beat_sync import _write_map, long_assets  # noqa: F401
+from .test_story import SCRIPT, _capture_ffmpeg, _silent_mp3, fake_tts  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("cleanup_assets")
+ZONES = {"top": 0.12, "bottom": 0.22, "left": 0.06, "right": 0.14}
+SPECS = {
+    "headline": {"kind": "headline", "text": "Critical PHP flaws let attackers take over servers",
+                 "sub": "Severity 9.2 / 10 · Source: BankInfoSecurity"},
+    "stat": {"kind": "stat", "text": "7 in 10", "sub": "websites run PHP, including WordPress"},
+    "alert": {"kind": "alert", "text": "UPDATE NOW OR GO OFFLINE", "sub": "Advice from UK NCSC and US NSA · Oct 21"},
+    "terminal": {"kind": "terminal", "text": "exploit attempts",
+                 "sub": "counter 1,000 → 10,000 → 100,000 → 1,000,000+"},
+    "timeline": {"kind": "timeline", "text": "Oct 17 attacks begin · Oct 20 details leak · Oct 21 patch released",
+                 "sub": "PHP2Shell timeline"},
+}
+
+
+# ---------------------------------------------------------------------------
+# validation
+# ---------------------------------------------------------------------------
+def test_validate_card_derives_fields():
+    tl = cards.validate_card(SPECS["timeline"])
+    assert tl["items"] == ["Oct 17 attacks begin", "Oct 20 details leak", "Oct 21 patch released"]
+    term = cards.validate_card(SPECS["terminal"])
+    assert term["counter"] == ["1,000", "10,000", "100,000", "1,000,000+"] and term["items"] == []
+    checks = cards.validate_card({"kind": "terminal", "text": "system check", "sub": "✔ backups ✔ updates ✔ alerts"})
+    assert checks["items"] == ["backups", "updates", "alerts"] and checks["counter"] == []
+    lst = cards.validate_card({"kind": "alert", "text": "CHECKLIST", "sub": "Updated PHP · Patched plugins · Secure hosting · Tested backups"})
+    assert len(lst["items"]) == 4
+    two = cards.validate_card(SPECS["alert"])
+    assert two["items"] == []                                 # two parts = plain text, not a checklist
+    h = cards.validate_card(SPECS["headline"])
+    assert h["date"] and h["date"] == h["date"].upper()
+    assert cards.validate_card({**SPECS["stat"], "kind": "STAT"})["kind"] == "stat"
+
+
+@pytest.mark.parametrize("bad", [
+    None, "x", {"kind": "poster", "text": "x"}, {"kind": "stat"}, {"kind": "stat", "text": "x" * 401},
+    {"kind": "timeline", "text": "only one step"}, {"kind": "timeline", "text": " · ".join("abcdef")},
+    {"kind": "terminal", "text": "t", "sub": "counter 1"},
+])
+def test_validate_card_rejects(bad):
+    with pytest.raises(cards.CardError):
+        cards.validate_card(bad)
+
+
+def test_validate_beat_visuals():
+    card = {"type": "card", "card": SPECS["stat"]}
+    out = cards.validate_beat_visuals([None, card], 4)
+    assert len(out) == 4 and out[0] is None and out[1]["card"]["kind"] == "stat" and out[2:] == [None, None]
+    assert cards.validate_beat_visuals(None, 3) == [None] * 3
+    with pytest.raises(cards.CardError, match="only 2 beats"):
+        cards.validate_beat_visuals([None, None, card], 2)
+    with pytest.raises(cards.CardError):
+        cards.validate_beat_visuals([{"type": "video"}], 2)
+    with pytest.raises(cards.CardError):
+        cards.validate_beat_visuals([{"type": "card", "card": {"kind": "nope", "text": "x"}}], 2)
+
+
+# ---------------------------------------------------------------------------
+# frames
+# ---------------------------------------------------------------------------
+def _diff(a, b):
+    return np.asarray(ImageChops.difference(a, b).convert("L"))
+
+
+@pytest.mark.parametrize("kind", list(SPECS))
+def test_card_frames_per_kind(kind):
+    spec = cards.validate_card(SPECS[kind])
+    w, h = 540, 960
+    r = cards.CardRenderer(spec, w, h, 6.0, 30, ZONES, seed=2)
+    blank = r.background(0.0)
+    late = r.frame(4.5).copy()
+    early = r.frame(0.1).copy()
+    assert late.size == (w, h) and late.mode == "RGB"
+    content = _diff(late, r.background(4.5)) > 70                       # pixels the card drew
+    assert content.sum() > 1500, f"{kind}: nothing drawn"
+    assert content[:int(0.10 * h)].sum() == 0 or kind in ("headline",), kind     # headline pill sits at 12%+
+    sx, sy, sw, sh = kinetic._safe_rect(w, h, ZONES)
+    assert content[:, int(0.93 * w) + 1:].sum() == 0                    # symmetric 7% side margin
+    assert content[int(0.78 * h):].sum() == 0                           # bottom UI zone stays clear
+    band = content[int(0.46 * h):int(0.56 * h), int(0.30 * w):int(0.86 * w)]
+    assert band.sum() == 0, f"{kind}: card content in the caption band"
+    assert _diff(early, late).mean() > 0.5                              # it animates
+    assert _diff(r.frame(0.1), r.frame(0.11)).mean() > 0                # even idle frames move (grain/drift)
+    del blank
+
+
+def test_stat_counts_up_and_dots_fill():
+    spec = cards.validate_card(SPECS["stat"])
+    r = cards.CardRenderer(spec, 540, 960, 6.0, 30, ZONES)
+    assert r._count_text("7 in 10", 0.0) == "0 in 10" and r._count_text("7 in 10", 5.0) == "7 in 10"
+    assert r._count_text("1,250 users", 5.0) == "1,250 users" and r._count_text("9.2 / 10", 5.0) == "9.2 / 10"
+    mid = r._count_text("7 in 10", 0.4)
+    assert 0 <= int(mid.split()[0]) <= 7
+
+
+def _sweep(r, text):
+    return [r._count_text(text, i / 100) for i in range(0, 131)]
+
+
+def test_ratio_stat_keeps_denominator_fixed_and_counts_numerator_only():
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    seen = _sweep(r, "7 in 10")
+    assert all(re.fullmatch(r"\d+ in 10", t) for t in seen), seen
+    nums = [int(t.split()[0]) for t in seen]
+    assert nums[0] == 0 and nums == sorted(nums) and max(nums) == 7 and seen[-1] == "7 in 10"
+    assert seen[0] == "0 in 10"
+
+
+@pytest.mark.parametrize("text,pattern,end", [
+    ("3 of 8", r"\d+ of 8", "3 of 8"),
+    ("9 / 10", r"\d+ / 10", "9 / 10"),
+    ("9/10", r"\d+/10", "9/10"),
+    ("9.2 / 10", r"\d+\.\d / 10", "9.2 / 10"),
+    ("70%", r"\d+%", "70%"),
+    ("7 in 10 websites", r"\d+ in 10 websites", "7 in 10 websites"),
+])
+def test_other_ratio_and_percent_forms_never_show_off_path_values(text, pattern, end):
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    seen = _sweep(r, text)
+    assert all(re.fullmatch(pattern, t) for t in seen), seen
+    assert seen[0].startswith("0") and seen[-1] == end
+
+
+def test_plain_numbers_still_count_up_and_words_are_untouched():
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    seen = _sweep(r, "1,500,000")
+    vals = [int(t.replace(",", "")) for t in seen]
+    assert vals[0] == 0 and vals == sorted(vals) and seen[-1] == "1,500,000" and any("," in t for t in seen[1:-1])
+    assert set(_sweep(r, "Millions")) == {"Millions"}
+
+
+def test_stat_dots_match_the_numerator_text():
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    for i in range(0, 200):
+        c = i / 100
+        assert r.stat_numerator(7, c) == int(r._count_text("7 in 10", c / 1.3).split()[0])
+        assert 0 <= r.stat_numerator(7, c) <= 7
+
+
+def test_ratio_stat_frames_render_through_the_count():
+    spec = cards.validate_card({"kind": "stat", "text": "7 in 10", "sub": "websites run PHP"})
+    r = cards.CardRenderer(spec, 540, 960, 6.0, 30, ZONES)
+    for t in (0.1, 0.5, 1.0, 3.0):
+        assert (_diff(r.frame(t), r.background(t)) > 70).sum() > 100
+
+
+def test_reveal_delay_holds_back_content():
+    spec = cards.validate_card(SPECS["headline"])
+    r = cards.CardRenderer(spec, 540, 960, 6.0, 30, ZONES, reveal_delay=1.4)
+    assert (_diff(r.frame(1.0), r.background(1.0)) > 70).sum() == 0             # hook time: background only
+    assert (_diff(r.frame(3.5), r.background(3.5)) > 70).sum() > 500
+
+
+def test_landscape_card_renders():
+    r = cards.CardRenderer(cards.validate_card(SPECS["terminal"]), 960, 540, 4.0, 30, None)
+    img = r.frame(3.0)
+    assert img.size == (960, 540) and (_diff(img, r.background(3.0)) > 70).sum() > 1000
+
+
+def test_card_video_has_requested_size_and_duration(tmp_path):
+    out = cards.render_card_video(cards.validate_card(SPECS["alert"]), 360, 640, 2.0, tmp_path / "c.mp4",
+                                  safe_zones=ZONES)
+    info = json.loads(subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format",
+                                      str(out)], capture_output=True, text=True).stdout)
+    v = info["streams"][0]
+    assert (v["width"], v["height"]) == (360, 640) and v["r_frame_rate"] == "30/1"
+    assert float(info["format"]["duration"]) == pytest.approx(2.0, abs=0.1)
+
+
+# ---------------------------------------------------------------------------
+# story + render
+# ---------------------------------------------------------------------------
+def _visuals():
+    return [{"type": "card", "card": SPECS["stat"]}, None]
+
+
+def test_story_stores_card_visuals_and_validates(client, fake_tts, long_assets):  # noqa: F811
+    plan = story.create_story_plan(SCRIPT, search_fn=lambda db, q, limit: long_assets, cloud_approved=True,
+                                   voice_consent=True, beat_visuals=_visuals())
+    sc = story.get_story(plan["plan_id"])
+    assert sc["beats"][0]["visual"]["card"]["kind"] == "stat" and sc["beats"][1]["visual"] is None
+    assert sc["beats"][0]["clips"]                                       # underlay clip kept for exports / sync
+    planner.validate_story_sync(__import__("app.db", fromlist=["x"]).SessionLocal().get(
+        __import__("app.models", fromlist=["x"]).EditPlan, plan["plan_id"]), sc)
+    with pytest.raises(story.StoryError, match="only 2 beats"):
+        story.validate_story_options(SCRIPT, None, None, None, None, [None, None, _visuals()[0]])
+    with pytest.raises(story.StoryError, match="card kind"):
+        story.validate_story_options(SCRIPT, None, None, None, None, [{"type": "card", "card": {"kind": "x", "text": "y"}}])
+
+
+def test_story_route_rejects_bad_visuals(client, monkeypatch):
+    monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "x")
+    body = {"script": SCRIPT, "cloud_approved": True, "voice_consent": True}
+    r = client.post("/api/edits/story", json={**body, "beat_visuals": [{"type": "card", "card": {"kind": "nope", "text": "x"}}]})
+    assert r.status_code == 422 and "card kind" in r.text
+    assert client.post("/api/edits/story", json={**body, "beat_visuals": [None, None, None]}).status_code == 422
+
+
+def _approved_with_cards(client, long_assets):  # noqa: F811
+    plan = story.create_story_plan(SCRIPT, search_fn=lambda db, q, limit: long_assets, cloud_approved=True,
+                                   voice_consent=True, beat_visuals=_visuals())
+    assert client.post(f"/api/edits/plan/{plan['plan_id']}/approve").status_code == 200
+    return plan, story.get_story(plan["plan_id"])
+
+
+def test_render_with_card_beat_keeps_voice_sync(client, fake_tts, long_assets, monkeypatch):  # noqa: F811
+    plan, sc = _approved_with_cards(client, long_assets)
+    seen = _capture_ffmpeg(monkeypatch)
+    out = render.render_plan(plan["plan_id"], ratio="9:16", width=270, height=480)
+    cmd = seen[-1]
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    card_inputs = [c for c in cmd if c.endswith("card_1.mp4")]
+    assert card_inputs, "the card video is an ffmpeg input"
+    assert not any(c.endswith("card_2.mp4") for c in cmd)               # beat 2 keeps its footage
+    assert "concat=n=" in graph and "xfade" not in graph
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out],
+                               capture_output=True, text=True).stdout)
+    assert dur == pytest.approx(sc["duration"], abs=0.3)                # card replaces footage, length unchanged
+    assert not (config.RENDER_TMP_DIR / f"emph_{plan['plan_id']}").exists()      # temp card files cleaned up
+    # the card beat has no big emphasis words (the card owns the upper frame)
+    events = kinetic.plan_events(sc["beats"])
+    assert all(e["start"] >= sc["beats"][1]["start"] - 1e-6 for e in events["emphasis"])
+
+
+def test_card_beat_with_music_beat_sync_and_effects(client, fake_tts, long_assets, tmp_path, monkeypatch):  # noqa: F811
+    plan, sc = _approved_with_cards(client, long_assets)
+    track = tmp_path / "beat.mp3"
+    _silent_mp3(track, 20.0)
+    slot = sc["beats"][0]["slot"]
+    _write_map(track, beats=[0.0, slot - 0.1, 2 * slot], downbeats=[0.0], best_start_15s=0.0, best_start_30s=0.0,
+               duration=20.0)
+    seen = _capture_ffmpeg(monkeypatch)
+    out = render.render_plan(plan["plan_id"], ratio="9:16", width=270, height=480, music_path=str(track),
+                             effects=True, captions=True)
+    graph = seen[-1][seen[-1].index("-filter_complex") + 1]
+    assert "rgbashift" in graph and "eq=contrast" in graph               # grade + glitch still apply to cards
+    # the cut after the card moved onto the beat by trimming card/footage in/out, not the timeline
+    assert f"trim=start=0.000:end={slot - 0.1:.3f}" in graph
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out],
+                               capture_output=True, text=True).stdout)
+    assert dur == pytest.approx(sc["duration"], abs=0.3)
+
+
+def test_swap_broll_on_a_card_beat_restores_footage(client, fake_tts, long_assets):  # noqa: F811
+    plan, _sc = _approved_with_cards(client, long_assets)
+    planner.swap_broll(plan["plan_id"], 1, long_assets[1])
+    assert story.get_story(plan["plan_id"])["beats"][0].get("visual") is None
+
+
+def test_short_beats_speed_the_reveal_up():
+    spec = cards.validate_card(SPECS["timeline"])
+    long_r = cards.CardRenderer(spec, 540, 960, 8.0, 30, ZONES)
+    short_r = cards.CardRenderer(spec, 540, 960, 2.7, 30, ZONES)
+    assert long_r.speed == 1.0 and 0.4 <= short_r.speed < 1.0
+    # by 2.2 s of a 2.7 s beat all three steps have appeared
+    img = short_r.frame(2.2)
+    assert (_diff(img, short_r.background(2.2)) > 70)[int(0.34 * 960):int(0.45 * 960)].sum() > 300
+    term = cards.CardRenderer(cards.validate_card(SPECS["terminal"]), 540, 960, 2.0, 30, ZONES)
+    assert term.speed == 1.0                        # the counter already scales with the slot
+
+
+@pytest.mark.parametrize("kind", list(SPECS))
+def test_cards_keep_clear_of_the_left_edge_without_a_left_safe_margin(kind):
+    zones = {"top": 0.12, "bottom": 0.22, "left": 0.0, "right": 0.14}         # the default vertical zones
+    r = cards.CardRenderer(cards.validate_card(SPECS[kind]), 540, 960, 6.0, 30, zones, seed=2)
+    content = _diff(r.frame(4.5), r.background(4.5)) > 70
+    assert content[:, :int(0.04 * 540)].sum() == 0, kind
+
+
+def test_compact_cards_stay_in_the_top_band():
+    for kind in ("headline", "stat", "alert", "terminal", "timeline"):
+        r = cards.CardRenderer(cards.validate_card(SPECS[kind]), 540, 960, 7.0, 30, ZONES, seed=2, compact=True)
+        content = _diff(r.frame(5.0), r.background(5.0)) > 70
+        assert content.sum() > 500, kind
+        assert content[int(0.42 * 960):].sum() == 0, f"{kind} reaches into the presenter area"
+
+
+@pytest.mark.parametrize("w,h", [(540, 960), (960, 540)])
+@pytest.mark.parametrize("kind", list(SPECS) + ["ambient"])
+def test_every_card_keeps_a_symmetric_side_margin(kind, w, h):
+    """Non-background content stays inside [7%, 93%] of the frame width at every moment (9:16 and 16:9)."""
+    spec = cards.validate_card(SPECS.get(kind, {"kind": "ambient", "text": "Title line"}))
+    for zones in (ZONES, None, {"top": 0.12, "bottom": 0.22, "left": 0.0, "right": 0.14}):
+        r = cards.CardRenderer(spec, w, h, 7.0, 30, zones if h > w else None, seed=4)
+        for t in (0.8, 1.6, 2.6, 4.0, 6.5):
+            content = _diff(r.frame(t), r.background(t)) > 70
+            if not content.any():
+                continue
+            xs = np.where(content.any(axis=0))[0]
+            assert xs.min() >= int(0.07 * w) - 1 and xs.max() <= int(0.93 * w) + 1, \
+                f"{kind} {w}x{h} t={t}: content spans x {xs.min()}..{xs.max()} of {w}"
+    # centred blocks really are centred
+    if kind in ("stat", "terminal"):
+        r = cards.CardRenderer(spec, w, h, 7.0, 30, ZONES if h > w else None, seed=4)
+        content = _diff(r.frame(6.0), r.background(6.0)) > 70
+        if kind == "terminal":
+            top = content[: int(0.45 * h)]
+            xs = np.where(top.any(axis=0))[0]
+            assert abs((xs.min() + xs.max()) / 2 - w / 2) < 0.03 * w and (xs.max() - xs.min()) <= 0.86 * w + 2

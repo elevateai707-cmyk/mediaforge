@@ -165,6 +165,8 @@ def plan_events(beats: list[dict], hook_end: float = 0.0) -> dict:
             chosen.append((s, e))
         chosen = [(s, e) for s, e in chosen[:MAX_EMPH_PER_BEAT]
                   if off + float(words[s]["start"]) >= hook_end]
+        if beat.get("visual"):
+            chosen = []          # a motion-graphic card owns the upper frame: no big emphasis words
         skip: set[int] = set()
         for s, e in chosen:
             skip.update(range(s, e))
@@ -525,7 +527,7 @@ def _fit_ass_size(text: str, wanted: int, max_width: int, max_height: int,
 
 def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None,
               safe_zones: Optional[Mapping[str, float]] = None,
-              extra_lines: Optional[list[str]] = None) -> str:
+              extra_lines: Optional[list[str]] = None, body_y: Optional[float] = None) -> str:
     """ASS document for body words and connector words.
 
     ``layout``: per-emphasis dict {"text_left", "text_top"} (frame pixels), from
@@ -555,7 +557,7 @@ def build_ass(events: dict, w: int, h: int, layout: Optional[list[dict]] = None,
     safe_x, safe_y, safe_w, safe_h = _safe_rect(w, h, safe_zones)
     safe_right, safe_bottom = safe_x + safe_w, safe_y + safe_h
     x = safe_x + safe_w // 2
-    y = safe_y + int(round(safe_h * BODY_Y))
+    y = safe_y + int(round(safe_h * (BODY_Y if body_y is None else body_y)))
     clip = f"\\clip({safe_x},{safe_y},{safe_right},{safe_bottom})"
     body_file = "Montserrat-Medium.ttf" if fonts_available() else "DejaVuSans.ttf"
     connector_file = "Montserrat-Regular.ttf" if fonts_available() else "DejaVuSans.ttf"

@@ -245,6 +245,7 @@ async def mf_create_story_plan(
     beat_hints: Optional[list[str]] = None,
     hook_text: Optional[str] = None,
     brand: Optional[str] = None,
+    beat_visuals: Optional[list[Optional[dict]]] = None,
 ) -> Any:
     """Story voiceover: turn a narration script into a draft edit plan (POST /api/edits/story).
     The script is transmitted to ElevenLabs for synthesis and spends ElevenLabs character quota.
@@ -272,7 +273,15 @@ async def mf_create_story_plan(
     to avoid selfies/street footage). beat_hints = one search query per beat (shorter lists fall back
     to the beat text) used instead of the beat text when matching footage. hook_text (<=90 chars)
     is a big gradient headline shown 0-1.4 s in the upper safe zone; brand ("albertaweb" or
-    "buildwithdb", see config/brands.yaml) appends a 1.8 s end card at render time."""
+    "buildwithdb", see config/brands.yaml) appends a 1.8 s end card at render time.
+    beat_visuals = one entry per beat, null (smooth drone footage) or {"type": "card", "card": {"kind":
+    "headline"|"stat"|"alert"|"terminal"|"timeline", "text": ..., "sub": ...}}: a locally rendered
+    news-style motion-graphic card replaces that beat's footage for exactly its voice slot (voice sync
+    unchanged; no camera footage needed). headline: text = headline, sub = "severity . Source: X" lines
+    separated by " · "; stat: text = the number/word (numbers count up, "7 in 10" gets dots), sub = label
+    (" · Source: X"); alert: text = banner, sub = line or 3+ " · " items for a checklist; terminal: text =
+    counter label, sub = "counter 1,000 → 10,000 → 1,000,000+" (or "✔ a ✔ b ✔ c" checks); timeline: text =
+    2-5 steps separated by " · " ("Oct 17 attacks begin"), sub = title."""
     if not cloud_approved:
         raise RuntimeError("Story creation requires cloud_approved=True for this job before sending the script to ElevenLabs")
     if not voice_consent:
@@ -286,7 +295,8 @@ async def mf_create_story_plan(
         "ratio": ratio, "title": title, "caption_style": caption_style,
         "cloud_approved": cloud_approved, "voice_consent": voice_consent,
         "max_characters": max_characters, "broll_filter": broll_filter,
-        "beat_hints": beat_hints, "hook_text": hook_text, "brand": brand})
+        "beat_hints": beat_hints, "hook_text": hook_text, "brand": brand,
+        "beat_visuals": beat_visuals})
     job_id = started["job_id"]
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
@@ -395,6 +405,61 @@ async def mf_analyze_motion(force: bool = False, asset_ids: Optional[list[int]] 
 async def mf_motion_status() -> Any:
     """How many drone videos have motion analysis (GET /api/motion/status), by class."""
     return await _call("GET", "/api/motion/status")
+
+
+@mcp.tool()
+async def mf_create_greenscreen(
+    source_path: Optional[str] = None,
+    asset_id: Optional[int] = None,
+    background_mode: Literal["news", "drone", "mixed"] = "news",
+    backgrounds: Optional[list[Any]] = None,
+    subject_position: Literal["lower", "center"] = "lower",
+    subject_scale: float = 0.72,
+    brand: Optional[str] = None,
+    hook_text: Optional[str] = None,
+    captions: bool = True,
+    music_path: Optional[str] = None,
+    music_start: Optional[float] = None,
+    title: Optional[str] = None,
+    keying: Literal["auto", "segment", "chroma"] = "auto",
+    broll_filter: Optional[dict] = None,
+) -> Any:
+    """Green-screen / talking-head video (POST /api/edits/greenscreen): the person in a recording
+    (source_path = a server-side file, or asset_id of an imported video; phone video incl. 4K / HEVC /
+    portrait is fine, any background, ~15-120 s) is cut out on the CPU (video matting model; a real
+    green background is auto-detected and chroma-keyed instead) and placed over motion-graphic news
+    cards and/or smooth drone footage, with soft shadow + rim light. Audio is the recording's voice,
+    cleaned (high-pass, noise reduction, -16 LUFS; master -14 LUFS), and kinetic captions come from
+    Whisper word timestamps of that audio, placed in the lower third (the big emphasis words are off).
+    background_mode: "news" = cards (give backgrounds=[{"kind": "headline|stat|alert|terminal|timeline|
+    ambient", "text": ..., "sub": ..., "at": seconds?}, ...], same card format as mf_create_story_plan
+    beat_visuals; cycled over the beats, or automatic ambient backdrops), "drone" = smooth drone B-roll
+    (backgrounds = optional hints like "aerial city" or {"hint": ...}), "mixed" = both in order.
+    "at" pins an item to the beat containing that time. subject_position "lower" (default) or "center"; subject_scale 0.4-1.2 of the frame width
+    (default 0.72, which leaves the top ~35% of the frame to the card backgrounds; cards switch to a compact
+    layout there). hook_text and brand
+    (end card) work as for stories; music_path is stored and used by the render with the usual
+    voice/music levelling. Waits for the background job (matting runs ~10 fps on this CPU: a 35 s clip
+    takes about 2 minutes) and returns the draft plan. Then review -> mf_approve_edit_plan ->
+    mf_render(plan_id) (the plan's 9:16 and kinetic look are used)."""
+    started = await _call("POST", "/api/edits/greenscreen", body={
+        "source_path": source_path, "asset_id": asset_id, "background_mode": background_mode,
+        "backgrounds": backgrounds, "subject_position": subject_position, "subject_scale": subject_scale,
+        "brand": brand, "hook_text": hook_text, "captions": captions, "music_path": music_path,
+        "music_start": music_start, "title": title, "keying": keying, "broll_filter": broll_filter})
+    job_id = started["job_id"]
+    deadline = time.monotonic() + 1500
+    while time.monotonic() < deadline:
+        job = await _call("GET", f"/api/jobs/{job_id}")
+        if job["status"] == "done":
+            plan_id = (job.get("meta") or {}).get("plan_id")
+            if not plan_id:
+                raise RuntimeError(f"green-screen job {job_id} finished without a plan id")
+            return await _call("GET", f"/api/edits/plan/{plan_id}")
+        if job["status"] in ("error", "cancelled", "interrupted"):
+            raise RuntimeError(f"green-screen job {job_id} {job['status']}: {job.get('message')}")
+        await asyncio.sleep(4)
+    raise RuntimeError(f"green-screen job {job_id} still running; poll mf_get_job('{job_id}')")
 
 
 @mcp.tool()

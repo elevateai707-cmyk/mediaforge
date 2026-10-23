@@ -789,6 +789,7 @@ def swap_broll(plan_id: str, beat_index: int, asset_id: int, start: Optional[flo
         original = (story.story_dir(plan_id) / "story.json").read_text()
         plan.status = "draft"
         db.commit()  # Approval must stay revoked even if the subsequent write fails.
+        beat.pop("visual", None)        # choosing footage for a card beat puts footage back
         beat["clips"] = [{"asset_id": asset_id, "scene_id": None, "start": round(clip_start, 3),
                           "end": round(clip_start + need, 3)}]
         for c in list(plan.clips):

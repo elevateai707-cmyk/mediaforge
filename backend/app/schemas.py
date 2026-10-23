@@ -231,6 +231,9 @@ class StoryRequest(BaseModel):
     beat_hints: Optional[list[str]] = Field(default=None, max_length=200)
     hook_text: Optional[str] = Field(default=None, max_length=90)
     brand: Optional[str] = Field(default=None, max_length=40)
+    # One entry per beat: null (drone footage) or {"type": "card", "card": {"kind": "headline|stat|alert|
+    # terminal|timeline", "text": ..., "sub": ...}}. The card replaces that beat's footage for its voice slot.
+    beat_visuals: Optional[list[Optional[dict[str, Any]]]] = Field(default=None, max_length=200)
 
 
 class BrollPlanRequest(BaseModel):
@@ -262,6 +265,26 @@ class CompilationRequest(BaseModel):
     min_clip_s: float = Field(default=0.8, ge=0.2, le=10)
     min_seconds: Optional[float] = Field(default=None, ge=4, le=300)
     title: Optional[str] = Field(default=None, max_length=120)
+
+
+class GreenscreenRequest(BaseModel):
+    source_path: Optional[str] = Field(default=None, max_length=1024)
+    asset_id: Optional[int] = Field(default=None, ge=1)
+    background_mode: Literal["news", "drone", "mixed"] = "news"
+    # card specs ({"kind": "headline|stat|alert|terminal|timeline|ambient", "text", "sub"}), drone hints
+    # ({"hint": "aerial city"} or a string); each may carry "at": seconds. Empty = automatic.
+    backgrounds: Optional[list[Any]] = Field(default=None, max_length=60)
+    subject_position: Literal["lower", "center"] = "lower"
+    subject_scale: float = Field(default=0.72, ge=0.4, le=1.2)
+    brand: Optional[str] = Field(default=None, max_length=40)
+    hook_text: Optional[str] = Field(default=None, max_length=90)
+    captions: bool = True
+    music_path: Optional[str] = Field(default=None, max_length=1024)
+    music_start: Optional[float] = Field(default=None, ge=0, le=36000)
+    ratio: Literal["9:16"] = "9:16"
+    title: Optional[str] = Field(default=None, max_length=120)
+    keying: Literal["auto", "segment", "chroma"] = "auto"
+    broll_filter: Optional[BrollFilter] = None
 
 
 class StoryJobOut(BaseModel):

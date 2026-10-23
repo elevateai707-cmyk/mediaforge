@@ -32,7 +32,7 @@ from . import auth, config, fsutil, models, persist, policy, schemas, touchup, t
 from .ai import clip
 from .ai import gpu, motion_store
 from .db import SessionLocal, get_db, init_db, search_embeddings
-from .edits import capcut_export, edl_export, fcpxml_export, broll, compilation, exclusions, package, plan_history, planner, render, resolve_export, story
+from .edits import capcut_export, edl_export, fcpxml_export, broll, compilation, exclusions, greenscreen, package, plan_history, planner, render, resolve_export, story
 from .edits.intent import parse_intent
 from .ingest import dedupe, music, scanner
 from .ingest import watcher as folder_watcher
@@ -1059,7 +1059,8 @@ async def create_story(req: schemas.StoryRequest):
         raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is not configured")
     flt = req.broll_filter.model_dump() if req.broll_filter else None
     try:
-        story.validate_story_options(req.script, flt, req.beat_hints, req.hook_text, req.brand)
+        story.validate_story_options(req.script, flt, req.beat_hints, req.hook_text, req.brand,
+                                     req.beat_visuals)
     except story.StoryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
@@ -1079,7 +1080,7 @@ async def create_story(req: schemas.StoryRequest):
                 max_characters=req.max_characters,
                 caption_style=req.caption_style, progress=progress,
                 broll_filter=flt, beat_hints=req.beat_hints,
-                hook_text=req.hook_text, brand=req.brand)
+                hook_text=req.hook_text, brand=req.brand, beat_visuals=req.beat_visuals)
 
         plan = await asyncio.get_event_loop().run_in_executor(None, _sync)
         jobs._update_row(ns["job_id"], meta={"plan_id": plan["plan_id"],
@@ -1106,6 +1107,36 @@ async def create_broll(req: schemas.BrollPlanRequest):
             title=req.title, seed=req.seed)
     except broll.BrollError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/edits/greenscreen", response_model=schemas.StoryJobOut)
+async def create_greenscreen(req: schemas.GreenscreenRequest):
+    """Talking-head recording cut out (CPU matting or chroma key) over news cards / smooth drone footage,
+    with kinetic captions from the recording's own speech. Runs as a job (kind "greenscreen"); on done,
+    ``meta.plan_id`` names the draft plan. Then approve and render it like a story plan."""
+    flt = req.broll_filter.model_dump(exclude_unset=True) if req.broll_filter else None
+    kwargs = dict(source_path=req.source_path, asset_id=req.asset_id, background_mode=req.background_mode,
+                  backgrounds=req.backgrounds, subject_position=req.subject_position,
+                  subject_scale=req.subject_scale, brand=req.brand, hook_text=req.hook_text,
+                  captions=req.captions, music_path=req.music_path, music_start=req.music_start,
+                  ratio=req.ratio, title=req.title, keying=req.keying, broll_filter=flt)
+    try:
+        await asyncio.to_thread(
+            greenscreen.preflight, req.source_path, req.asset_id, req.background_mode, req.backgrounds,
+            req.subject_position, req.subject_scale, req.brand, req.hook_text, req.music_path, req.ratio,
+            req.keying, flt)
+    except greenscreen.GreenscreenError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ns: dict[str, Any] = {}
+
+    async def _runner(progress, _flag):
+        plan = await asyncio.to_thread(greenscreen.create_greenscreen_plan, progress=progress, **kwargs)
+        jobs._update_row(ns["job_id"], meta={"plan_id": plan["plan_id"], "greenscreen": plan.get("greenscreen")})
+        return plan
+
+    job_id = jobs.run("greenscreen", _runner)
+    ns["job_id"] = job_id
+    return schemas.StoryJobOut(job_id=job_id, kind="greenscreen")
 
 
 @app.post("/api/edits/compilation", response_model=schemas.PlanOut)
