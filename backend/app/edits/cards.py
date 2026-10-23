@@ -25,7 +25,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 from ..proc import tool_env
 from . import kinetic
 
-KINDS = ("headline", "stat", "alert", "terminal", "timeline")
+KINDS = ("headline", "stat", "alert", "terminal", "timeline", "ambient")
 FONTS = kinetic.FONTS_DIR
 CYAN, BLUE, MAGENTA = (25, 198, 230), (58, 108, 244), (192, 43, 216)
 RED, AMBER, GREEN = (226, 36, 52), (255, 176, 0), (60, 214, 120)
@@ -61,12 +61,14 @@ def validate_card(raw: object) -> dict:
         raise CardError(f"card kind must be one of {', '.join(KINDS)}")
     text = " ".join(str(raw.get("text") or "").split())
     sub = " ".join(str(raw.get("sub") or "").split())
-    if not text:
+    if not text and kind != "ambient":
         raise CardError(f"a {kind} card needs text")
     if len(text) > 400 or len(sub) > 400:
         raise CardError("card text and sub are limited to 400 characters")
     card: dict = {"kind": kind, "text": text, "sub": sub}
-    if kind == "headline":
+    if kind == "ambient":
+        pass
+    elif kind == "headline":
         card["date"] = str(raw.get("date") or datetime.now().strftime("%b %d, %Y")).upper()[:24]
     elif kind == "timeline":
         items = [str(i) for i in raw["items"]] if isinstance(raw.get("items"), list) else _split_list(text)
@@ -238,7 +240,8 @@ def fit_block(cv: Canvas, text: str, fontname: str, max_w: int, max_h: int, star
 
 class CardRenderer:
     def __init__(self, spec: dict, w: int, h: int, duration: float, fps: int = 30,
-                 safe_zones: Optional[Mapping[str, float]] = None, seed: int = 0, reveal_delay: float = 0.0):
+                 safe_zones: Optional[Mapping[str, float]] = None, seed: int = 0, reveal_delay: float = 0.0,
+                 compact: bool = False):
         self.spec, self.w, self.h, self.T, self.fps = spec, w, h, max(0.5, duration), fps
         self.u = min(w, h) / 1080.0
         self.sx, self.sy, self.sw, self.sh = kinetic._safe_rect(w, h, safe_zones)
@@ -254,13 +257,23 @@ class CardRenderer:
         if h < w:                                        # landscape: use the full height more evenly
             self.top1 = int(0.45 * h)
             self.low0 = int(0.60 * h)
-        self.fx = self.sx
-        self.fw = self.sw
+        self.compact = bool(compact) and h >= w
+        if self.compact:
+            # green-screen backgrounds: the presenter covers the middle and lower frame, so everything
+            # lives in the top ~37% of the frame (headline block above, detail lines just below)
+            self.top0 = self.sy + int(0.004 * h)
+            self.top1 = int(0.285 * h)
+            self.low0 = int(0.295 * h)
+            self.low1 = int(0.375 * h)
+        # inner padding so content never hugs the left edge when the safe zone has no left margin
+        pad = max(0, int(0.055 * w) - (self.sx if h >= w else 0))
+        self.fx = self.sx + pad
+        self.fw = self.sw - pad
         # Short beats: speed the reveal up so the card is complete before its voice slot ends.
         kind = spec["kind"]
         n_items = len(spec.get("items") or [])
         design = {"headline": 4.2, "stat": 1.8, "alert": 1.6 + 0.5 * n_items,
-                  "timeline": 1.0 + 0.8 * n_items, "terminal": 0.0}[kind]
+                  "timeline": 1.0 + 0.8 * n_items, "terminal": 0.0, "ambient": 0.0}[kind]
         avail = self.T - self.delay - 0.5
         self.speed = 1.0 if design <= 0 else _clamp(avail / design, 0.4, 1.0)
 
@@ -342,6 +355,24 @@ class CardRenderer:
             y += int(size * 1.5)
         return y
 
+    # -- ambient: just the animated backdrop (green-screen backgrounds) with an optional title -----------
+    def _ambient(self, cv: Canvas, c: float, t: float) -> None:
+        u = self.u
+        dx, dy = self.drift(t)
+        im, d = cv.layer()
+        bar_w = int(self.fw * (0.35 + 0.1 * math.sin(t * 0.8)))
+        for i in range(0, bar_w, 4):
+            d.rectangle([self.fx + i, self.top0 + int(6 * u), self.fx + i + 4, self.top0 + int(14 * u)],
+                        fill=(*_grad_color(i / max(1, self.fw * 0.45)), 235))
+        cv.overlay(im)
+        if self.spec.get("text"):
+            lines, size = fit_block(cv, self.spec["text"], "Montserrat-Black.ttf", self.fw, int(0.16 * self.h),
+                                    int(72 * u), int(32 * u), 3)
+            y = self.top0 + int(40 * u)
+            for ln in lines:
+                cv.text(ln, cv.font("Montserrat-Black.ttf", size), (self.fx + dx, y + dy), WHITE, _ease(c / 0.5))
+                y += int(size * 1.12)
+
     # -- headline -----------------------------------------------------------------------
     def _headline(self, cv: Canvas, c: float, t: float) -> None:
         u, spec = self.u, self.spec
@@ -416,7 +447,7 @@ class CardRenderer:
         for line in lines:
             shown = self._count_text(line, c / 1.3) if numeric else line
             fw = font.getlength(line)
-            x = self.sx + (self.sw - fw) / 2 + dx
+            x = self.fx + (self.fw - fw) / 2 + dx
             if glitch:
                 k = 1 - c / 0.5
                 off = int(24 * u * k) + 2
@@ -426,13 +457,14 @@ class CardRenderer:
                     cv.text(shown, font, (x + off * 2, y + dy + int(size * 0.3)), WHITE, 0.6)
             cv.text(shown, font, (x, y + dy), gradient=(CYAN, BLUE, MAGENTA), alpha=_ease(c / 0.25))
             y += int(size * 1.08)
+        dots_bottom = y
         m = re.search(r"(\d+)\s+in\s+(\d+)", text)
         if m and 2 <= int(m.group(2)) <= 12:
             n, k = int(m.group(1)), int(m.group(2))
             r = int(0.019 * self.w)
             gap = int(r * 0.9)
             total = k * 2 * r + (k - 1) * gap
-            x0 = self.sx + (self.sw - total) // 2 + dx
+            x0 = self.fx + (self.fw - total) // 2 + dx
             im, d = cv.layer()
             for i in range(k):
                 filled = c > 0.3 + i * 0.12 and i < n
@@ -440,12 +472,13 @@ class CardRenderer:
                 cx = x0 + i * (2 * r + gap) + r
                 d.ellipse([cx - r, y + int(20 * u) + dy, cx + r, y + int(20 * u) + 2 * r + dy], fill=col)
             cv.overlay(im)
+            dots_bottom = y + int(20 * u) + 2 * r
         label, rest = (_split_list(spec.get("sub") or "") or [""])[0], _split_list(spec.get("sub") or "")[1:]
         if label:
             lfont_lines, ls = fit_block(cv, label, "Montserrat-Medium.ttf", self.fw, self.low1 - self.low0 - int(120 * u),
                                         int(54 * u), int(26 * u), 3)
             a = _ease((c - 0.7) / 0.5)
-            yy = self.low0
+            yy = max(self.low0, dots_bottom + int(18 * u)) if self.compact else self.low0
             for ln in lfont_lines:
                 cv.text(ln, cv.font("Montserrat-Medium.ttf", ls), (self.fx + dx, yy + dy + int((1 - a) * 14 * u)), WHITE, a)
                 yy += int(ls * 1.25)
@@ -454,7 +487,7 @@ class CardRenderer:
     # -- alert -------------------------------------------------------------------------------
     def _hazard_bar(self, cv: Canvas, y: int, hgt: int, t: float) -> None:
         im, d = cv.layer()
-        x0, x1 = self.sx, self.sx + self.sw
+        x0, x1 = self.fx, self.fx + self.fw
         d.rectangle([x0, y, x1, y + hgt], fill=(18, 14, 8, 255))
         step = int(hgt * 1.6)
         off = int(t * 90 * self.u) % (step * 2)
@@ -467,15 +500,17 @@ class CardRenderer:
     def _alert(self, cv: Canvas, c: float, t: float) -> None:
         u, spec = self.u, self.spec
         dx, dy = self.drift(t)
-        bar_h = int(0.022 * self.h)
+        bar_h = int((0.012 if self.compact else 0.022) * self.h)
         self._hazard_bar(cv, self.top0, bar_h, t)
         # warning triangle drawn from shapes, pulsing
         pulse = 1 + 0.05 * math.sin(c * 6)
-        tri_h = int(0.10 * self.h * pulse)
-        cx = self.sx + self.sw // 2 + dx
+        tri_h = 0 if self.compact else int(0.10 * self.h * pulse)
+        cx = self.fx + self.fw // 2 + dx
         ty = self.top0 + bar_h + int(0.02 * self.h) + dy
         im, d = cv.layer()
         half = int(tri_h * 0.62)
+        if self.compact:
+            ty = self.top0 + bar_h - int(0.02 * self.h)
         flash = 0.78 + 0.22 * (1 if int(c * 2.4) % 2 == 0 else 0)
         d.polygon([(cx, ty), (cx - half, ty + tri_h), (cx + half, ty + tri_h)], fill=(*AMBER, int(255 * flash)))
         inset = int(tri_h * 0.12)
@@ -499,9 +534,10 @@ class CardRenderer:
         block = int(len(lines) * size * 1.1)
         y = py0 + (py1 - py0 - block) // 2
         for ln in lines:
-            cv.text(ln, font, (self.sx + self.sw // 2 + dx, y + dy), WHITE, _ease(c / 0.25), anchor="c")
+            cv.text(ln, font, (self.fx + self.fw // 2 + dx, y + dy), WHITE, _ease(c / 0.25), anchor="c")
             y += int(size * 1.1)
-        self._hazard_bar(cv, self.top1 - bar_h, bar_h, -t)
+        if not self.compact:
+            self._hazard_bar(cv, self.top1 - bar_h, bar_h, -t)
         items = spec.get("items") or []
         yy = self.low0
         if items:
@@ -584,7 +620,9 @@ class CardRenderer:
             val = int(math.exp(math.log(lo) + (math.log(hi) - math.log(lo)) * f))
             done = prog >= len(nums) - 1 - 1e-6
             shown = counter[-1] if done else f"{val:,}"
-            lines, size = fit_block(cv, shown, "Montserrat-Black.ttf", self.fw, int(0.16 * self.h), int(190 * u), 60, 1)
+            lines, size = fit_block(cv, shown, "Montserrat-Black.ttf", self.fw,
+                                    min(int(0.16 * self.h), max(40, self.low1 - low - int(70 * u))) if self.compact else int(0.16 * self.h),
+                                    int(190 * u), 36 if self.compact else 60, 1)
             cv.text(shown, cv.font("Montserrat-Black.ttf", size), (self.fx + dx, low + int(54 * u) + dy), gradient=(CYAN, BLUE, MAGENTA))
             cv.text("exploit attempts logged" if not spec.get("sub") else "attempts logged", cv.font("Montserrat-Medium.ttf", int(34 * u)),
                     (self.fx + dx, low + int(54 * u) + int(size * 1.15) + dy), GREY, _ease((c - 0.6) / 0.5))
@@ -625,6 +663,8 @@ class CardRenderer:
         n = len(items)
         slots = [0.17, 0.27, 0.37, 0.62, 0.72]
         order = {2: [0.19, 0.32], 3: slots[:3], 4: slots[:3] + [0.62], 5: slots}[n]
+        if self.compact:
+            order = [0.15 + i * (0.335 - 0.15) / max(1, n - 1) for i in range(n)]
         if self.h < self.w:
             order = [0.22 + 0.18 * i for i in range(n)]
         ys = [int(f * self.h) for f in order]
@@ -667,17 +707,17 @@ class CardRenderer:
 
 def render_card_still(spec: dict, w: int, h: int, t: float, duration: float = 6.0,
                       safe_zones: Optional[Mapping[str, float]] = None, seed: int = 0,
-                      reveal_delay: float = 0.0) -> Image.Image:
-    r = CardRenderer(spec, w, h, duration, 30, safe_zones, seed, reveal_delay)
+                      reveal_delay: float = 0.0, compact: bool = False) -> Image.Image:
+    r = CardRenderer(spec, w, h, duration, 30, safe_zones, seed, reveal_delay, compact)
     return r.frame(t).copy()
 
 
 def render_card_video(spec: dict, w: int, h: int, duration: float, out_path: Path, fps: int = 30,
                       safe_zones: Optional[Mapping[str, float]] = None, seed: int = 0,
-                      reveal_delay: float = 0.0) -> Path:
+                      reveal_delay: float = 0.0, compact: bool = False) -> Path:
     """Render ``duration`` seconds of a card to an h264 file (size w x h)."""
     w, h = w - w % 2, h - h % 2
-    r = CardRenderer(spec, w, h, duration, fps, safe_zones, seed, reveal_delay)
+    r = CardRenderer(spec, w, h, duration, fps, safe_zones, seed, reveal_delay, compact)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     n = int(round(duration * fps))
     cmd = ["ffmpeg", "-y", "-v", "error", "-nostdin", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",

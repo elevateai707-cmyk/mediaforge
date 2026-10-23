@@ -196,3 +196,25 @@ consent-gated ElevenLabs story narration.
   hyperlapses of a daypart (duplicates dropped, black head/tail trimmed), ordered by time or visual
   flow, with cuts nudged onto downbeats by trimming <= 0.4 s per clip end when music is given.
   Natural length is reported; looping is never allowed; `min_seconds` slows uniformly (>= 0.6x).
+
+## Story cards and green-screen plans (`g15/news-cards`)
+
+- **Cards** (`edits/cards.py`): `beat_visuals` on `POST /api/edits/story` / `mf_create_story_plan` replace a
+  beat's drone shot with a locally rendered motion-graphic card (`headline`, `stat`, `alert`, `terminal`,
+  `timeline`; `ambient` for backdrops). Pillow frames are piped to ffmpeg (CPU, 30 fps, Montserrat +
+  JetBrains Mono, both OFL, in `app/assets/fonts`). A card lasts exactly its beat's voice slot, so voice
+  sync is unchanged; captions render on top, kinetic emphasis words are suppressed on card beats, and the
+  card leaves the 44-58% band and the social safe zones free. Beats without a card use smooth drone footage.
+  The underlay clip of a card beat is kept for sync checks/exports but is never shown; `swap-broll` on a
+  card beat restores footage.
+- **Green screen** (`POST /api/edits/greenscreen`, `mf_create_greenscreen`): a recording (phone video, any
+  size/codec/orientation, 2-240 s) is cut out on the CPU and composited over news cards and/or smooth drone
+  footage. The plan is story-shaped (beats from Whisper word timestamps), so captions, hook, brand end card,
+  music levelling, swap-broll and history all apply. Person matting uses Robust Video Matting (MobileNetV3,
+  15 MB ONNX, onnxruntime CPU, recurrent = temporally stable, soft hair edges; **GPL-3.0** model/code, see
+  `edits/segment.py`); the file is `MODELS_DIR/rvm_mobilenetv3_fp32.onnx` and is downloaded once if missing
+  (`MF_ALLOW_MODEL_DOWNLOAD=0` disables). A real green background is auto-detected and chroma-keyed instead.
+  The matte is tightened, smoothed over time, edge-decontaminated and given a soft drop shadow + faint rim
+  light. Audio is the recording's voice, cleaned (high-pass, afftdn, -16 LUFS) and mastered to -14 LUFS by
+  the normal render. Captions come from faster-whisper on the CPU (audio decoded by ffmpeg into numpy) and
+  sit in the lower third.

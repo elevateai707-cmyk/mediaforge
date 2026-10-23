@@ -218,3 +218,19 @@ def test_short_beats_speed_the_reveal_up():
     assert (_diff(img, short_r.background(2.2)) > 70)[int(0.34 * 960):int(0.45 * 960)].sum() > 300
     term = cards.CardRenderer(cards.validate_card(SPECS["terminal"]), 540, 960, 2.0, 30, ZONES)
     assert term.speed == 1.0                        # the counter already scales with the slot
+
+
+@pytest.mark.parametrize("kind", list(SPECS))
+def test_cards_keep_clear_of_the_left_edge_without_a_left_safe_margin(kind):
+    zones = {"top": 0.12, "bottom": 0.22, "left": 0.0, "right": 0.14}         # the default vertical zones
+    r = cards.CardRenderer(cards.validate_card(SPECS[kind]), 540, 960, 6.0, 30, zones, seed=2)
+    content = _diff(r.frame(4.5), r.background(4.5)) > 70
+    assert content[:, :int(0.04 * 540)].sum() == 0, kind
+
+
+def test_compact_cards_stay_in_the_top_band():
+    for kind in ("headline", "stat", "alert", "terminal", "timeline"):
+        r = cards.CardRenderer(cards.validate_card(SPECS[kind]), 540, 960, 7.0, 30, ZONES, seed=2, compact=True)
+        content = _diff(r.frame(5.0), r.background(5.0)) > 70
+        assert content.sum() > 500, kind
+        assert content[int(0.42 * 960):].sum() == 0, f"{kind} reaches into the presenter area"

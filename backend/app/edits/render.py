@@ -245,7 +245,7 @@ def _progress_callable(job: Any) -> Callable[[float, str], None]:
 
 
 def _attach_cards(story: dict, per_clip: list[dict], width: int, height: int, zones, hook_secs: float,
-                  kin_dir: Path, progress) -> int:
+                  kin_dir: Path, progress, compact: bool = False) -> int:
     """Render each card beat once and point its clips at the card video. Returns the card count."""
     from . import cards
     pos, count = 0, 0
@@ -258,7 +258,8 @@ def _attach_cards(story: dict, per_clip: list[dict], width: int, height: int, zo
             f = kin_dir / f"card_{b['index']}.mp4"
             progress(0.05, f"rendering card for beat {b['index']}")
             cards.render_card_video(vis["card"], width, height, card_len, f, config.RENDER_FPS, zones,
-                                    seed=int(b["index"]), reveal_delay=max(0.0, hook_secs - float(b["start"])))
+                                    seed=int(b["index"]), reveal_delay=max(0.0, hook_secs - float(b["start"])),
+                                    compact=compact)
             offset = 0.0
             for pc in per_clip[pos:pos + n_clips]:
                 pc["path"] = str(f)
@@ -340,6 +341,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         else:
             music_path, music_start = None, None
 
+    if story and story.get("kind") == "greenscreen" and not music_path and story.get("music"):
+        music_path = story["music"]["path"]
+        music_start = story["music"].get("start") if music_start is None else music_start
     if ratio is None:
         ratio = (story or broll or {}).get("ratio") or "9:16"
         if width is None and height is None and ratio == "16:9" and (story or broll):
@@ -376,7 +380,11 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     is_story = bool(voiceover) or is_broll
     style = (caption_style or (story or broll or {}).get("caption_style") or "kinetic") \
         if is_story else "classic"
-    is_kinetic = is_story and style == "kinetic"
+    is_greenscreen = bool(story) and story.get("kind") == "greenscreen"
+    subject = (story or {}).get("subject") if is_greenscreen else None
+    if subject and not (Path(subject["rgb"]).is_file() and Path(subject["alpha"]).is_file()):
+        raise RenderError("the green-screen subject layer files are missing; create the plan again")
+    is_kinetic = is_story and (style == "kinetic" or is_greenscreen)
     kinetic_zones = reframe_mod.normalize_safe_zones(safe_zones) if height > width else None
     fx = is_kinetic and effects
     kin_dir = config.RENDER_TMP_DIR / f"emph_{plan_id}"
@@ -409,7 +417,8 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
     if is_story and not is_broll and story:
         try:
             card_beats = _attach_cards(story, per_clip, width, height, kinetic_zones,
-                                       kinetic.HOOK_SECONDS if hook_text else 0.0, kin_dir, progress)
+                                       kinetic.HOOK_SECONDS if hook_text else 0.0, kin_dir, progress,
+                                       compact=story.get("kind") == "greenscreen")
         except Exception as exc:  # noqa: BLE001
             import shutil
             shutil.rmtree(kin_dir, ignore_errors=True)
@@ -519,8 +528,9 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             o.setdefault("y", info.get("y", 0))
         if events["body"] or events["emphasis"] or extra_ass:
             ass_file = config.RENDER_TMP_DIR / f"cap_{plan_id}_kin.ass"
-            ass_file.write_text(kinetic.build_ass(events, width, height, layout, kinetic_zones,
-                                                  extra_lines=extra_ass), encoding="utf-8")
+            ass_file.write_text(kinetic.build_ass(
+                events, width, height, layout, kinetic_zones, extra_lines=extra_ass,
+                body_y=((side.get("caption_layout") or {}).get("body_y"))), encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Build the command
@@ -540,12 +550,17 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         voice_idx = cmd.count("-i")
         cmd += ["-i", voiceover]
     emph_idx0 = cmd.count("-i")
+    subj_idx: Optional[int] = None
+    if subject:
+        subj_idx = emph_idx0 + len(overlays)
     for o in overlays:
         if o.get("info") is not None:
             cmd += ["-f", "concat", "-safe", "0", "-i", o["info"]["list"]]
         else:
             cmd += ["-loop", "1", "-framerate", str(config.RENDER_FPS),
                     "-t", f"{o['end'] - o['start']:.3f}", "-i", o["image"]]
+    if subject:
+        cmd += ["-i", subject["rgb"], "-i", subject["alpha"]]
     silent_idx: Optional[int] = None
     if is_broll and not music_path:
         silent_idx = cmd.count("-i")
@@ -665,7 +680,8 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         alabels.append(alabel)
 
     if is_story:
-        input_index += (1 if voiceover else 0) + len(overlays)  # voiceover + overlay inputs
+        # voiceover + overlay inputs + the subject's colour/alpha videos
+        input_index += (1 if voiceover else 0) + len(overlays) + (2 if subject else 0)
     # Gain staging for narrated renders with a music bed (see audio_levels.py).
     levels: Optional[dict] = None
     if voiceover and music_path and not is_broll and config.MUSIC_LEVELING:
@@ -829,6 +845,16 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
                 shift = max(2, round(12 * min(width, height) / 1080))
                 enable = "+".join(f"between(t,{t0:.3f},{t0 + flash:.3f})" for t0 in starts)
                 _chain(f"rgbashift=rh={-shift}:bh={shift}:enable='{enable}'", "vglitch")
+        if subject:
+            sw = max(2, int(subject["w_frac"] * width / 2) * 2)
+            filters.append(f"[{subj_idx}:v]fps={config.RENDER_FPS},scale={sw}:-2,setpts=PTS-STARTPTS[srgb]")
+            filters.append(f"[{subj_idx + 1}:v]fps={config.RENDER_FPS},scale={sw}:-2,format=gray,"
+                           "setpts=PTS-STARTPTS[salpha]")
+            filters.append("[srgb][salpha]alphamerge[subj]")
+            _chain_over = f"[{cur}][subj]overlay=x={int(subject['x_frac'] * width)}:y={int(subject['y_frac'] * height)}" \
+                          ":format=auto:eof_action=pass[vsubj]"
+            filters.append(_chain_over)
+            cur = "vsubj"
         if card_s:
             radius = max(4, round(26 * min(width, height) / 1080))
             _chain(f"boxblur=luma_radius={radius}:luma_power=2:chroma_radius={radius // 2}"

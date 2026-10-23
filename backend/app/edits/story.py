@@ -483,6 +483,12 @@ def story_summary(plan_id: str) -> Optional[dict]:
                                   "duration", "caption_style")}
 
 
+def write_sidecar(plan_id: str, data: dict) -> None:
+    """Atomically write story.json for a plan (used by plan types built outside create_story_plan)."""
+    from .plan_history import atomic_write
+    atomic_write(story_dir(plan_id) / "story.json", json.dumps(data, indent=2, allow_nan=False))
+
+
 def export_companions(plan_id: str, export_path: str) -> dict[str, str]:
     """Copy voiceover.mp3 + captions.srt next to an export file (story plans only).
 

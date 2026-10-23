@@ -170,6 +170,25 @@ class MediaForgeMcpOfflineTests(unittest.IsolatedAsyncioTestCase):
         await server.mf_create_story_plan("One. Two.", cloud_approved=True, voice_consent=True, beat_visuals=visuals)
         self.assertEqual(self.calls[0][3]["beat_visuals"], visuals)
 
+    async def test_greenscreen_tool_posts_and_polls(self):
+        self.fake_call([{"job_id": "g1"}, {"status": "running"}, {"status": "done", "meta": {"plan_id": "gp"}},
+                        {"plan_id": "gp"}])
+        orig = server.asyncio.sleep
+        server.asyncio.sleep = lambda *_a, **_k: orig(0)
+        try:
+            result = await server.mf_create_greenscreen(
+                source_path="/srv/x/selfie.mov", background_mode="mixed",
+                backgrounds=[{"kind": "stat", "text": "7 in 10"}, "aerial city"], brand="albertaweb")
+        finally:
+            server.asyncio.sleep = orig
+        self.assertEqual(result["plan_id"], "gp")
+        method, path, _p, body = self.calls[0]
+        self.assertEqual((method, path), ("POST", "/api/edits/greenscreen"))
+        self.assertEqual((body["source_path"], body["background_mode"], body["brand"]),
+                         ("/srv/x/selfie.mov", "mixed", "albertaweb"))
+        self.assertEqual(body["backgrounds"][1], "aerial city")
+        self.assertEqual(self.calls[-1][1], "/api/edits/plan/gp")
+
     async def test_render_legacy_default_does_not_enable_auto_music(self):
         self.fake_call([{"job_id": "render-legacy"}])
         await server.mf_render("plan-1")
