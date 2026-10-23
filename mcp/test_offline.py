@@ -164,6 +164,12 @@ class MediaForgeMcpOfflineTests(unittest.IsolatedAsyncioTestCase):
         await server.mf_swap_broll("p", 1, 3)
         self.assertEqual(self.calls[0][3], {"beat_index": 1, "asset_id": 3})      # start omitted when unset
 
+    async def test_story_beat_visuals_are_forwarded(self):
+        self.fake_call([{"job_id": "s1"}, {"status": "done", "meta": {"plan_id": "p"}}, {"plan_id": "p"}])
+        visuals = [{"type": "card", "card": {"kind": "stat", "text": "7 in 10", "sub": "websites run PHP"}}, None]
+        await server.mf_create_story_plan("One. Two.", cloud_approved=True, voice_consent=True, beat_visuals=visuals)
+        self.assertEqual(self.calls[0][3]["beat_visuals"], visuals)
+
     async def test_render_legacy_default_does_not_enable_auto_music(self):
         self.fake_call([{"job_id": "render-legacy"}])
         await server.mf_render("plan-1")

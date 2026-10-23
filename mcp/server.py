@@ -245,6 +245,7 @@ async def mf_create_story_plan(
     beat_hints: Optional[list[str]] = None,
     hook_text: Optional[str] = None,
     brand: Optional[str] = None,
+    beat_visuals: Optional[list[Optional[dict]]] = None,
 ) -> Any:
     """Story voiceover: turn a narration script into a draft edit plan (POST /api/edits/story).
     The script is transmitted to ElevenLabs for synthesis and spends ElevenLabs character quota.
@@ -272,7 +273,15 @@ async def mf_create_story_plan(
     to avoid selfies/street footage). beat_hints = one search query per beat (shorter lists fall back
     to the beat text) used instead of the beat text when matching footage. hook_text (<=90 chars)
     is a big gradient headline shown 0-1.4 s in the upper safe zone; brand ("albertaweb" or
-    "buildwithdb", see config/brands.yaml) appends a 1.8 s end card at render time."""
+    "buildwithdb", see config/brands.yaml) appends a 1.8 s end card at render time.
+    beat_visuals = one entry per beat, null (smooth drone footage) or {"type": "card", "card": {"kind":
+    "headline"|"stat"|"alert"|"terminal"|"timeline", "text": ..., "sub": ...}}: a locally rendered
+    news-style motion-graphic card replaces that beat's footage for exactly its voice slot (voice sync
+    unchanged; no camera footage needed). headline: text = headline, sub = "severity . Source: X" lines
+    separated by " · "; stat: text = the number/word (numbers count up, "7 in 10" gets dots), sub = label
+    (" · Source: X"); alert: text = banner, sub = line or 3+ " · " items for a checklist; terminal: text =
+    counter label, sub = "counter 1,000 → 10,000 → 1,000,000+" (or "✔ a ✔ b ✔ c" checks); timeline: text =
+    2-5 steps separated by " · " ("Oct 17 attacks begin"), sub = title."""
     if not cloud_approved:
         raise RuntimeError("Story creation requires cloud_approved=True for this job before sending the script to ElevenLabs")
     if not voice_consent:
@@ -286,7 +295,8 @@ async def mf_create_story_plan(
         "ratio": ratio, "title": title, "caption_style": caption_style,
         "cloud_approved": cloud_approved, "voice_consent": voice_consent,
         "max_characters": max_characters, "broll_filter": broll_filter,
-        "beat_hints": beat_hints, "hook_text": hook_text, "brand": brand})
+        "beat_hints": beat_hints, "hook_text": hook_text, "brand": brand,
+        "beat_visuals": beat_visuals})
     job_id = started["job_id"]
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:

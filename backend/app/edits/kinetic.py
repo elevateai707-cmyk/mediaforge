@@ -165,6 +165,8 @@ def plan_events(beats: list[dict], hook_end: float = 0.0) -> dict:
             chosen.append((s, e))
         chosen = [(s, e) for s, e in chosen[:MAX_EMPH_PER_BEAT]
                   if off + float(words[s]["start"]) >= hook_end]
+        if beat.get("visual"):
+            chosen = []          # a motion-graphic card owns the upper frame: no big emphasis words
         skip: set[int] = set()
         for s, e in chosen:
             skip.update(range(s, e))

@@ -244,6 +244,32 @@ def _progress_callable(job: Any) -> Callable[[float, str], None]:
     return _noop
 
 
+def _attach_cards(story: dict, per_clip: list[dict], width: int, height: int, zones, hook_secs: float,
+                  kin_dir: Path, progress) -> int:
+    """Render each card beat once and point its clips at the card video. Returns the card count."""
+    from . import cards
+    pos, count = 0, 0
+    for b in story.get("beats") or []:
+        n_clips = len(b.get("clips") or [])
+        vis = b.get("visual")
+        if vis and vis.get("type") == "card" and n_clips:
+            slot = float(b["slot"])
+            card_len = slot + 0.5                      # tail room so beat-sync trims never run out
+            f = kin_dir / f"card_{b['index']}.mp4"
+            progress(0.05, f"rendering card for beat {b['index']}")
+            cards.render_card_video(vis["card"], width, height, card_len, f, config.RENDER_FPS, zones,
+                                    seed=int(b["index"]), reveal_delay=max(0.0, hook_secs - float(b["start"])))
+            offset = 0.0
+            for pc in per_clip[pos:pos + n_clips]:
+                pc["path"] = str(f)
+                pc["card_base"] = (offset, offset + pc["dur"], card_len)
+                pc["start"], pc["end"] = offset, offset + pc["dur"]
+                offset += pc["dur"]
+            count += 1
+        pos += n_clips
+    return count
+
+
 def _render_plan(plan_id: str, ratio: Optional[str] = None,
                 width: Optional[int] = None, height: Optional[int] = None,
                 captions: bool = True, music_path: Optional[str] = None,
@@ -377,12 +403,26 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             "path": asset.path, "start": float(c.start), "end": float(c.end),
         })
         total += dur
+    # Story beats with a motion-graphic card: the card replaces the beat's footage for exactly its
+    # voice slot, so narration sync is unchanged. Each clip of the beat plays its own part of the card.
+    card_beats = 0
+    if is_story and not is_broll and story:
+        try:
+            card_beats = _attach_cards(story, per_clip, width, height, kinetic_zones,
+                                       kinetic.HOOK_SECONDS if hook_text else 0.0, kin_dir, progress)
+        except Exception as exc:  # noqa: BLE001
+            import shutil
+            shutil.rmtree(kin_dir, ignore_errors=True)
+            raise RenderError(f"could not render a story card: {exc}") from exc
     # Reframe analysis is source-normalized, so it can be reused by
     # render_batch across output dimensions.  A caller can also supply the
     # already-computed map to avoid repeat DB/OpenCV work.
     analysis_by_clip: dict[str, dict] = dict(_reframe_analysis or {})
     for i, pc in enumerate(per_clip):
         key = str(pc["clip"].id)
+        if pc.get("card_base"):
+            analysis_by_clip[key] = {"path_points": [], "safe_zones": {}}
+            continue
         if key not in analysis_by_clip:
             try:
                 analysis_by_clip[key] = reframe_mod.analyze_reframe(
@@ -416,14 +456,17 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
                                     pad=beatmap_mod.SNAP_TOLERANCE_S)
         snap_info = beatmap_mod.snap_plan(
             [pc["dur"] for pc in per_clip],
-            [float(pc["clip"].start) for pc in per_clip],
-            [max(0.0, float(pc["asset"].duration) - float(pc["clip"].end))
-             if pc["asset"].kind == "video" and pc["asset"].duration else 0.0
+            [pc["card_base"][0] if pc.get("card_base") else float(pc["clip"].start) for pc in per_clip],
+            [max(0.0, pc["card_base"][2] - pc["card_base"][1]) if pc.get("card_base") else
+             (max(0.0, float(pc["asset"].duration) - float(pc["clip"].end))
+              if pc["asset"].kind == "video" and pc["asset"].duration else 0.0)
              for pc in per_clip],
             beats_rel)
         for pc, (s_off, e_off) in zip(per_clip, snap_info["offsets"]):
-            pc["start"] = float(pc["clip"].start) + s_off
-            pc["end"] = float(pc["clip"].end) + e_off
+            base0, base1 = (pc["card_base"][:2] if pc.get("card_base")
+                            else (float(pc["clip"].start), float(pc["clip"].end)))
+            pc["start"] = base0 + s_off
+            pc["end"] = base1 + e_off
             pc["dur"] = pc["end"] - pc["start"]
         log.info("beat sync: %d/%d cuts snapped (music start %.2fs)",
                  sum(1 for d in snap_info["deltas"] if abs(d) > 1e-6),
@@ -547,6 +590,13 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
             f"trim=start=0:end={pc['dur']:.3f}"
         )
         chain.append("setpts=PTS-STARTPTS")
+        if pc.get("card_base"):
+            # already width x height and fully designed: no scale, crop, reframe or push-in
+            chain.append("setsar=1")
+            filters.append(",".join(chain) + f"[{vlabel}]")
+            vlabels.append(vlabel)
+            alabels.append(alabel)
+            continue
         chain.append(
             f"scale={width}:{height}:force_original_aspect_ratio=increase"
             ":force_divisible_by=2")
@@ -855,7 +905,7 @@ def _render_plan(plan_id: str, ratio: Optional[str] = None,
         raise RenderError(f"ffmpeg failed to start: {exc}")
     finally:
         _cleanup_caption_files(plan_id)
-        if is_kinetic:
+        if is_kinetic or card_beats:
             import shutil
             shutil.rmtree(kin_dir, ignore_errors=True)
             if ass_file is not None:

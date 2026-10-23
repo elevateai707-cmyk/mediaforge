@@ -1059,7 +1059,8 @@ async def create_story(req: schemas.StoryRequest):
         raise HTTPException(status_code=503, detail="ELEVENLABS_API_KEY is not configured")
     flt = req.broll_filter.model_dump() if req.broll_filter else None
     try:
-        story.validate_story_options(req.script, flt, req.beat_hints, req.hook_text, req.brand)
+        story.validate_story_options(req.script, flt, req.beat_hints, req.hook_text, req.brand,
+                                     req.beat_visuals)
     except story.StoryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
@@ -1079,7 +1080,7 @@ async def create_story(req: schemas.StoryRequest):
                 max_characters=req.max_characters,
                 caption_style=req.caption_style, progress=progress,
                 broll_filter=flt, beat_hints=req.beat_hints,
-                hook_text=req.hook_text, brand=req.brand)
+                hook_text=req.hook_text, brand=req.brand, beat_visuals=req.beat_visuals)
 
         plan = await asyncio.get_event_loop().run_in_executor(None, _sync)
         jobs._update_row(ns["job_id"], meta={"plan_id": plan["plan_id"],

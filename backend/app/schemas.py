@@ -231,6 +231,9 @@ class StoryRequest(BaseModel):
     beat_hints: Optional[list[str]] = Field(default=None, max_length=200)
     hook_text: Optional[str] = Field(default=None, max_length=90)
     brand: Optional[str] = Field(default=None, max_length=40)
+    # One entry per beat: null (drone footage) or {"type": "card", "card": {"kind": "headline|stat|alert|
+    # terminal|timeline", "text": ..., "sub": ...}}. The card replaces that beat's footage for its voice slot.
+    beat_visuals: Optional[list[Optional[dict[str, Any]]]] = Field(default=None, max_length=200)
 
 
 class BrollPlanRequest(BaseModel):

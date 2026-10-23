@@ -525,8 +525,12 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
                       broll_filter: Optional[dict] = None,
                       beat_hints: Optional[list[str]] = None,
                       hook_text: Optional[str] = None,
-                      brand: Optional[str] = None) -> dict:
+                      brand: Optional[str] = None,
+                      beat_visuals: Optional[list] = None) -> dict:
     """Generate narration only after per-job consent and a character cap.
+
+    ``beat_visuals`` ([null | {"type": "card", "card": {kind, text, sub}}] per beat) replaces a
+    beat's drone shot with a rendered motion-graphic card (see cards.py).
 
     ``broll_filter`` restricts B-roll sources, ``beat_hints`` replaces the beat
     text as the per-beat search query, ``hook_text`` adds a 0-1.4 s headline and
@@ -539,7 +543,7 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
     approval = policy.story_approval(
         script, selected_voice, cloud_approved=cloud_approved,
         voice_consent=voice_consent, max_characters=max_characters)
-    options = validate_story_options(script, broll_filter, beat_hints, hook_text, brand)
+    options = validate_story_options(script, broll_filter, beat_hints, hook_text, brand, beat_visuals)
     plan_id = planner._new_plan_id()
     policy.record_story_event(plan_id, "approved", approval)
     try:
@@ -556,7 +560,7 @@ def create_story_plan(script: str, voice_id: Optional[str] = None,
 
 def validate_story_options(script: str, broll_filter: Optional[dict],
                            beat_hints: Optional[list[str]], hook_text: Optional[str],
-                           brand: Optional[str]) -> dict:
+                           brand: Optional[str], beat_visuals: Optional[list] = None) -> dict:
     """Normalise optional story controls; raises StoryError (HTTP 422) on bad input."""
     from . import brands
 
@@ -573,8 +577,13 @@ def validate_story_options(script: str, broll_filter: Optional[dict],
         brand_row = brands.get_brand(brand)
     except brands.BrandError as exc:
         raise StoryError(str(exc)) from None
+    from . import cards
+    try:
+        visuals = cards.validate_beat_visuals(beat_visuals, len(beats)) if beat_visuals is not None else None
+    except cards.CardError as exc:
+        raise StoryError(str(exc)) from None
     return {"broll_filter": clean_broll_filter(broll_filter), "beat_hints": hints,
-            "hook_text": hook, "brand": brand_row}
+            "hook_text": hook, "brand": brand_row, "beat_visuals": visuals}
 
 
 def clean_broll_filter(raw: Optional[dict]) -> Optional[dict]:
@@ -701,11 +710,16 @@ def _create_story_plan(script: str, *, voice_id: str, trip_id: Optional[int],
     with SessionLocal() as db:
         trip_ids = set(trip_asset_ids(db, trip_id)) if trip_id else None
         used: set[int] = set()
+        visuals = options.get("beat_visuals") or [None] * len(beat_rows)
         for b in beat_rows:
             hint = hints[b["index"] - 1] if b["index"] - 1 < len(hints) else None
             cands = beat_candidates(db, hint or b["text"], search_fn, trip_ids,
                                     broll_filter=options.get("broll_filter"))
-            clips = allocate_clips(b["slot"], cands, used)
+            vis = visuals[b["index"] - 1] if b["index"] - 1 < len(visuals) else None
+            b["visual"] = vis
+            # a card beat still gets an (unseen) underlay clip so exports and sync checks keep
+            # working, but it does not use up footage the other beats could show
+            clips = allocate_clips(b["slot"], cands, set(used) if vis else used)
             by_id = {c["asset_id"]: c for c in cands}
             b["clips"] = []
             for c in clips:
@@ -741,7 +755,7 @@ def _create_story_plan(script: str, *, voice_id: str, trip_id: Optional[int],
         "beat_count": n, "duration": total, "gap": BEAT_GAP,
         "beats": [{k: b[k] for k in ("index", "text", "audio", "audio_duration",
                                      "slot", "start", "words", "clips", "emphasis",
-                                     "emphasis_auto")}
+                                     "emphasis_auto", "visual")}
                   for b in beat_rows],
     }
     (out_dir / "story.json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
