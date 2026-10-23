@@ -34,6 +34,7 @@ BG_TOP, BG_BOTTOM = (6, 9, 20), (11, 16, 34)
 CAPTION_BAND = (0.44, 0.58)          # fractions of frame height kept clear for captions
 MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 _NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_RATIO = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(?:\bin\b|\bof\b|/)\s*\d[\d,]*(?:\.\d+)?")
 
 
 class CardError(ValueError):
@@ -422,16 +423,28 @@ class CardRenderer:
         self._source_lines(cv, parts, self.low0, c, last_done + 0.2, int(36 * u))
 
     # -- stat -----------------------------------------------------------------------------
+    def _format_count(self, raw: str, p: float) -> str:
+        val = float(raw.replace(",", ""))
+        cur = val * _ease(p)
+        if "." in raw:
+            return f"{cur:.{len(raw.split('.')[1])}f}"
+        n = int(round(cur))
+        return f"{n:,}" if "," in raw else str(n)
+
     def _count_text(self, text: str, p: float) -> str:
-        def repl(m: re.Match) -> str:
-            raw = m.group(0)
-            val = float(raw.replace(",", ""))
-            cur = val * _ease(p)
-            if "." in raw:
-                return f"{cur:.{len(raw.split('.')[1])}f}"
-            s = f"{int(round(cur)):,}" if "," in raw else str(int(round(cur)))
-            return s
-        return _NUM.sub(repl, text)
+        """Text for a stat at animation progress ``p`` (0..1.3 scale handled by the caller).
+
+        Ratios ("7 in 10", "3 of 8", "9.2 / 10") keep the denominator fixed from the first frame and
+        only count the numerator up from 0; every displayed value is therefore on the path from 0 to the
+        target with the same denominator. Other numbers ("1,500,000", "45%") count up in place.
+        """
+        m = _RATIO.search(text)
+        if m:
+            return text[:m.start(1)] + self._format_count(m.group(1), p) + text[m.end(1):]
+        return _NUM.sub(lambda mm: self._format_count(mm.group(0), p), text)
+
+    def stat_numerator(self, n: int, c: float) -> int:
+        return int(self._format_count(str(n), c / 1.3))
 
     def _stat(self, cv: Canvas, c: float, t: float) -> None:
         u, spec = self.u, self.spec
@@ -444,8 +457,20 @@ class CardRenderer:
         y = self.top0 + int(0.05 * self.h) + max(0, (self.top1 - self.top0 - int(0.05 * self.h) - total_h) // 3)
         numeric = bool(_NUM.search(text))
         glitch = (not numeric) and c < 0.5
+        ratio = bool(_RATIO.search(text))
+        counted = False
         for line in lines:
-            shown = self._count_text(line, c / 1.3) if numeric else line
+            if not numeric:
+                shown = line
+            elif ratio:
+                # a ratio that wrapped across lines still counts only its numerator (first number of the first line)
+                first = _NUM.search(line)
+                shown = line
+                if first and not counted:
+                    counted = True
+                    shown = line[:first.start()] + self._format_count(first.group(0), c / 1.3) + line[first.end():]
+            else:
+                shown = self._count_text(line, c / 1.3)
             fw = font.getlength(line)
             x = self.fx + (self.fw - fw) / 2 + dx
             if glitch:
@@ -458,17 +483,17 @@ class CardRenderer:
             cv.text(shown, font, (x, y + dy), gradient=(CYAN, BLUE, MAGENTA), alpha=_ease(c / 0.25))
             y += int(size * 1.08)
         dots_bottom = y
-        m = re.search(r"(\d+)\s+in\s+(\d+)", text)
+        m = re.search(r"(\d+)\s+(?:in|of)\s+(\d+)", text)
         if m and 2 <= int(m.group(2)) <= 12:
             n, k = int(m.group(1)), int(m.group(2))
+            shown_n = self.stat_numerator(n, c)                   # the same numerator the text shows
             r = int(0.019 * self.w)
             gap = int(r * 0.9)
             total = k * 2 * r + (k - 1) * gap
             x0 = self.fx + (self.fw - total) // 2 + dx
             im, d = cv.layer()
             for i in range(k):
-                filled = c > 0.3 + i * 0.12 and i < n
-                col = (*CYAN, 255) if filled else (60, 76, 104, 255)
+                col = (*CYAN, 255) if i < shown_n else (60, 76, 104, 255)
                 cx = x0 + i * (2 * r + gap) + r
                 d.ellipse([cx - r, y + int(20 * u) + dy, cx + r, y + int(20 * u) + 2 * r + dy], fill=col)
             cv.overlay(im)

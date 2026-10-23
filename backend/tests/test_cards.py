@@ -1,5 +1,6 @@
 """Motion-graphic story cards: spec validation, frames, video, story + render integration."""
 import json
+import re
 import subprocess
 
 import numpy as np
@@ -99,10 +100,61 @@ def test_card_frames_per_kind(kind):
 def test_stat_counts_up_and_dots_fill():
     spec = cards.validate_card(SPECS["stat"])
     r = cards.CardRenderer(spec, 540, 960, 6.0, 30, ZONES)
-    assert r._count_text("7 in 10", 0.0) == "0 in 0" and r._count_text("7 in 10", 5.0) == "7 in 10"
+    assert r._count_text("7 in 10", 0.0) == "0 in 10" and r._count_text("7 in 10", 5.0) == "7 in 10"
     assert r._count_text("1,250 users", 5.0) == "1,250 users" and r._count_text("9.2 / 10", 5.0) == "9.2 / 10"
     mid = r._count_text("7 in 10", 0.4)
     assert 0 <= int(mid.split()[0]) <= 7
+
+
+def _sweep(r, text):
+    return [r._count_text(text, i / 100) for i in range(0, 131)]
+
+
+def test_ratio_stat_keeps_denominator_fixed_and_counts_numerator_only():
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    seen = _sweep(r, "7 in 10")
+    assert all(re.fullmatch(r"\d+ in 10", t) for t in seen), seen
+    nums = [int(t.split()[0]) for t in seen]
+    assert nums[0] == 0 and nums == sorted(nums) and max(nums) == 7 and seen[-1] == "7 in 10"
+    assert seen[0] == "0 in 10"
+
+
+@pytest.mark.parametrize("text,pattern,end", [
+    ("3 of 8", r"\d+ of 8", "3 of 8"),
+    ("9 / 10", r"\d+ / 10", "9 / 10"),
+    ("9/10", r"\d+/10", "9/10"),
+    ("9.2 / 10", r"\d+\.\d / 10", "9.2 / 10"),
+    ("70%", r"\d+%", "70%"),
+    ("7 in 10 websites", r"\d+ in 10 websites", "7 in 10 websites"),
+])
+def test_other_ratio_and_percent_forms_never_show_off_path_values(text, pattern, end):
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    seen = _sweep(r, text)
+    assert all(re.fullmatch(pattern, t) for t in seen), seen
+    assert seen[0].startswith("0") and seen[-1] == end
+
+
+def test_plain_numbers_still_count_up_and_words_are_untouched():
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    seen = _sweep(r, "1,500,000")
+    vals = [int(t.replace(",", "")) for t in seen]
+    assert vals[0] == 0 and vals == sorted(vals) and seen[-1] == "1,500,000" and any("," in t for t in seen[1:-1])
+    assert set(_sweep(r, "Millions")) == {"Millions"}
+
+
+def test_stat_dots_match_the_numerator_text():
+    r = cards.CardRenderer(cards.validate_card(SPECS["stat"]), 540, 960, 6.0, 30, ZONES)
+    for i in range(0, 200):
+        c = i / 100
+        assert r.stat_numerator(7, c) == int(r._count_text("7 in 10", c / 1.3).split()[0])
+        assert 0 <= r.stat_numerator(7, c) <= 7
+
+
+def test_ratio_stat_frames_render_through_the_count():
+    spec = cards.validate_card({"kind": "stat", "text": "7 in 10", "sub": "websites run PHP"})
+    r = cards.CardRenderer(spec, 540, 960, 6.0, 30, ZONES)
+    for t in (0.1, 0.5, 1.0, 3.0):
+        assert (_diff(r.frame(t), r.background(t)) > 70).sum() > 100
 
 
 def test_reveal_delay_holds_back_content():
